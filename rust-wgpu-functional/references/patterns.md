@@ -32,42 +32,42 @@ struct Uninitialized;
 struct Configured;
 struct Ready;
 
-struct Pipeline<S> {
+struct Pipeline<S, P> {
     device: wgpu::Device,
-    inner: Option<wgpu::RenderPipeline>,
+    inner: P,
     _state: PhantomData<S>,
 }
 
-impl Pipeline<Uninitialized> {
+impl Pipeline<Uninitialized, ()> {
     fn new(device: wgpu::Device) -> Self {
-        Self { device, inner: None, _state: PhantomData }
+        Self { device, inner: (), _state: PhantomData }
     }
 
-    fn configure(self, desc: &PipelineDescriptor) -> Result<Pipeline<Configured>, ShaderError> {
+    fn configure(self, desc: &PipelineDescriptor) -> Result<Pipeline<Configured, ()>, ShaderError> {
         // validate and set up — consumes self, returns new state
         let layout = validate_layout(&self.device, desc)?;
         Ok(Pipeline {
             device: self.device,
-            inner: None,
+            inner: (),
             _state: PhantomData,
         })
     }
 }
 
-impl Pipeline<Configured> {
-    fn build(self) -> Pipeline<Ready> {
+impl Pipeline<Configured, ()> {
+    fn build(self) -> Pipeline<Ready, wgpu::RenderPipeline> {
         let pipeline = create_render_pipeline(&self.device);
         Pipeline {
             device: self.device,
-            inner: Some(pipeline),
+            inner: pipeline,
             _state: PhantomData,
         }
     }
 }
 
-impl Pipeline<Ready> {
+impl Pipeline<Ready, wgpu::RenderPipeline> {
     fn bind<'a>(&'a self, pass: &mut wgpu::RenderPass<'a>) {
-        pass.set_pipeline(self.inner.as_ref().unwrap());
+        pass.set_pipeline(&self.inner);
     }
 }
 

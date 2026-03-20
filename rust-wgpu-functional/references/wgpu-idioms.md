@@ -8,13 +8,14 @@ Read this when implementing GPU pipelines, resource management, or shader integr
 1. Bind Group Layout Composition
 2. Render Pass Structure
 3. Compute Pass Structure
-4. Buffer Management
-5. Pipeline Caching
-6. WGSL Shader Organization
-7. Surface Configuration & Resize
-8. Multi-Pass Rendering
-9. GPU Profiling Integration
-10. Resource Lifetime Management
+4. Host/Shader Contract Review
+5. Buffer Management
+6. Pipeline Caching
+7. WGSL Shader Organization
+8. Surface Configuration & Resize
+9. Multi-Pass Rendering
+10. GPU Profiling Integration
+11. Resource Lifetime Management
 
 ---
 
@@ -38,9 +39,9 @@ fn create_per_frame_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: Some(std::num::NonZeroU64::new(
+                    min_binding_size: std::num::NonZeroU64::new(
                         std::mem::size_of::<CameraUniforms>() as u64
-                    ).unwrap()),
+                    ),
                 },
                 count: None,
             },
@@ -51,9 +52,9 @@ fn create_per_frame_layout(device: &wgpu::Device) -> wgpu::BindGroupLayout {
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
-                    min_binding_size: Some(std::num::NonZeroU64::new(
+                    min_binding_size: std::num::NonZeroU64::new(
                         std::mem::size_of::<FrameUniforms>() as u64
-                    ).unwrap()),
+                    ),
                 },
                 count: None,
             },
@@ -188,7 +189,30 @@ fn execute_compute(
 
 ---
 
-## 4. Buffer Management
+## 4. Host/Shader Contract Review
+
+Review GPU bindings as one contract, not three isolated snippets.
+
+Checklist:
+- Each WGSL binding index exists in the Rust bind group layout
+- `read_only` matches WGSL `read` vs `read_write`
+- shader-stage visibility matches actual usage
+- bind group entries point at the intended buffers for each binding
+- aggregate outputs such as indirect args have a single owning writer
+
+### Indirect Draw Ownership
+
+If a compute pass writes indirect arguments:
+- make one pass the sole writer of `instance_count`
+- initialize the remaining fields deterministically in that same pass or on the CPU
+- remove stale bindings from earlier passes once ownership moves
+
+This prevents the common failure mode where the shader changes but Rust still binds the old
+writer path.
+
+---
+
+## 5. Buffer Management
 
 ### Staging Buffer Pattern
 
@@ -269,7 +293,7 @@ fn align_up(value: u64, alignment: u64) -> u64 {
 
 ---
 
-## 5. Pipeline Caching
+## 6. Pipeline Caching
 
 Create pipelines lazily, cache by a hashable key. Pipeline creation is
 expensive — never do it during rendering.
@@ -301,6 +325,7 @@ impl PipelineCache {
         layouts: &LayoutRegistry,
         shaders: &ShaderRegistry,
     ) -> &wgpu::RenderPipeline {
+        // clone: entry insertion requires an owned key at the cache boundary
         self.render_pipelines.entry(key.clone()).or_insert_with(|| {
             // Expensive — only happens once per unique key
             create_render_pipeline(device, key, layouts, shaders)
@@ -324,7 +349,7 @@ impl PipelineCache {
 
 ---
 
-## 6. WGSL Shader Organization
+## 7. WGSL Shader Organization
 
 Keep shader code composable with includes (via string concatenation)
 and consistent binding conventions.
@@ -372,7 +397,7 @@ This convention is shared between Rust and WGSL — never violate it.
 
 ---
 
-## 7. Surface Configuration & Resize
+## 8. Surface Configuration & Resize
 
 Handle resize purely — compute the new config, then apply it.
 
@@ -420,7 +445,20 @@ impl SurfaceConfig {
 
 ---
 
-## 8. Multi-Pass Rendering
+## 9. Multi-Pass Rendering
+
+For GPU-driven pipelines such as culling, scan, and compaction, model each pass as a narrow
+data transformation:
+
+```text
+flags -> chunk_counts -> chunk_offsets/block_sums -> block_offsets/indirect_args -> compacted_output
+```
+
+Rules:
+- keep outputs narrow and intentional
+- prefer one responsibility per pass over a pass that mutates unrelated buffers
+- assert scan hierarchy limits in Rust next to dispatch math
+- use separate shaders when passes have different ownership or hazard profiles
 
 Structure multi-pass as a sequence of pure pass descriptions.
 
@@ -453,6 +491,7 @@ fn plan_frame(scene: &Scene, config: &RenderConfig) -> FramePlan {
 
     if !config.post_effects.is_empty() {
         passes.push(PassKind::PostProcess {
+            // clone: FramePlan owns its pass descriptions beyond the config borrow
             effects: config.post_effects.clone(),
         });
     }
@@ -482,7 +521,14 @@ fn execute_frame(
 
 ---
 
-## 9. GPU Profiling Integration
+## 10. GPU Profiling Integration
+
+GPU timings are only useful when they isolate the work being discussed.
+
+- bracket actual compute or render work with timestamps
+- keep query index ownership obvious and documented
+- separate culling, draw, and composite timings when investigating regressions
+- if a metric is placeholder or invalid, expose that rather than reporting misleading numbers
 
 Wrap timing queries as composable decorators, not invasive modifications.
 
@@ -524,7 +570,7 @@ impl Drop for ProfileScope<'_> {
 
 ---
 
-## 10. Resource Lifetime Management
+## 11. Resource Lifetime Management
 
 Use a deferred deletion queue to safely destroy GPU resources.
 

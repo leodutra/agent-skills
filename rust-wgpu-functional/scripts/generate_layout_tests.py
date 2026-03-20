@@ -7,8 +7,8 @@ generates #[cfg(test)] assertion code verifying size, alignment, and
 cache-line fit.
 
 Usage:
-    python generate_layout_tests.py src/types.rs > src/types_layout_tests.rs
-    python generate_layout_tests.py src/ --recursive > tests/layout_tests.rs
+    python .github/skills/rust-wgpu-functional/scripts/generate_layout_tests.py src/types.rs > src/types_layout_tests.rs
+    python .github/skills/rust-wgpu-functional/scripts/generate_layout_tests.py src/ --recursive > tests/layout_tests.rs
 
 Annotation format — add comments above structs:
 

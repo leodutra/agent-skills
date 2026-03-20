@@ -162,6 +162,12 @@ fn apply_transform(positions: &mut [[f32; 4]], matrix: &[[f32; 4]; 4]) {
 - Pack small uniforms into a single buffer with offsets aligned to
   `min_uniform_buffer_offset_alignment`
 
+**Verification:**
+- Measure compute, draw, and composite passes separately before claiming a GPU win
+- Prefer fixed camera bookmarks or deterministic scenes for before/after comparisons
+- If a change adds passes, verify reduced contention or shader work outweighs dispatch overhead
+- Treat timestamp ranges that do not wrap actual work as invalid data, not rough estimates
+
 **Bind group change minimization:**
 ```rust
 fn sort_draw_calls_for_gpu(calls: &mut [DrawCall]) {
