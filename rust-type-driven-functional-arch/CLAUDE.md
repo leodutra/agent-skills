@@ -352,6 +352,9 @@ pub enum AppError {
 - **Exhaustive matching.** No `_` catch-alls unless justified (e.g., `#[non_exhaustive]` from external crates).
 - **Cancellation-safe orchestration.** Treat every `await` as a cancellation point in application and infrastructure code. Use transaction boundaries, outbox patterns, and idempotent operations so cancellation never leaves partial externally visible side effects.
 
+When this is required by default: any workflow that touches money, inventory, irreversible external side effects, or user-visible state transitions.
+Preferred patterns: DB transactions for atomic local changes, outbox for cross-system side effects, idempotency keys for retries, and at-least-once delivery assumptions for external effects.
+
 ### Function design
 
 - Small: one level of abstraction per function.
