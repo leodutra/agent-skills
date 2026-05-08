@@ -543,6 +543,25 @@ proptest! {
 - For each async use case, include at least one test that simulates cancellation between awaited steps.
 - Assert externally observable consistency after cancellation (no partial write + notify, no duplicate side effects on retry, durable state remains valid).
 
+```rust
+#[tokio::test]
+async fn create_order_is_cancellation_safe_between_persist_and_notify() {
+    let repo = FakeOrderRepo::new();
+    let notifier = BlockingNotifier::new(); // blocks until test releases it
+    let handler = CreateOrderHandler::new(repo.clone(), notifier.clone());
+
+    let task = tokio::spawn(handler.handle(valid_cmd()));
+    notifier.wait_until_called().await; // ensure we are at a cancellation-sensitive point
+    task.abort();
+    let _ = task.await; // JoinError expected
+
+    // Assert consistency after cancellation.
+    // Example policy: either both persist+notify happened, or neither; retries are idempotent.
+    assert!(repo.is_consistent());
+    assert!(notifier.no_duplicates());
+}
+```
+
 ---
 
 ## Before / After: Common Refactorings
@@ -656,6 +675,7 @@ Before approving any change:
 - [ ] Any stringly-typed error (`Err("...".into())`)? → Use a proper variant.
 - [ ] Any async orchestration vulnerable to cancellation at `await` points? → Ensure transactional/idempotent behavior and no partial externally visible side effects.
 - [ ] Tests cover happy path, at least one error path, and boundary parsing? → Add missing.
+- [ ] For async use cases, do tests include cancellation/interruption paths? → Add at least one cancellation safety test per critical workflow.
 
 ---
 
