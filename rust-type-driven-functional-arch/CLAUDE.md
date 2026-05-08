@@ -355,6 +355,16 @@ pub enum AppError {
 When this is required by default: any workflow that touches money, inventory, irreversible external side effects, or user-visible state transitions.
 Preferred patterns: DB transactions for atomic local changes, outbox for cross-system side effects, idempotency keys for retries, and at-least-once delivery assumptions for external effects.
 
+### Side-effect delivery semantics
+
+- Name delivery semantics explicitly per workflow: **at-most-once**, **at-least-once**, or **effectively-once** (via idempotency).
+- Treat "exactly once" as an implementation illusion across distributed boundaries; model duplicates and retries explicitly.
+- For critical external effects (payments, emails, webhooks), define:
+  - deduplication key source,
+  - replay window,
+  - observable duplicate behavior.
+- Prefer durable intent recording (transactional write/outbox) before external emission.
+
 ### Function design
 
 - Small: one level of abstraction per function.
@@ -564,6 +574,81 @@ async fn create_order_is_cancellation_safe_between_persist_and_notify() {
     assert!(notifier.no_duplicates());
 }
 ```
+
+### Domain invariant checklist
+
+For each domain type and aggregate, document and test:
+
+- Constructor invariants (what `new`/`parse` guarantees forever after).
+- Transition invariants (which state changes are valid/invalid).
+- Persistence invariants (DB roundtrip cannot create invalid domain states).
+- Serialization invariants (wire/db representation preserves meaning and compatibility).
+- Time/concurrency invariants (ordering, staleness, and version-conflict behavior where relevant).
+
+---
+
+## Reliability and Operations
+
+### Timeout and retry policy
+
+Set defaults centrally (override only with explicit justification):
+
+| Operation type                       | Timeout | Retries | Backoff                | Notes |
+|--------------------------------------|---------|---------|------------------------|-------|
+| DB read/write in request path        | 1-3s    | 0-1     | small fixed/jitter     | Prefer DB-level transaction semantics over retry loops. |
+| Internal HTTP/gRPC (same trust zone) | 0.5-2s  | 1-2     | exponential + jitter   | Retry transient transport/service-unavailable only. |
+| External third-party API             | 2-10s   | 2-3     | exponential + jitter   | Always pair retries with idempotency keys. |
+| Queue publish/consume ack            | broker-defined | policy-defined | broker/client strategy | Assume at-least-once delivery; consumer must be idempotent. |
+
+Rules:
+
+- Retry only transient failures (timeouts, 5xx, connection resets), never business-rule rejections.
+- Every retry policy must define max attempts and total retry budget.
+- Cancellation must stop retries immediately unless a durable handoff has already occurred.
+- Surface retry exhaustion as a typed error variant with operation context.
+
+### Observability requirements
+
+Every application use case and external side effect must emit:
+
+- Structured logs (JSON or key-value) with request/correlation ID and domain identifiers.
+- Tracing spans around each use case and each infrastructure call.
+- Result markers for side effects: `attempted`, `succeeded`, `failed`, `retried`, `deduplicated`.
+
+Minimum fields for logs/spans:
+
+- `request_id` / `correlation_id`
+- use-case name
+- primary domain IDs (`order_id`, `customer_id`, etc.)
+- retry attempt index (if any)
+- timeout/cancellation status
+- typed error class/variant on failure
+
+---
+
+## Rust Runtime and Boundary Rules
+
+### Async boundary constraints (`Send`/`Sync`/`'static`)
+
+- Values crossing task boundaries (`tokio::spawn`, work queues, background workers) must satisfy runtime constraints explicitly (`Send + 'static` when required).
+- Avoid borrowing non-`'static` references into spawned tasks; move owned data instead.
+- Prefer `Arc<T>` + immutable state over shared mutable state; if mutation is necessary, justify synchronization primitives at module boundary.
+- Treat `spawn_blocking` as a boundary for CPU/blocking IO work only; keep domain logic pure regardless.
+
+### Panic policy
+
+- `panic!`/`unwrap()`/`expect()` are forbidden in production paths in domain, application, and infrastructure.
+- Allowed in tests and irrecoverable bootstrap failures in `main.rs` (with clear crash message).
+- Library code should return typed errors, not panic, for any invalid runtime input or dependency failure.
+- If a panic boundary exists (FFI/task supervisor), convert panic to a controlled failure signal and emit telemetry.
+
+### Versioned DTO and event schemas
+
+- External DTOs/events are versioned contracts: prefer additive changes, avoid breaking removals/renames.
+- Unknown fields must be tolerated where protocol allows; missing required fields must fail with typed validation errors.
+- Introduce schema/version markers for long-lived events and cross-service messages.
+- Deprecations require a compatibility window and explicit removal criteria.
+- Mapping from wire DTO/event -> domain types remains at boundaries via `TryFrom`.
 
 ---
 
