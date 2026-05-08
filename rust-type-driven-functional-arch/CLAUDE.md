@@ -14,6 +14,15 @@ Three axioms drive every decision:
 3. **Ownership is architecture.** Who owns a value, who borrows it, and who consumes it — these
    are not implementation details, they *are* the design.
 
+### Scope and applicability
+
+This doctrine is optimized for service-style Rust systems: backend APIs, orchestration-heavy
+applications, and business workflows with strong invariants and integration boundaries.
+
+For game engines, databases, kernels, realtime simulation, embedded systems, or other
+throughput/latency-dominated domains, treat this as a starting point and bias toward
+data-oriented layout, locality, and explicit mutation where that wins.
+
 ---
 
 ## Architecture: Functional Core / Imperative Shell
@@ -40,7 +49,8 @@ Three axioms drive every decision:
           └─────────────────────────────┘
 ```
 
-- Domain logic is **pure**: no IO, no async, no database calls, no side effects.
+- Domain logic is **pure with respect to infrastructural side effects**: no DB/network/filesystem IO in `domain/`.
+- Temporal/business semantics (ordering, deadlines, causality) may still be modeled in domain types and transitions.
 - All effectful operations (DB, HTTP, filesystem, queues) live in infrastructure.
 - The application layer orchestrates — it calls domain logic and infrastructure ports.
 - Dependencies flow **inward only** — domain never imports from infrastructure or application.
@@ -379,6 +389,14 @@ Preferred patterns: DB transactions for atomic local changes, outbox for cross-s
 - `mut` only when performance requires it **and** mutation is local to the function.
 - Never expose `&mut self` across module boundaries without justification.
 - Interior mutability (`Cell`, `RefCell`, `Mutex`) is a code smell in domain — justify every use.
+- Prefer ownership-first APIs over incidental cloning, but freely clone in cold paths or for small values when it improves clarity.
+
+### Semantic ownership vs memory ownership
+
+- Memory ownership answers "who drops this value?".
+- Semantic ownership answers "which bounded context is the source of truth?".
+- Keep these separate in design reviews: a type may be memory-owned in one module while semantically owned by another context.
+- APIs should preserve semantic authority boundaries even when Rust memory ownership is moved, cloned, or shared via `Arc`.
 
 ---
 
@@ -444,8 +462,8 @@ fn process_order(
 - `domain/` importing from `infrastructure/` or `application/`.
 - Validating the same invariant in multiple places after the boundary.
 - Traits with a single implementor and no test double.
-- `&mut self` as a default — justify every mutation.
-- `clone()` to satisfy the borrow checker — restructure ownership instead.
+- `&mut self` as a default in cross-module APIs — justify every mutation.
+- `clone()` in hot paths or large-object loops without a reason — redesign ownership or document why clone is acceptable.
 - God-mode `App` or `Context` struct passed everywhere.
 
 ---
@@ -741,6 +759,7 @@ Architecture guidance that doesn't say "when not to" is dogma. Apply judgment.
 | Reach for `Result` chains everywhere    | Is this a straight-line function that can't fail? Just return the value.|
 | Ban `clone()` absolutely                | Is this a cold path with small data? A clone is fine. Comment why.     |
 | Introduce CQRS command/query split      | Does this use case have different read and write models? If not, overkill.|
+| Force immutable-return modeling in hot loops | Would local mutation or data-oriented layout improve cache locality and throughput? |
 
 The goal is **working software with clear boundaries** — not architectural purity for its own sake.
 
@@ -751,7 +770,7 @@ The goal is **working software with clear boundaries** — not architectural pur
 Before approving any change:
 
 - [ ] Any raw `String`, `i64`, or `Uuid` in domain function signatures? → Wrap in newtype.
-- [ ] Any IO or `async` in `domain/`? → Move to infrastructure.
+- [ ] Any infrastructural side effects (DB/network/filesystem) in `domain/`? → Move to infrastructure.
 - [ ] Any validation after the boundary (re-checking a parsed type)? → Remove.
 - [ ] Any `_ => {}` on a domain enum? → Match exhaustively.
 - [ ] Any trait with a single implementor and no test double? → Remove the trait.
