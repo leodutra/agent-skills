@@ -350,6 +350,7 @@ pub enum AppError {
 - **Railway-oriented programming.** Chain operations through `Result`/`Option` pipelines with `and_then`, `map`, `map_err`.
 - **Total functions.** Handle all input cases. No panics on valid input.
 - **Exhaustive matching.** No `_` catch-alls unless justified (e.g., `#[non_exhaustive]` from external crates).
+- **Cancellation-safe orchestration.** Treat every `await` as a cancellation point in application and infrastructure code. Use transaction boundaries, outbox patterns, and idempotent operations so cancellation never leaves partial externally visible side effects.
 
 ### Function design
 
@@ -537,6 +538,11 @@ proptest! {
 - Framework glue (Axum route registration, serde derives) — unless custom logic is involved.
 - Things the compiler already guarantees (typestate transitions that don't compile).
 
+### Cancellation safety tests
+
+- For each async use case, include at least one test that simulates cancellation between awaited steps.
+- Assert externally observable consistency after cancellation (no partial write + notify, no duplicate side effects on retry, durable state remains valid).
+
 ---
 
 ## Before / After: Common Refactorings
@@ -648,6 +654,7 @@ Before approving any change:
 - [ ] Any `&mut self` that could be `&self` with a returned new value? → Prefer immutable.
 - [ ] Any domain module importing from infrastructure? → Invert the dependency.
 - [ ] Any stringly-typed error (`Err("...".into())`)? → Use a proper variant.
+- [ ] Any async orchestration vulnerable to cancellation at `await` points? → Ensure transactional/idempotent behavior and no partial externally visible side effects.
 - [ ] Tests cover happy path, at least one error path, and boundary parsing? → Add missing.
 
 ---
