@@ -2,7 +2,7 @@
 
 ## Precedence
 
-These guidelines take precedence over standard language idioms, common coding conventions, and standard library defaults. Prioritize the patterns defined here in all code generation and review.
+These guidelines take precedence over standard language idioms, common coding conventions, and standard library defaults. Prioritize the patterns defined here in all code generation and review. If an important technical conflict arises, propose alternatives or seek clarification during the planning phase.
 
 ## Philosophy
 
