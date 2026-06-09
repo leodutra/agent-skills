@@ -24,6 +24,15 @@ Two axioms drive the type-level decisions:
 All external data is untrusted. Parse it into a precise type at the edge — once. After parsing
 succeeds, that type is trusted everywhere. Never re-check the same invariant downstream.
 
+**Boundary Parsing Principle**: Every trust boundary must re-parse raw data. This applies to:
+
+- **HTTP / RPC Requests** (untrusted client payload)
+- **Database Reads** (data could have been corrupted or modified out-of-process)
+- **Message Queues & Event Streams** (external producers or schema skew)
+- **Files & Environment Variables** (untrusted filesystem or runtime context)
+
+Each boundary produces verified, well-formed domain types from unchecked external structures.
+
 **Inbound:** `TryFrom` / `TryInto` (fallible — external data can be invalid).
 **Outbound:** `From` / `Into` (infallible — the validated type is already good).
 
@@ -105,7 +114,7 @@ impl AppConfig {
 
 - **Parse, don't validate.** Parse once at edges, trust types forever after.
 - **Make illegal states unrepresentable.** Use enums with variant-specific data, not structs with optional fields.
-- **Newtypes over primitives.** Avoid raw `String`, `i64`, or `Uuid` in meaningful signatures.
+- **Newtypes over primitives.** Use newtypes (e.g., `OrderId`, `CustomerId`, `Email`) in meaningful signatures to prevent argument confusion, protect domain invariants, and express business language. Do not over-wrap low-impact, local strings (like `FirstName` or `CityName`) unless they have distinct, structural invariants to maintain.
 - **Typestate for workflows.** Model state machines as generic type parameters. Invalid transitions must not compile.
 - **ADTs are the modeling language.** Enums + structs replace class hierarchies.
 - **Immutable values over mutable state.** State transitions return new values.
@@ -184,7 +193,12 @@ impl Order {
         Ok(Self { status, ..self })
     }
 }
-```
+
+### Healthy Defaults
+
+Only implement the standard `Default` trait when a single, obvious, semantically valid default state exists (e.g., `Vec::new()`, `HashMap::new()`, or configuration structs with secure, robust fallback values).
+
+**Avoid artificial defaults:** Do not implement `Default` for core domain types like `Email`, `Money`, or `Customer` if doing so forces the creation of dummy or nonsensical states (such as placing empty strings/zero/invalid IDs into trusted models). Let compilation fail when a field is missing, or require explicit construction parameters, rather than silencing compilation with a dummy value.
 
 ---
 
@@ -289,11 +303,18 @@ Rules:
 
 ### Mutation discipline
 
-- Default to immutable. State transitions return new values.
-- `mut` only when performance requires it **and** mutation is local to the function.
-- Never expose `&mut self` across module boundaries without justification.
-- Interior mutability (`Cell`, `RefCell`, `Mutex`) is a code smell in pure logic — justify every use.
-- Prefer ownership-first APIs over incidental cloning, but freely clone in cold paths or for small values when it improves clarity.
+- Default to immutable style APIs. Value transformations return new instances.
+- Expose `&mut self` when local in-place mutation is the natural conceptual model (e.g., updating a buffer, modifying cache contents), improves performance significantly, or avoids roundtrip object allocations.
+- Require justification or explicit design when exposing public `&mut self` methods across core module boundaries.
+- Interior mutability (`Cell`, `RefCell`, `Mutex`) is a code smell in pure, side-effect-free domain logic — justify every use with multithreading or structural dependency needs.
+- Prefer ownership-first APIs over incidental cloning, but freely clone in cold/configuration/administrative paths when it simplifies ownership.
+
+### Allocation & Zero-Copy Discipline
+
+- **Owned Types (`String`, `Vec<T>`)** are the default for long-lived application state, domain models stored in memory, database rows, and cross-thread messaging.
+- **Borrowed Types (`&str`, `&[T]`)** are for quick validation, short-lived helper variables, and zero-allocation parsing at the very edge of input processing.
+- **`Cow<'a, T>` (Clone-on-Write)** is for data that is mostly read-only but occasionally requires cloning/mutating (e.g., unescaping strings or templating).
+- **Rule of thumb:** Do not introduce reference lifetimes into structs unless you have profiled the application and verified that allocation is a performance bottleneck. Owned APIs are vastly easier to compose, refactor, and spawn across tasks.
 
 ---
 
@@ -355,7 +376,7 @@ fn process_order(
 - `_ => {}` silencing the compiler on your own enums.
 - Re-validating the same invariant in multiple places after it's been parsed once.
 - Traits with a single implementor and no test double.
-- `&mut self` as a default in cross-module APIs — justify every mutation.
+- Public `&mut self` methods exposed blindly in core transactional APIs where pure functional transformations describe the domain better.
 - `clone()` in hot paths or large-object loops without a reason — redesign ownership or document why clone is acceptable.
 - God-mode `App` or `Context` struct passed everywhere.
 
