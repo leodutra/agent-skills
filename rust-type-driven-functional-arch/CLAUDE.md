@@ -1,146 +1,43 @@
-# Rust Project — Type-Driven Functional Architecture
+# Rust — Idiomatic Type-Driven Patterns
 
 ## Philosophy
 
 Rust's ownership system already enforces discipline that other languages simulate with
 patterns. This codebase leans into that: the type system carries invariants, the borrow
-checker enforces boundaries, and algebraic data types model the domain. Most GoF patterns
-collapse into enums, traits, and generics. Complexity lives at compile-time, not runtime.
+checker enforces boundaries, and algebraic data types model the problem. Most GoF patterns
+collapse into enums, traits, and generics. Push complexity to compile-time, not runtime.
 
-Three axioms drive every decision:
+Two axioms drive the type-level decisions:
 
-1. **If it compiles, it's valid.** Encode business rules in types so invalid states cannot exist.
-2. **Pure core, thin shell.** Domain logic computes. Infrastructure executes. They never mix.
-3. **Ownership is architecture.** Who owns a value, who borrows it, and who consumes it — these
-   are not implementation details, they *are* the design.
-
-### Scope and applicability
-
-This doctrine is optimized for service-style Rust systems: backend APIs, orchestration-heavy
-applications, and business workflows with strong invariants and integration boundaries.
-
-For game engines, databases, kernels, realtime simulation, embedded systems, or other
-throughput/latency-dominated domains, treat this as a starting point and bias toward
-data-oriented layout, locality, and explicit mutation where that wins.
+1. **If it compiles, it's valid.** Encode rules in types so invalid states cannot exist.
+2. **Ownership is design.** Who owns a value, who borrows it, and who consumes it are not
+   implementation details — they shape the API.
 
 ---
 
-## Architecture: Functional Core / Imperative Shell
+## Parse, Don't Validate
 
-```
-          ┌─────────────────────────────┐
-          │       Interface Layer       │  HTTP handlers, CLI, gRPC
-          │  (parse input → commands)   │
-          └────────────┬────────────────┘
-                       │ commands / queries
-          ┌────────────▼────────────────┐
-          │     Application Layer       │  Orchestration, use cases
-          │  (wire domain + infra)      │  async lives here
-          └────────────┬────────────────┘
-                       │ pure calls
-          ┌────────────▼────────────────┐
-          │       Domain Layer          │  Pure types + logic
-          │  (no IO, no async, no deps) │  the core
-          └────────────┬────────────────┘
-                       │ port traits
-          ┌────────────▼────────────────┐
-          │   Infrastructure Layer      │  DB, HTTP clients, queues
-          │  (implements port traits)   │  side effects here
-          └─────────────────────────────┘
-```
-
-- Domain logic is **pure with respect to infrastructural side effects**: no DB/network/filesystem IO in `domain/`.
-- Temporal/business semantics (ordering, deadlines, causality) may still be modeled in domain types and transitions.
-- All effectful operations (DB, HTTP, filesystem, queues) live in infrastructure.
-- The application layer orchestrates — it calls domain logic and infrastructure ports.
-- Dependencies flow **inward only** — domain never imports from infrastructure or application.
-
----
-
-## Crate Layout
-
-```
-src/
-├── main.rs                     # Wiring: build deps, start server/runtime
-├── lib.rs                      # Re-exports public API
-│
-├── domain/                     # Pure core — zero external deps beyond std + domain crates
-│   ├── mod.rs                  # Public facade: re-exports only what other layers need
-│   ├── model.rs                # Core types: newtypes, enums, value objects
-│   ├── error.rs                # Domain error enum
-│   ├── logic.rs                # Pure functions operating on domain types
-│   └── ports.rs                # Trait definitions (Repository, Notifier, etc.)
-│
-├── application/                # Use-case orchestration — async allowed here
-│   ├── mod.rs
-│   ├── commands.rs             # Command structs (input DTOs for writes)
-│   ├── queries.rs              # Query structs (input DTOs for reads)
-│   └── handlers.rs             # Use-case functions: wire domain + infra
-│
-├── infrastructure/             # Side effects — implements port traits
-│   ├── mod.rs
-│   ├── persistence/            # DB adapters (sqlx, diesel, etc.)
-│   │   ├── mod.rs
-│   │   └── order_repo.rs       # impl OrderRepository for PgOrderRepo
-│   ├── http_client/            # External API clients
-│   └── config.rs               # Typed config from env/files
-│
-└── interface/                  # Inbound adapters
-    ├── mod.rs
-    ├── http/                   # Axum/Actix handlers
-    │   ├── mod.rs
-    │   ├── routes.rs
-    │   └── dto.rs              # Request/response types — parse into domain at boundary
-    └── cli/                    # CLI entrypoints if applicable
-```
-
-**Rules:**
-- `domain/` has **no** dependencies on `application/`, `infrastructure/`, or `interface/`.
-- `domain/` Cargo deps: only `thiserror`, `serde` (derive only), and domain math/utility crates.
-- `application/` depends on `domain/` only. It receives infra as trait objects or generics.
-- `infrastructure/` depends on `domain/` (to implement port traits). Never on `application/`.
-- `interface/` depends on `application/` and `domain/` (for types). Calls handlers.
-- `main.rs` is the only place all layers meet — it constructs and wires everything.
-
-For a feature that grows beyond 3–4 files, give it its own sub-module inside `domain/`:
-
-```
-domain/
-├── order/
-│   ├── mod.rs          # public facade
-│   ├── model.rs        # Order, OrderLine, OrderStatus
-│   ├── error.rs        # OrderError
-│   ├── logic.rs        # calculate_total, apply_discount — pure fns
-│   └── ports.rs        # trait OrderRepository
-└── mod.rs              # re-exports domain::order::*
-```
-
----
-
-## Boundary Parsing
-
-All external data is untrusted. Parse it into domain types at the boundary — once. After
-parsing succeeds, the domain type is trusted everywhere. Never validate again.
+All external data is untrusted. Parse it into a precise type at the edge — once. After parsing
+succeeds, that type is trusted everywhere. Never re-check the same invariant downstream.
 
 **Inbound:** `TryFrom` / `TryInto` (fallible — external data can be invalid).
-**Outbound:** `From` / `Into` (infallible — the domain type is already valid).
+**Outbound:** `From` / `Into` (infallible — the validated type is already good).
 
-### HTTP request → domain type
+### External input → validated type
 
 ```rust
-// interface/http/dto.rs
 #[derive(Deserialize)]
 pub struct CreateOrderRequest {
     pub customer_id: String,
     pub items: Vec<OrderItemDto>,
 }
 
-// Parsing happens HERE — boundary between outside world and domain
-impl TryFrom<CreateOrderRequest> for CreateOrderCommand {
+// Parsing happens HERE — the edge between the outside world and trusted types.
+impl TryFrom<CreateOrderRequest> for CreateOrder {
     type Error = ValidationError;
 
     fn try_from(req: CreateOrderRequest) -> Result<Self, Self::Error> {
-        Ok(CreateOrderCommand {
+        Ok(CreateOrder {
             customer: CustomerId::parse(req.customer_id)?,
             items: req.items
                 .into_iter()
@@ -151,10 +48,9 @@ impl TryFrom<CreateOrderRequest> for CreateOrderCommand {
 }
 ```
 
-### DB row → domain type
+### DB row → typed value
 
 ```rust
-// infrastructure/persistence/order_repo.rs
 struct OrderRow {
     id: i64,
     customer_id: String,
@@ -180,50 +76,19 @@ impl TryFrom<OrderRow> for Order {
 ### Env vars → typed config
 
 ```rust
-// infrastructure/config.rs
 pub struct AppConfig {
-    pub db: DatabaseConfig,
-    pub server: ServerConfig,
-}
-
-pub struct DatabaseConfig {
-    pub url: DatabaseUrl,        // newtype — validated on construction
-    pub max_connections: PoolSize,
+    pub db_url: DatabaseUrl,        // newtype — validated on construction
+    pub pool_size: PoolSize,
+    pub port: Port,
 }
 
 impl AppConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         Ok(Self {
-            db: DatabaseConfig {
-                url: DatabaseUrl::parse(env_required("DATABASE_URL")?)?,
-                max_connections: PoolSize::parse(env_or("DB_POOL_SIZE", "10"))?,
-            },
-            server: ServerConfig {
-                port: Port::parse(env_or("PORT", "8080"))?,
-            },
+            db_url: DatabaseUrl::parse(env_required("DATABASE_URL")?)?,
+            pool_size: PoolSize::parse(env_or("DB_POOL_SIZE", "10"))?,
+            port: Port::parse(env_or("PORT", "8080"))?,
         })
-    }
-}
-```
-
-### Partial updates without reintroducing invalid states
-
-```rust
-// Command carries only the fields being updated — each already parsed
-pub struct UpdateOrderCommand {
-    pub order_id: OrderId,
-    pub new_status: Option<OrderStatus>,    // already a valid enum variant
-    pub shipping: Option<ShippingAddress>,   // already parsed newtype
-}
-
-// Domain logic decides whether the transition is valid
-impl Order {
-    pub fn apply_update(self, cmd: UpdateOrderCommand) -> Result<Self, OrderError> {
-        let status = match cmd.new_status {
-            Some(new) => self.status.transition_to(new)?,  // pure validation
-            None => self.status,
-        };
-        Ok(Self { status, ..self })
     }
 }
 ```
@@ -234,12 +99,12 @@ impl Order {
 
 ### Core rules
 
-- **Parse, don't validate.** Parse once at boundaries, trust types forever after.
+- **Parse, don't validate.** Parse once at edges, trust types forever after.
 - **Make illegal states unrepresentable.** Use enums with variant-specific data, not structs with optional fields.
-- **Newtypes over primitives.** No raw `String`, `i64`, or `Uuid` in domain signatures.
+- **Newtypes over primitives.** Avoid raw `String`, `i64`, or `Uuid` in meaningful signatures.
 - **Typestate for workflows.** Model state machines as generic type parameters. Invalid transitions must not compile.
 - **ADTs are the modeling language.** Enums + structs replace class hierarchies.
-- **Value objects over mutable entities.** State transitions return new values.
+- **Immutable values over mutable state.** State transitions return new values.
 
 ### Newtype pattern
 
@@ -294,16 +159,36 @@ type is local to a single function.
 **Use a smart constructor** (newtype + `parse`) when: there's no state machine, just an
 invariant to enforce (e.g., non-empty string, positive integer, valid email).
 
+### Partial updates without invalid states
+
+When only some fields change, model the update as a struct of `Option`s where each *present*
+field is already a parsed type. The update can't smuggle in an invalid value, and the type
+itself decides whether the transition is legal — the validation stays in one place.
+
+```rust
+pub struct OrderUpdate {
+    pub new_status: Option<OrderStatus>,    // already a valid enum variant
+    pub shipping: Option<ShippingAddress>,  // already a parsed newtype
+}
+
+impl Order {
+    pub fn apply(self, update: OrderUpdate) -> Result<Self, OrderError> {
+        let status = match update.new_status {
+            Some(next) => self.status.transition_to(next)?,  // transition rule lives here
+            None => self.status,
+        };
+        Ok(Self { status, ..self })
+    }
+}
+```
+
 ---
 
 ## Error Modeling
 
-Errors are typed, layered, and never stringly typed.
-
-### Layer separation
+Errors are typed and structured — never stringly typed.
 
 ```rust
-// domain/error.rs — business rule violations, no infrastructure concerns
 #[derive(Debug, thiserror::Error)]
 pub enum OrderError {
     #[error("cannot transition from {from} to {to}")]
@@ -314,66 +199,81 @@ pub enum OrderError {
     EmptyOrder,
 }
 
-// infrastructure/error.rs — technical failures
-#[derive(Debug, thiserror::Error)]
-pub enum InfraError {
-    #[error("database query failed")]
-    Database(#[from] sqlx::Error),
-    #[error("external service unavailable: {service}")]
-    ServiceDown { service: &'static str },
-    #[error("data corruption in {entity}: {detail}")]
-    DataCorruption { entity: &'static str, detail: String },
-}
-
-// application/error.rs — combines both layers for use-case results
+// Compose lower-level errors into higher-level ones via `From` so `?` just works.
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
     #[error(transparent)]
-    Domain(#[from] OrderError),
-    #[error(transparent)]
-    Infra(#[from] InfraError),
+    Order(#[from] OrderError),
     #[error(transparent)]
     Validation(#[from] ValidationError),
+    #[error("database query failed")]
+    Database(#[from] sqlx::Error),
 }
 ```
 
 ### Rules
 
-| Layer          | Error type             | Crates allowed                        |
-|----------------|------------------------|---------------------------------------|
-| Domain         | Domain-specific enum   | `thiserror` only                      |
-| Infrastructure | Infra-specific enum    | `thiserror`, wraps driver errors      |
-| Application    | Composite enum         | `thiserror`, `From` impls for layers  |
-| Interface      | HTTP/CLI error mapping | `thiserror` or `anyhow` (only here)   |
-| `main.rs`      | Top-level              | `anyhow` / `eyre` allowed             |
-
-- `anyhow` / `eyre` never appear in domain or infrastructure.
 - Error variants carry **structured context** (types, IDs, amounts) — not format strings.
 - `?` composes errors through `From` impls. Write the `From` chain explicitly.
-- Domain errors are **decisions** the business cares about. Infra errors are **incidents** ops cares about.
+- `thiserror` for typed library errors; `anyhow` / `eyre` only at the top level (`main.rs`, CLI),
+  never in reusable library code.
+- No `Err("something went wrong".into())`.
+
+---
+
+## Invariants and Assertions
+
+The type system is the first and best place to enforce an invariant — but not every invariant
+can be encoded in a type. When one can't, be deliberate about *how* it fails. There's an
+escalation order:
+
+1. **Encode it in a type.** A non-empty list → `NonEmpty<T>`. A parsed value → a newtype.
+   *If the invariant can be represented in the type system, do not enforce it with a runtime assertion.*
+2. **Return a typed error** for anything recoverable — bad input, a failed transition, a violated
+   rule. These are expected at runtime, not bugs.
+3. **Assert only for "impossible" states** — conditions that, if false, mean the program has a bug,
+   not that the input was bad.
+
+```rust
+impl Order {
+    pub fn confirm(self) -> Result<ConfirmedOrder, OrderError> {
+        // Recoverable: a caller can legitimately hit this → typed error.
+        if self.total > self.credit_limit {
+            return Err(OrderError::CreditLimitExceeded {
+                total: self.total,
+                limit: self.credit_limit,
+            });
+        }
+
+        // "Impossible" by construction: Order can only be built with >=1 item.
+        // If this ever fires, a constructor invariant was broken — that's our bug, not bad input.
+        debug_assert!(!self.items.is_empty(), "Order invariant violated: empty items");
+
+        Ok(ConfirmedOrder { /* ... */ })
+    }
+}
+```
+
+Rules:
+
+- Encode invariants in types first; assertions are the fallback, not the default.
+- Return typed errors for recoverable runtime failures (bad input, invalid transition, rule violation).
+- Use `debug_assert!()` for impossible states that indicate a programmer mistake — it costs nothing in release builds.
+- Use `assert!()` (always on) only when continuing past the violation would be unsafe or corrupt state.
+- Never use assertions for user input validation — that's `parse`, returning a typed error.
+- Prefer exhaustive `match` over `unreachable!()`; reach for `unreachable!()` only when the
+  compiler can't see the exhaustiveness and a typed error makes no sense.
+
+> If an invariant can be represented in the type system, do not enforce it with a runtime assertion.
 
 ---
 
 ## Behavior Rules
 
-- **Tell, don't ask.** Don't inspect state then decide — give types the info they need and let them act.
-- **Railway-oriented programming.** Chain operations through `Result`/`Option` pipelines with `and_then`, `map`, `map_err`.
+- **Tell, don't ask.** Don't inspect state then decide externally — give types the info they need and let them act.
+- **Railway-oriented.** Chain operations through `Result` / `Option` pipelines with `and_then`, `map`, `map_err`.
 - **Total functions.** Handle all input cases. No panics on valid input.
 - **Exhaustive matching.** No `_` catch-alls unless justified (e.g., `#[non_exhaustive]` from external crates).
-- **Cancellation-safe orchestration.** Treat every `await` as a cancellation point in application and infrastructure code. Use transaction boundaries, outbox patterns, and idempotent operations so cancellation never leaves partial externally visible side effects.
-
-When this is required by default: any workflow that touches money, inventory, irreversible external side effects, or user-visible state transitions.
-Preferred patterns: DB transactions for atomic local changes, outbox for cross-system side effects, idempotency keys for retries, and at-least-once delivery assumptions for external effects.
-
-### Side-effect delivery semantics
-
-- Name delivery semantics explicitly per workflow: **at-most-once**, **at-least-once**, or **effectively-once** (via idempotency).
-- Treat "exactly once" as an implementation illusion across distributed boundaries; model duplicates and retries explicitly.
-- For critical external effects (payments, emails, webhooks), define:
-  - deduplication key source,
-  - replay window,
-  - observable duplicate behavior.
-- Prefer durable intent recording (transactional write/outbox) before external emission.
 
 ### Function design
 
@@ -388,24 +288,15 @@ Preferred patterns: DB transactions for atomic local changes, outbox for cross-s
 - Default to immutable. State transitions return new values.
 - `mut` only when performance requires it **and** mutation is local to the function.
 - Never expose `&mut self` across module boundaries without justification.
-- Interior mutability (`Cell`, `RefCell`, `Mutex`) is a code smell in domain — justify every use.
+- Interior mutability (`Cell`, `RefCell`, `Mutex`) is a code smell in pure logic — justify every use.
 - Prefer ownership-first APIs over incidental cloning, but freely clone in cold paths or for small values when it improves clarity.
-
-### Semantic ownership vs memory ownership
-
-- Memory ownership answers "who drops this value?".
-- Semantic ownership answers "which bounded context is the source of truth?".
-- Keep these separate in design reviews: a type may be memory-owned in one module while semantically owned by another context.
-- APIs should preserve semantic authority boundaries even when Rust memory ownership is moved, cloned, or shared via `Arc`.
 
 ---
 
 ## Dependency Injection
 
-- Traits define **capabilities** (ports): `trait OrderRepository`, `trait PaymentGateway`.
-- Concrete implementations live in `infrastructure/`.
-- Application handlers receive ports as generic parameters or trait objects.
-- Test doubles implement the same traits.
+- Traits define **capabilities** — name them by what they do, not by a structural role: `trait LoadOrders`, `trait ChargePayment`.
+- Callers receive these as generic parameters or trait objects; test doubles implement the same traits.
 
 ### When to introduce a trait
 
@@ -438,29 +329,27 @@ fn process_order(
 - Conversions: `to_*` (allocates), `as_*` (borrowed view), `into_*` (consuming).
 - Booleans: `is_` or `has_` prefix.
 - Ban: `data`, `info`, `item`, `handler`, `manager`, `service`, `utils`, `helpers`, `misc`.
-- Use domain vocabulary from the business — not programmer jargon.
+- Use vocabulary from the problem you're solving — not programmer jargon.
 
 ---
 
 ## Pattern Palette
 
-**Use freely:** newtypes, ADTs (enum modeling), `TryFrom`/`From` at boundaries, `Result`/`Option` pipelines, tell-don't-ask, function composition, CQRS command/query split, module facades, traits-as-capabilities, smart constructors, exhaustive matching.
+**Use freely:** newtypes, ADTs (enum modeling), `TryFrom`/`From` at edges, `Result`/`Option` pipelines, tell-don't-ask, function composition, module facades, traits-as-capabilities, smart constructors, exhaustive matching.
 
 **Use when justified:** typestate (3+ states, cross-module), builder (many optional params), trait-based strategy (when closures won't do — multiple methods needed), `Arc<dyn Trait>` (genuinely heterogeneous collections).
 
-**Avoid:** Visitor (use `match`), Singleton (use DI), classic Factory (use `TryFrom`/`parse`), service objects holding domain logic, `Box<dyn Any>` downcasting, marker traits without compiler enforcement.
+**Avoid:** Visitor (use `match`), Singleton (use DI), classic Factory (use `TryFrom`/`parse`), `Box<dyn Any>` downcasting, marker traits without compiler enforcement.
 
 ---
 
 ## Anti-Patterns to Reject
 
-- `UserService` / `OrderManager` god objects accumulating domain logic.
-- Raw `String`, `i64`, `Uuid` leaking through domain function signatures.
-- `async fn` or IO anywhere in `domain/`.
+- `UserService` / `OrderManager` god objects accumulating unrelated logic.
+- Raw `String`, `i64`, `Uuid` leaking through meaningful function signatures.
 - `Err("something went wrong".into())` — string errors.
-- `_ => {}` silencing the compiler on domain enums.
-- `domain/` importing from `infrastructure/` or `application/`.
-- Validating the same invariant in multiple places after the boundary.
+- `_ => {}` silencing the compiler on your own enums.
+- Re-validating the same invariant in multiple places after it's been parsed once.
 - Traits with a single implementor and no test double.
 - `&mut self` as a default in cross-module APIs — justify every mutation.
 - `clone()` in hot paths or large-object loops without a reason — redesign ownership or document why clone is acceptable.
@@ -468,11 +357,85 @@ fn process_order(
 
 ---
 
+## Async / Runtime Rules
+
+### Boundary constraints (`Send` / `Sync` / `'static`)
+
+- Values crossing task boundaries (`tokio::spawn`, work queues, background workers) must satisfy runtime constraints explicitly (`Send + 'static` when required).
+- Avoid borrowing non-`'static` references into spawned tasks; move owned data instead.
+- Prefer `Arc<T>` + immutable state over shared mutable state; if mutation is necessary, justify the synchronization primitive.
+- Treat `spawn_blocking` as a boundary for CPU/blocking IO work only.
+
+### Cancellation safety
+
+- Treat every `await` as a cancellation point.
+- For workflows touching money, inventory, irreversible external effects, or user-visible state,
+  use transaction boundaries and idempotent operations so cancellation never leaves a partial,
+  externally visible side effect.
+
+### Panic policy
+
+- `panic!` / `unwrap()` / `expect()` are forbidden in production paths.
+- Allowed in tests and in irrecoverable bootstrap failures in `main.rs` (with a clear crash message).
+- Library code returns typed errors, not panics, for invalid runtime input or dependency failure.
+- At any panic boundary (FFI, task supervisor), convert the panic to a controlled failure signal.
+
+---
+
+## Before / After: Common Refactorings
+
+### Primitive obsession → newtypes
+
+```rust
+// BEFORE — can silently swap customer_id and order_id
+fn cancel_order(customer_id: i64, order_id: i64) -> Result<()> { ... }
+
+// AFTER — compiler rejects swapped arguments
+fn cancel_order(customer: CustomerId, order: OrderId) -> Result<(), OrderError> { ... }
+```
+
+### Scattered validation → parse-once edge
+
+```rust
+// BEFORE — validates in handler, again in repo, again in model
+fn handler(email: String) {
+    if !email.contains('@') { panic!("bad email"); }   // handler validates
+    save_user(email.clone());                           // repo validates again?
+}
+
+// AFTER — parsed once, trusted everywhere
+fn handler(req: RegisterRequest) -> Result<(), AppError> {
+    let cmd = RegisterInput::try_from(req)?;  // Email::parse() happens here
+    save_user(cmd.email);                     // Email type is trusted — no check
+    Ok(())
+}
+```
+
+---
+
+## Tradeoff Rules
+
+Guidance that doesn't say "when not to" is dogma. Apply judgment.
+
+| If you're tempted to...                 | Ask first                                                              |
+|-----------------------------------------|------------------------------------------------------------------------|
+| Add typestate to a 2-state enum         | Is a simple enum with a `transition()` method enough?                  |
+| Create a trait for one implementation   | Will there ever be a second impl, or do you just need a test double?   |
+| Wrap every primitive in a newtype       | Does this primitive cross a module boundary? If it's local, don't wrap.|
+| Make everything immutable               | Is this a hot loop mutating a buffer? Local `mut` is fine.             |
+| Split a file into 5 modules             | Is the file >300 lines? If not, one file is clearer.                   |
+| Add `From` impls for every conversion   | Is this conversion used more than once? If not, inline it.             |
+| Reach for `Result` chains everywhere    | Is this a straight-line function that can't fail? Just return the value.|
+| Ban `clone()` absolutely                | Is this a cold path with small data? A clone is fine. Comment why.     |
+| Force immutable-return modeling in hot loops | Would local mutation or data-oriented layout improve cache locality and throughput? |
+
+The goal is **working software with clear boundaries** — not purity for its own sake.
+
+---
+
 ## Testing Strategy
 
-### By layer
-
-**Domain (unit tests — pure, fast, no mocks):**
+### Pure logic (unit tests — fast, no mocks)
 
 ```rust
 #[cfg(test)]
@@ -495,7 +458,7 @@ mod tests {
 }
 ```
 
-**Boundaries (TryFrom tests — valid and invalid inputs):**
+### Parsing (TryFrom tests — valid and invalid inputs)
 
 ```rust
 #[test]
@@ -521,24 +484,7 @@ fn db_row_with_corrupt_status_rejects() {
 }
 ```
 
-**Application (integration tests — real logic, fake infra):**
-
-```rust
-#[tokio::test]
-async fn create_order_persists_and_notifies() {
-    let repo = FakeOrderRepo::new();
-    let notifier = FakeNotifier::new();
-    let handler = CreateOrderHandler::new(repo.clone(), notifier.clone());
-
-    let cmd = CreateOrderCommand { customer: test_customer(), items: test_items() };
-    let result = handler.handle(cmd).await.unwrap();
-
-    assert!(repo.contains(result.order_id));
-    assert!(notifier.was_called_with(result.order_id));
-}
-```
-
-**Property tests (for value objects and parsers):**
+### Property tests (for newtypes and parsers)
 
 ```rust
 use proptest::prelude::*;
@@ -559,6 +505,26 @@ proptest! {
 }
 ```
 
+### Cancellation safety (async)
+
+For any async workflow that must stay consistent under interruption, add a test that cancels
+between awaited steps and asserts no partial, externally visible side effect survives — and that
+a retry doesn't double-apply.
+
+```rust
+#[tokio::test]
+async fn transfer_is_cancellation_safe_between_debit_and_credit() {
+    let bank = FakeBank::new();
+    let task = tokio::spawn(run_transfer(bank.clone(), valid_transfer()));
+    bank.wait_until_debited().await;   // park at a cancellation-sensitive point
+    task.abort();
+    let _ = task.await;                // JoinError expected
+
+    assert!(bank.is_consistent());     // both legs, or neither
+    assert!(bank.no_duplicates());     // retry must not double-apply
+}
+```
+
 ### Test naming
 
 `<unit>_<scenario>_<expected>`: `pending_order_can_transition_to_confirmed`, `email_without_at_rejects`.
@@ -566,202 +532,17 @@ proptest! {
 ### What not to test
 
 - Private helper functions — test through the public API.
-- Framework glue (Axum route registration, serde derives) — unless custom logic is involved.
+- Framework glue (route registration, serde derives) — unless custom logic is involved.
 - Things the compiler already guarantees (typestate transitions that don't compile).
 
-### Cancellation safety tests
+### Type invariant checklist
 
-- For each async use case, include at least one test that simulates cancellation between awaited steps.
-- Assert externally observable consistency after cancellation (no partial write + notify, no duplicate side effects on retry, durable state remains valid).
+For each meaningful type, document and test:
 
-```rust
-#[tokio::test]
-async fn create_order_is_cancellation_safe_between_persist_and_notify() {
-    let repo = FakeOrderRepo::new();
-    let notifier = BlockingNotifier::new(); // blocks until test releases it
-    let handler = CreateOrderHandler::new(repo.clone(), notifier.clone());
-
-    let task = tokio::spawn(handler.handle(valid_cmd()));
-    notifier.wait_until_called().await; // ensure we are at a cancellation-sensitive point
-    task.abort();
-    let _ = task.await; // JoinError expected
-
-    // Assert consistency after cancellation.
-    // Example policy: either both persist+notify happened, or neither; retries are idempotent.
-    assert!(repo.is_consistent());
-    assert!(notifier.no_duplicates());
-}
-```
-
-### Domain invariant checklist
-
-For each domain type and aggregate, document and test:
-
-- Constructor invariants (what `new`/`parse` guarantees forever after).
+- Constructor invariants (what `new` / `parse` guarantees forever after).
 - Transition invariants (which state changes are valid/invalid).
-- Persistence invariants (DB roundtrip cannot create invalid domain states).
-- Serialization invariants (wire/db representation preserves meaning and compatibility).
-- Time/concurrency invariants (ordering, staleness, and version-conflict behavior where relevant).
-
----
-
-## Reliability and Operations
-
-### Timeout and retry policy
-
-Set defaults centrally (override only with explicit justification):
-
-| Operation type                       | Timeout | Retries | Backoff                | Notes |
-|--------------------------------------|---------|---------|------------------------|-------|
-| DB read/write in request path        | 1-3s    | 0-1     | small fixed/jitter     | Prefer DB-level transaction semantics over retry loops. |
-| Internal HTTP/gRPC (same trust zone) | 0.5-2s  | 1-2     | exponential + jitter   | Retry transient transport/service-unavailable only. |
-| External third-party API             | 2-10s   | 2-3     | exponential + jitter   | Always pair retries with idempotency keys. |
-| Queue publish/consume ack            | broker-defined | policy-defined | broker/client strategy | Assume at-least-once delivery; consumer must be idempotent. |
-
-Rules:
-
-- Retry only transient failures (timeouts, 5xx, connection resets), never business-rule rejections.
-- Every retry policy must define max attempts and total retry budget.
-- Cancellation must stop retries immediately unless a durable handoff has already occurred.
-- Surface retry exhaustion as a typed error variant with operation context.
-
-### Observability requirements
-
-Every application use case and external side effect must emit:
-
-- Structured logs (JSON or key-value) with request/correlation ID and domain identifiers.
-- Tracing spans around each use case and each infrastructure call.
-- Result markers for side effects: `attempted`, `succeeded`, `failed`, `retried`, `deduplicated`.
-
-Minimum fields for logs/spans:
-
-- `request_id` / `correlation_id`
-- use-case name
-- primary domain IDs (`order_id`, `customer_id`, etc.)
-- retry attempt index (if any)
-- timeout/cancellation status
-- typed error class/variant on failure
-
----
-
-## Rust Runtime and Boundary Rules
-
-### Async boundary constraints (`Send`/`Sync`/`'static`)
-
-- Values crossing task boundaries (`tokio::spawn`, work queues, background workers) must satisfy runtime constraints explicitly (`Send + 'static` when required).
-- Avoid borrowing non-`'static` references into spawned tasks; move owned data instead.
-- Prefer `Arc<T>` + immutable state over shared mutable state; if mutation is necessary, justify synchronization primitives at module boundary.
-- Treat `spawn_blocking` as a boundary for CPU/blocking IO work only; keep domain logic pure regardless.
-
-### Panic policy
-
-- `panic!`/`unwrap()`/`expect()` are forbidden in production paths in domain, application, and infrastructure.
-- Allowed in tests and irrecoverable bootstrap failures in `main.rs` (with clear crash message).
-- Library code should return typed errors, not panic, for any invalid runtime input or dependency failure.
-- If a panic boundary exists (FFI/task supervisor), convert panic to a controlled failure signal and emit telemetry.
-
-### Versioned DTO and event schemas
-
-- External DTOs/events are versioned contracts: prefer additive changes, avoid breaking removals/renames.
-- Unknown fields must be tolerated where protocol allows; missing required fields must fail with typed validation errors.
-- Introduce schema/version markers for long-lived events and cross-service messages.
-- Deprecations require a compatibility window and explicit removal criteria.
-- Mapping from wire DTO/event -> domain types remains at boundaries via `TryFrom`.
-
----
-
-## Before / After: Common Refactorings
-
-### God object → feature module with pure core
-
-```rust
-// BEFORE — everything in one place, mixed IO and logic
-impl OrderService {
-    async fn create_order(&self, req: CreateOrderRequest) -> Result<OrderResponse> {
-        // validates input inline
-        if req.items.is_empty() { return Err(anyhow!("no items")); }
-        // business logic mixed with DB calls
-        let total = req.items.iter().map(|i| i.price * i.qty).sum::<f64>();
-        let id = sqlx::query!("INSERT INTO orders ...").execute(&self.pool).await?.last_insert_id();
-        self.email_client.send_confirmation(id).await?;
-        Ok(OrderResponse { id, total })
-    }
-}
-
-// AFTER — separated by responsibility
-// domain/order/model.rs (pure)
-impl Order {
-    pub fn new(items: NonEmpty<OrderItem>) -> Self { ... }
-    pub fn total(&self) -> Money { self.items.iter().map(|i| i.subtotal()).sum() }
-}
-
-// domain/order/error.rs (pure)
-#[derive(Debug, thiserror::Error)]
-pub enum OrderError {
-    #[error("empty order")]
-    EmptyOrder,
-}
-
-// application/handlers.rs (orchestration)
-pub async fn create_order(
-    cmd: CreateOrderCommand,               // already parsed at boundary
-    repo: &impl OrderRepository,
-    notifier: &impl OrderNotifier,
-) -> Result<OrderId, AppError> {
-    let order = Order::new(cmd.items);      // pure domain
-    let id = repo.save(&order).await?;      // infra via port
-    notifier.order_created(id).await?;      // infra via port
-    Ok(id)
-}
-```
-
-### Primitive obsession → newtypes
-
-```rust
-// BEFORE — can silently swap customer_id and order_id
-fn cancel_order(customer_id: i64, order_id: i64) -> Result<()> { ... }
-
-// AFTER — compiler rejects swapped arguments
-fn cancel_order(customer: CustomerId, order: OrderId) -> Result<(), OrderError> { ... }
-```
-
-### Scattered validation → parse-once boundary
-
-```rust
-// BEFORE — validates in handler, again in repo, again in model
-fn handler(email: String) {
-    if !email.contains('@') { panic!("bad email"); }   // handler validates
-    save_user(email.clone());                           // repo validates again?
-}
-
-// AFTER — parsed once, trusted everywhere
-fn handler(req: RegisterRequest) -> Result<(), AppError> {
-    let cmd = RegisterCommand::try_from(req)?;  // Email::parse() happens here
-    save_user(cmd.email);                       // Email type is trusted — no check
-    Ok(())
-}
-```
-
----
-
-## Tradeoff Rules
-
-Architecture guidance that doesn't say "when not to" is dogma. Apply judgment.
-
-| If you're tempted to...                 | Ask first                                                              |
-|-----------------------------------------|------------------------------------------------------------------------|
-| Add typestate to a 2-state enum         | Is a simple enum with a `transition()` method enough?                  |
-| Create a trait for one implementation   | Will there ever be a second impl, or do you just need a test double?   |
-| Wrap every primitive in a newtype       | Does this primitive cross a module boundary? If it's local, don't wrap.|
-| Make everything immutable               | Is this a hot loop mutating a buffer? Local `mut` is fine.             |
-| Split a file into 5 modules             | Is the file >300 lines? If not, one file is clearer.                   |
-| Add `From` impls for every conversion   | Is this conversion used more than once? If not, inline it.             |
-| Reach for `Result` chains everywhere    | Is this a straight-line function that can't fail? Just return the value.|
-| Ban `clone()` absolutely                | Is this a cold path with small data? A clone is fine. Comment why.     |
-| Introduce CQRS command/query split      | Does this use case have different read and write models? If not, overkill.|
-| Force immutable-return modeling in hot loops | Would local mutation or data-oriented layout improve cache locality and throughput? |
-
-The goal is **working software with clear boundaries** — not architectural purity for its own sake.
+- Roundtrip invariants (serialize/deserialize and DB roundtrip cannot create invalid values).
+- Time / concurrency invariants (ordering, staleness, version-conflict behavior) where relevant.
 
 ---
 
@@ -769,43 +550,30 @@ The goal is **working software with clear boundaries** — not architectural pur
 
 Before approving any change:
 
-- [ ] Any raw `String`, `i64`, or `Uuid` in domain function signatures? → Wrap in newtype.
-- [ ] Any infrastructural side effects (DB/network/filesystem) in `domain/`? → Move to infrastructure.
-- [ ] Any validation after the boundary (re-checking a parsed type)? → Remove.
-- [ ] Any `_ => {}` on a domain enum? → Match exhaustively.
+- [ ] Any raw `String`, `i64`, or `Uuid` in meaningful function signatures? → Wrap in newtype.
+- [ ] Any validation after parsing (re-checking a parsed type)? → Remove.
+- [ ] Any `_ => {}` on your own enum? → Match exhaustively.
 - [ ] Any trait with a single implementor and no test double? → Remove the trait.
-- [ ] Any `clone()` without a justifying comment? → Restructure or comment.
-- [ ] Any `unwrap()` / `expect()` outside tests? → Use `?` or handle.
-- [ ] Any `anyhow` / `eyre` in domain or infrastructure? → Use typed error.
+- [ ] Any `clone()` without a justifying comment in a hot path? → Restructure or comment.
+- [ ] Any `unwrap()` / `expect()` outside tests/bootstrap? → Use `?` or handle.
+- [ ] Any `anyhow` / `eyre` in reusable library code? → Use a typed error.
 - [ ] Any `&mut self` that could be `&self` with a returned new value? → Prefer immutable.
-- [ ] Any domain module importing from infrastructure? → Invert the dependency.
 - [ ] Any stringly-typed error (`Err("...".into())`)? → Use a proper variant.
-- [ ] Any async orchestration vulnerable to cancellation at `await` points? → Ensure transactional/idempotent behavior and no partial externally visible side effects.
-- [ ] Tests cover happy path, at least one error path, and boundary parsing? → Add missing.
-- [ ] For async use cases, do tests include cancellation/interruption paths? → Add at least one cancellation safety test per critical workflow.
+- [ ] Any `assert!()` / `debug_assert!()` guarding something that should be a type or a typed error? → Re-encode it.
+- [ ] Any async path vulnerable to cancellation at `await` points? → Ensure idempotent / transactional behavior.
+- [ ] Tests cover happy path, at least one error path, and parsing? → Add missing.
 
 ---
 
-## Incremental Adoption
+## Decision Records (ADRs)
 
-For existing codebases, adopt this architecture incrementally:
+Significant or non-obvious decisions get a short ADR: the decision, the context that forced it,
+the alternatives rejected, and why. One file per decision, numbered, append-only — supersede an
+old ADR with a new one rather than editing it.
 
-**Phase 1 — Low effort, high payoff:**
-- Introduce newtypes for IDs and validated strings at module boundaries.
-- Replace `String`-based errors with typed enums in new code.
-- Add `TryFrom` parsing at one external boundary (e.g., HTTP input).
-
-**Phase 2 — Structural separation:**
-- Extract pure domain logic out of handlers into standalone functions.
-- Split domain types and infrastructure types into separate modules.
-- Introduce port traits where test doubles would help.
-
-**Phase 3 — Full architecture:**
-- Enforce the layer dependency rules (domain imports nothing external).
-- Move all IO behind port traits.
-- Establish the crate layout as described above.
-
-Each phase is independently valuable. Stop wherever the cost/benefit ratio peaks for your project.
+The point is durable context. Months later, you (or an LLM working in the repo) can recover *why*
+a trade-off or boundary exists instead of re-litigating it from scratch. Keep them short, and skip
+the ADR entirely when the decision is obvious from the code.
 
 ---
 
