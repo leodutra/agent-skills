@@ -10,14 +10,14 @@ Interpret `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` literally.
 
 Use Rust's type system, ownership model, and enums as architecture, not just syntax to enforce discipline that other languages simulate with patterns.
 
-- The standard library SHOULD be preferred over new dependencies unless a crate provides clear value.
-- `unsafe` MUST be minimized; every unsafe block MUST document its invariants.
-
 Two axioms drive the type-level decisions:
 
 1. **If it compiles, it's valid.** Encode rules in types so invalid states CANNOT exist.
 2. **Ownership is design.** Who owns a value, who borrows it, and who consumes it are not
    implementation details — they shape the API.
+
+- The standard library SHOULD be preferred over new dependencies unless a crate provides clear value.
+- `unsafe` MUST be minimized; every unsafe block MUST document its invariants.
 
 ---
 
@@ -166,7 +166,7 @@ Rules:
 
 ## Invariants and Assertions
 
-Priority:
+Enforce invariants in this order:
 
 1. Encode the invariant in a type.
 2. Return a typed error.
@@ -177,7 +177,7 @@ Rules:
 
 - User input MUST NOT be validated with assertions.
 - Exhaustive `match` SHOULD be preferred over `unreachable!()`.
-- If an invariant can live in the type system, it MUST NOT be enforced at runtime instead.
+- If an invariant can live in the type system, it MUST NOT be enforced at runtime.
 
 ```rust
 impl Order {
@@ -198,6 +198,8 @@ impl Order {
 ---
 
 ## Behavior Rules
+
+Functions, APIs, and state transitions follow these design principles.
 
 - Code SHOULD tell, not ask.
 - Functions SHOULD be total. Code MUST NOT panic on valid input.
