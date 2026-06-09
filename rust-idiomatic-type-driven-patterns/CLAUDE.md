@@ -10,6 +10,9 @@ Interpret `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` literally.
 
 Use Rust's type system, ownership model, and enums as architecture, not just syntax to enforce discipline that other languages simulate with patterns.
 
+- The standard library SHOULD be preferred over new dependencies unless a crate provides clear value.
+- `unsafe` MUST be minimized; every unsafe block MUST document its invariants.
+
 Two axioms drive the type-level decisions:
 
 1. **If it compiles, it's valid.** Encode rules in types so invalid states CANNOT exist.
@@ -156,6 +159,7 @@ Rules:
 - Error variants MUST carry typed context, not ad-hoc strings.
 - Errors SHOULD compose through explicit `From` impls so `?` stays honest.
 - Libraries SHOULD use `thiserror`; `anyhow` / `eyre` SHOULD be limited to process boundaries.
+- Application code using `anyhow` SHOULD add `.context(...)` when propagating fallible operations.
 - Code MUST NOT use `Err("something went wrong".into())`.
 
 ---
@@ -208,6 +212,7 @@ impl Order {
 - Functions SHOULD borrow inputs when ownership is not required.
 - Constructors SHOULD accept owned-friendly inputs such as `impl Into<String>` and return owned values.
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
+- Comments SHOULD explain why, not what, and SHOULD appear only when necessary.
 
 ### Mutation discipline
 
@@ -220,6 +225,8 @@ impl Order {
 - Owned types SHOULD be the default.
 - Borrowed types SHOULD be used for transient parsing and short-lived views.
 - Struct lifetimes SHOULD NOT be introduced unless profiling shows a measurable need.
+- Lifetimes SHOULD be elided when the compiler can infer them.
+- Borrows SHOULD be scoped narrowly to release them before unrelated work.
 - Code SHOULD prefer borrowing over cloning when ownership does not need to change.
 
 ---
@@ -229,6 +236,7 @@ impl Order {
 - Traits SHOULD define capabilities: `LoadOrders`, `ChargePayment`, `PublishEvent`.
 - Callers SHOULD depend on capabilities; adapters SHOULD implement them at the edges.
 - A trait SHOULD NOT be introduced for a single implementation unless a real second implementation or test double is needed.
+- Async trait methods MAY be used, but they are NOT dyn-compatible; prefer generics unless trait objects are required.
 
 ### When to introduce a trait
 
@@ -269,6 +277,8 @@ impl Order {
 - Values moved into spawned tasks MUST satisfy runtime bounds such as `Send + 'static`.
 - Code MUST move owned data into tasks and MUST NOT borrow across task boundaries.
 - `Arc<T>` + immutable state SHOULD be preferred. Shared mutation MUST be explicitly justified.
+- `std::sync::MutexGuard` MUST NOT be held across `.await`.
+- `tokio::sync::Mutex` SHOULD be used only when a lock truly must span `.await`.
 
 ### Cancellation
 
@@ -291,6 +301,7 @@ impl Order {
 ## Testing Strategy
 
 - Unit tests for pure domain logic SHOULD be the default: fast, deterministic, no mocks.
+- Integration tests SHOULD live in `tests/` and exercise the public API only.
 - Parse tests SHOULD cover accepted and rejected inputs.
 - Property tests SHOULD be used for value objects and parsers with clear invariants.
 - Cancellation tests SHOULD be added for async workflows with externally visible side effects.
@@ -343,9 +354,11 @@ Before approving any change:
 - [ ] Any raw `String`, `i64`, or `Uuid` in meaningful signatures? Wrap in a newtype.
 - [ ] Any validation after parsing? Remove it.
 - [ ] Any `_ => {}` on your own enum? Match exhaustively.
+- [ ] Any new dependency where the standard library would be enough? Remove or justify it.
 - [ ] Any trait with a single implementor and no test double? Remove it.
 - [ ] Any `clone()` in a hot path without justification? Restructure or document it.
 - [ ] Any owned parameter or clone where a borrow would work? Prefer borrowing.
+- [ ] Any `unsafe` block without minimal scope and documented invariants? Tighten or document it.
 - [ ] Any `unwrap()` / `expect()` outside tests or bootstrap? Replace it.
 - [ ] Any `anyhow` / `eyre` in reusable library code? Use a typed error.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
