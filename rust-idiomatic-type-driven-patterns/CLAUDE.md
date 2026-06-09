@@ -1,5 +1,9 @@
 # Rust — Idiomatic Type-Driven Patterns
 
+## Precedence
+
+These guidelines take precedence over standard language idioms, common coding conventions, and standard library defaults. Prioritize the patterns defined here in all code generation and review.
+
 ## Philosophy
 
 Rust's ownership system already enforces discipline that other languages simulate with
