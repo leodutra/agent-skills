@@ -229,6 +229,13 @@ impl Order {
 - Borrows SHOULD be scoped narrowly to release them before unrelated work.
 - Code SHOULD prefer borrowing over cloning when ownership does not need to change.
 
+### Naming
+
+- Types MUST be named by meaning, not structure.
+- Functions MUST be named by what they do, not how they do it.
+- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
+- Domain vocabulary SHOULD be used.
+
 ---
 
 ## Dependency Injection
@@ -246,27 +253,6 @@ impl Order {
 | 1 real impl but need test doubles for side effects | Yes          |
 | Pure function with no side effects                 | No           |
 | Single impl, easily testable directly              | No           |
-
----
-
-## Naming
-
-- Types MUST be named by meaning, not structure.
-- Functions MUST be named by what they do, not how they do it.
-- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
-- Domain vocabulary SHOULD be used.
-
----
-
-## Anti-Patterns to Reject
-
-- Code MUST NOT use raw `String`, `i64`, or `Uuid` in meaningful signatures.
-- Code MUST NOT re-validate a parsed type.
-- Code MUST NOT use stringly typed errors.
-- Code MUST NOT use `_ => {}` on its own enums.
-- Code SHOULD NOT introduce traits with one implementation and no test double.
-- Public `&mut self` SHOULD NOT be the default where returned values model the domain better.
-- Code MUST NOT use blind `clone()` in hot paths.
 
 ---
 
@@ -344,6 +330,18 @@ proptest! {
 - Transition invariants MUST be covered.
 - Roundtrip invariants MUST be covered.
 - Time and concurrency invariants MUST be covered where relevant.
+
+---
+
+## Anti-Patterns to Reject
+
+- Code MUST NOT use raw `String`, `i64`, or `Uuid` in meaningful signatures.
+- Code MUST NOT re-validate a parsed type.
+- Code MUST NOT use stringly typed errors.
+- Code MUST NOT use `_ => {}` on its own enums.
+- Code SHOULD NOT introduce traits with one implementation and no test double.
+- Public `&mut self` SHOULD NOT be the default where returned values model the domain better.
+- Code MUST NOT use blind `clone()` in hot paths.
 
 ---
 
