@@ -1,8 +1,10 @@
 # Domain Modeling
 
-Type-driven toolkit: newtypes, value objects, parse-don't-validate, illegal states, policies/specifications, rich domain objects, functional core, temporal modeling, idempotency, persistence.
+Type-driven toolkit: newtypes, value objects, parse-don't-validate, illegal states, policies/specifications, rich domain objects, functional core, temporal modeling, idempotency, persistence. (Keyword conventions: see SKILL.md.)
 
-Apply in Evolution-Path order. **Vertical slices are prioritized over rich domain objects.** Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) is on from Stage 1 — it is plain data and types, independent of where behavior lives. **Newtypes and value objects live under `domain/`**, not in separate technical-kind folders.
+Apply in Evolution-Path order. **Vertical slices are prioritized over rich domain objects.** Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) is on from Stage 1 and MUST NOT be deferred — it is plain data and types, independent of where behavior lives. Newtypes and value objects MUST live under `domain/`, not in separate technical-kind folders.
+
+Language note: examples are TypeScript/Rust; Python equivalents are given inline (use `typing.NewType` for newtypes, frozen `@dataclass` for value objects, `Union` + `match` for sum types). For dynamically typed languages, enforce the same guarantees with parsing/validation at the boundary plus immutable types.
 
 ## Where behavior lives
 
@@ -15,9 +17,9 @@ domain/
 └── OrderEvents
 ```
 
-**Default: behavior lives in the vertical slice**, calling a functional core (pure functions on typed data). A `refund-order` slice computes via `calculateRefund(...)`; it needs no `Order` class with methods.
+Default: behavior SHOULD live in the vertical slice, calling a functional core (pure functions on typed data). A `refund-order` slice computes via `calculateRefund(...)`; it needs no `Order` class with methods.
 
-**Escalate to behavior-on-objects** (`order.cancel()` instead of mutating state) only on a trigger:
+You SHOULD escalate to behavior-on-objects (`order.cancel()` instead of mutating state) ONLY on a trigger:
 
 - (a) Many related rules cluster on one entity.
 - (b) An invariant spans multiple operations (order total = sum of lines + tax).
@@ -25,11 +27,11 @@ domain/
 - (d) Same invariant enforced from 2+ slices (centralize so copies can't drift).
 - (e) High cost of violation (money, inventory, compliance).
 
-A method protects invariants a bare assignment cannot (`order.cancel()` can reject a shipped order; `order.status = "Cancelled"` cannot). Absent a trigger, a rich object is over-engineering. Authorization is **not** one of these invariants — keep "who may act" in a `can*` policy at use-case entry (see `authorization.md`); the entity guards only business invariants.
+A method protects invariants a bare assignment CANNOT (`order.cancel()` can reject a shipped order; `order.status = "Cancelled"` cannot). Absent a trigger, a rich object is over-engineering. Authorization is NOT one of these invariants — "who may act" MUST stay in a `can*` policy at use-case entry (see `authorization.md`); the entity guards ONLY business invariants.
 
 ## Newtypes — identity distinction
 
-Wrap primitive identifiers so the compiler tells them apart.
+Wrap primitive identifiers so the compiler tells them apart. You SHOULD use a newtype whenever two values of the same primitive type could be swapped (almost always true for ids); it gives compile-time safety and prevents argument-order bugs.
 
 ```ts
 type CustomerId = Brand<string, "CustomerId">
@@ -41,11 +43,14 @@ struct CustomerId(String);
 struct OrderId(String);
 ```
 
-Use whenever two values of the same primitive type could be swapped (almost always true for ids). Gives compile-time safety and prevents argument-order bugs.
+```python
+CustomerId = NewType("CustomerId", str)
+OrderId    = NewType("OrderId", str)
+```
 
 ## Value objects — concepts with rules
 
-Immutable, self-validating, equality by value, behavior-rich. Use when a concept carries validation, invariants, or behavior. Examples: `Money`, `Email`, `Percentage`, `Quantity`, `Distance`, `Duration`.
+Value objects MUST be immutable, self-validating, equal by value, and behavior-rich. Use one when a concept carries validation, invariants, or behavior. Examples: `Money`, `Email`, `Percentage`, `Quantity`, `Distance`, `Duration`.
 
 ```ts
 class Money {
@@ -54,15 +59,23 @@ class Money {
 }
 ```
 
-Newtype when it only identifies; value object when it has rules, behavior, or structure.
+```python
+@dataclass(frozen=True)
+class Money:
+    amount: int
+    currency: Currency
+    def add(self, other: "Money") -> "Money": ...
+```
+
+Use a newtype when it only identifies; a value object when it has rules, behavior, or structure.
 
 ## Parse, don't validate
 
-Validate **once** at the boundary, converting raw input into already-valid domain types. Downstream, a `Money`/`Email`/`CustomerId` is guaranteed valid — no re-checking. Prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
+Validation MUST happen ONCE, at the boundary, converting raw input into already-valid domain types. Downstream code MUST NOT re-validate: a `Money`/`Email`/`CustomerId` is guaranteed valid by its type. You SHOULD prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
 
 ## Make illegal states unrepresentable
 
-Forbid invalid combinations in the type system, not at runtime. Avoid `{ status: "Shipped", shippedAt: undefined }`. Prefer a discriminated union (sum type) where each variant carries exactly its valid data:
+You SHOULD forbid invalid combinations in the type system rather than guarding at runtime. Avoid `{ status: "Shipped", shippedAt: undefined }`. Prefer a discriminated union (sum type) where each variant carries exactly its valid data:
 
 ```ts
 type Order =
@@ -71,7 +84,7 @@ type Order =
   | ShippedOrder   // carries a required shippedAt
 ```
 
-If a bad state can't be constructed, no code path produces it.
+Python: model variants as distinct frozen dataclasses combined in a `Union`, matched with `match`. If a bad state CANNOT be constructed, no code path produces it.
 
 ## Policies vs. specifications
 
@@ -86,34 +99,34 @@ class RefundPolicy {
 
 `refundPolicy.canRefund(order)` reads clearly for humans and AI. A policy can answer several related questions about one area, which a single predicate cannot.
 
-**Specification = a specialized tool, not a building block.** Answers "does this satisfy criteria?" One composable predicate (`isSatisfiedBy(x): boolean`). Earns its place **only** when you actually compose predicates (`.and()/.or()/.not()`) or drive dynamic queries (`repository.find(spec)`). Heuristic: ~10–20 policies per specification in business systems (predicate-heavy domains may run higher). Otherwise write a method/function (`customer.isEligible()`).
+**Specification = a specialized tool, NOT a building block.** Answers "does this satisfy criteria?" One composable predicate (`isSatisfiedBy(x): boolean`). You SHOULD introduce a specification object ONLY when actually composing predicates (`.and()/.or()/.not()`) or driving dynamic queries (`repository.find(spec)`). Heuristic: ~10–20 policies per specification in business systems (predicate-heavy domains may run higher). Otherwise write a method/function (`customer.isEligible()`).
 
-**`policies/` folder is not mandatory.** Single-slice decisions stay in the slice; the folder emerges only when decision logic is shared by 2+ slices. A folder of single-use policies is layering in disguise. (Exception: authorization `can*` policies may be grouped in `policies/` for auditability even when slice-specific — see `authorization.md`.)
+The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in the slice; the folder SHOULD emerge ONLY when decision logic is shared by 2+ slices. A folder of single-use policies is layering in disguise. EXCEPTION: authorization `can*` policies MAY be grouped in `policies/` for auditability even when slice-specific (see `authorization.md`).
 
 ```text
 orders/
 ├── domain/
 ├── create-order/
 ├── refund-order/
-└── policies/        # only when shared by 2+ slices
+└── policies/        # shared by 2+ slices, or authorization can* policies
 ```
 
-**Naming:** intent-revealing (`RefundPolicy`, `PricingPolicy`). Collision warning: in event-storming, "policy" means the reactive "when X then command Y" glue (process manager). Since this architecture uses domain events, name reactive when-then logic **processes/handlers/reactions** — reserve "policy" for decisions.
+**Naming:** intent-revealing (`RefundPolicy`, `PricingPolicy`). Collision warning: in event-storming, "policy" means the reactive "when X then command Y" glue (process manager). Since this architecture uses domain events, you MUST name reactive when-then logic **processes/handlers/reactions** and reserve "policy" for decisions.
 
 **Toolkit summary:** newtypes = identity; value objects = concept + rules + behavior; domain objects = state + invariants (escalation only); policies = reusable decisions (default); specifications = composition/querying/qualification only.
 
 ## Functional core, imperative shell
 
-Keep business logic pure (deterministic, side-effect-free, trivially testable): `calculateRefund(...)`, `calculateShipping(...)`. Push side effects (persistence, network, clock, queues) to the edges. The shell gathers inputs, calls the core, performs effects.
+Business logic SHOULD be pure (deterministic, side-effect-free, trivially testable): `calculateRefund(...)`, `calculateShipping(...)`. Side effects (persistence, network, clock, queues) MUST be pushed to the edges. The shell gathers inputs, calls the core, performs effects.
 
 ## Temporal modeling
 
-Time is first-class. Store timestamps explicitly where rules depend on *when* (`approvedAt`, `shippedAt`, `cancelledAt`) rather than inferring from `status`. Temporal rules: refund windows, reservation expiration, renewals, SLAs. `status` alone can't answer "delivered within 30 days?"; `deliveredAt` can.
+Time is first-class. Where rules depend on *when* something happened, you MUST store the timestamp explicitly (`approvedAt`, `shippedAt`, `cancelledAt`) rather than inferring it from `status`. Temporal rules: refund windows, reservation expiration, renewals, SLAs. `status` alone CANNOT answer "delivered within 30 days?"; `deliveredAt` can.
 
 ## Idempotency
 
-Externally triggered commands must be safe to retry — executing `refundOrder()`/`createInvoice()` twice must not corrupt state or double-charge. Required for event handlers, queues, retries, distributed workflows. Techniques: idempotency keys, dedup tables, conditional writes. Assume any message can arrive more than once.
+Externally triggered commands MUST be safe to retry — executing `refundOrder()`/`createInvoice()` twice MUST NOT corrupt state or double-charge. This is REQUIRED for event handlers, queues, retries, and distributed workflows. Techniques: idempotency keys, dedup tables, conditional writes. Assume any message can arrive more than once.
 
 ## Persistence
 
-Infrastructure, at the edges. Calling the ORM/query builder directly is the default (`orm.orders.create(...)`). Do **not** add a repository by default — only for measurable value (genuine query reuse, a real planned storage swap). "For testability" / "in case we swap the DB" is premature.
+Persistence is infrastructure and lives at the edges. You SHOULD call the ORM/query builder directly by default (`orm.orders.create(...)`). You MUST NOT add a repository by default — only for measurable value (genuine query reuse, a real planned storage swap). "For testability" / "in case we swap the DB" is premature.

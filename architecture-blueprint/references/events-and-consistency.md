@@ -1,27 +1,27 @@
 # Events & Consistency
 
-Cross-module communication, direct-call-vs-event, consistency, observability.
+Cross-module communication, direct-call-vs-event, consistency, observability. (Keyword conventions: see SKILL.md.)
 
 ## Domain events
 
-Events are past-tense business **facts**. Consumers: Inventory, Shipping, Notifications, Analytics.
+Events MUST be past-tense business **facts**. Consumers: Inventory, Shipping, Notifications, Analytics.
 
 ```text
 OrderApproved   OrderCancelled   OrderRefunded   InventoryReserved
 ```
 
-Avoid vague mutations (`OrderUpdated`, `EntityChanged`) — a consumer can't act on them. Name the fact, not the table write.
+You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`) — a consumer cannot act on them. Name the fact, not the table write.
 
 ## Direct call vs. event
 
-**Direct call** when: same transaction, same invariant, or immediate (strong) consistency.
-**Event** when: another module merely reacts, eventual consistency is acceptable, and coupling should drop.
+You SHOULD use a **direct call** when: same transaction, same invariant, or immediate (strong) consistency.
+You SHOULD use an **event** when: another module merely reacts, eventual consistency is acceptable, and coupling should drop.
 
 Trade-off: direct calls = immediate consistency + clear call graph but tight coupling; events = decoupling + load absorption but eventual consistency + idempotent handlers required. Decide on consistency first, then coupling.
 
 ## Consistency model
 
-Every interaction **declares** its requirement (in the module README, and an ADR where it matters).
+Every interaction MUST declare its consistency requirement (in the module README, and an ADR where it matters).
 
 ```text
 Order creation         → Strong
@@ -30,15 +30,15 @@ Email notification     → Eventual
 Analytics update       → Eventual
 ```
 
-Explicit declaration prevents over-strong (a notification blocking checkout) and under-strong (inventory drift) failures. Anything crossing an eventual boundary (events, queues, retries) needs **idempotent** handlers — see `domain-modeling.md`.
+Explicit declaration prevents over-strong (a notification blocking checkout) and under-strong (inventory drift) failures. Any handler crossing an eventual boundary (events, queues, retries) MUST be idempotent — see `domain-modeling.md`.
 
 ## Observability
 
-Important workflows must be reconstructable. Emit milestones (`OrderCreated`, `OrderApproved`, `InventoryReserved`, `PaymentCaptured`) with:
+Important workflows MUST be reconstructable. Emit milestones (`OrderCreated`, `OrderApproved`, `InventoryReserved`, `PaymentCaptured`) with:
 
-- **Structured logging** (machine-parseable fields).
-- **Correlation IDs** threaded through the whole workflow, across modules and async hops.
-- **Traceability** — the workflow path is recoverable.
-- **Event visibility** — emitted facts are recorded.
+- **Structured logging** (machine-parseable fields) — REQUIRED.
+- **Correlation IDs** threaded through the whole workflow, across modules and async hops — REQUIRED.
+- **Traceability** — the workflow path MUST be recoverable.
+- **Event visibility** — emitted facts MUST be recorded.
 
-Test: from telemetry alone, can you reconstruct exactly what happened to one order, in order? If not, it's under-observed.
+Test: from telemetry alone, can you reconstruct exactly what happened to one order, in order? If not, it is under-observed.

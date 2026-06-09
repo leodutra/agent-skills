@@ -1,10 +1,10 @@
 # Structure & Boundaries
 
-Physical organization, module APIs, dependency control.
+Physical organization, module APIs, dependency control. (Keyword conventions: see SKILL.md.)
 
 ## Modular monolith (default)
 
-One deployable, one codebase, explicit internal module boundaries, internal event communication. Modules evolve independently inside it.
+Default to one deployable, one codebase, with explicit internal module boundaries and internal event communication. Modules evolve independently inside it.
 
 ```text
 Application
@@ -15,11 +15,11 @@ Application
 └── Notifications
 ```
 
-Microservices come later (Evolution Path Stage 5), only when operational reality (scaling, deployment isolation, team ownership) demands extraction.
+Microservices come later (Evolution Path Stage 5). You MUST NOT start with microservices; extract a service ONLY when operational reality (scaling, deployment isolation, team ownership) demands it.
 
 ## Top-level structure
 
-By **business capability**, plus one `shared/` area and a central test area for cross-cutting tests only.
+Top-level folders MUST be **business capabilities**. The ONLY sanctioned non-capability top-level entries are `shared/` and `tests/`.
 
 ```text
 src/
@@ -30,12 +30,15 @@ src/
 ├── notifications/
 ├── shared/
 └── tests/
-    ├── e2e/
+    ├── acceptance/
     ├── architecture/
+    ├── e2e/
     └── performance/
 ```
 
-`shared/` is for genuinely cross-cutting code only; most "shared" code belongs to one capability.
+`tests/` holds ONLY cross-module/system tests, in exactly these four canonical buckets (see `testing-and-governance.md`); single-module tests are colocated, and you MUST NOT invent other top-level test folders.
+
+`shared/` MUST contain ONLY genuinely cross-cutting, business-free code (e.g., logging, clock, id generation, error types). Business logic, domain types, and decisions MUST NOT live in `shared/`. When in doubt, code SHOULD belong to a capability, not `shared/` — `shared/` is not an escape hatch. If something in `shared/` acquires business meaning, it MUST move into the owning capability.
 
 ## Module structure
 
@@ -53,28 +56,28 @@ orders/
 └── README.md
 ```
 
-**Newtypes and value objects live in `domain/`**, not in separate `newtypes/`/`value-objects/` folders (that organizes by technical kind — the layering this blueprint avoids). Break out subfolders only when volume makes `domain/` hard to scan. `domain/` and `policies/` appear as stages are reached; a young module may have only `api/` and slice folders. **Logic defaults to the slice that uses it** — it graduates to `policies/` or onto a `domain/` object only when the SKILL.md triggers fire.
+Newtypes and value objects MUST live in `domain/`, NOT in separate `newtypes/`/`value-objects/` folders (that organizes by technical kind — the layering this blueprint forbids). You MAY break out subfolders ONLY when volume makes `domain/` hard to scan. `domain/` and `policies/` appear as stages are reached; a young module MAY have only `api/` and slice folders. Logic SHOULD default to the slice that uses it, and graduate to `policies/` or onto a `domain/` object ONLY when a SKILL.md trigger fires.
 
 ## Feature organization
 
-A mature feature is a folder; a small one starts as a single file and grows when it earns it. Don't pre-split a one-function feature.
+A mature feature is a folder; a small one MAY start as a single file and grow when it earns it. You SHOULD NOT pre-split a one-function feature.
 
 ```text
 refund-order/
 ├── handler
 ├── schema
 ├── events
-├── handler.test
+├── tests       # colocated (owns this slice)
 └── README
 ```
 
 ## Command / query separation
 
-Conceptual distinction only: **commands** change state (`createOrder()`, `refundOrder()`); **queries** read state (`getOrder()`, `searchOrders()`). Does **not** require CQRS (separate models/stores) — adopt that only with demonstrated need.
+Conceptual distinction ONLY: **commands** change state (`createOrder()`, `refundOrder()`); **queries** read state (`getOrder()`, `searchOrders()`). This MUST NOT be read as requiring CQRS (separate models/stores); adopt CQRS ONLY with demonstrated need.
 
 ## Module public API
 
-Each module exposes a narrow public API; others depend **only** on it.
+Each module MUST expose a narrow public API. Other modules MUST depend ONLY on it.
 
 ```text
 orders/
@@ -84,15 +87,15 @@ orders/
     └── getOrder
 ```
 
-Allowed: import `orders/api`. Forbidden: import `orders/domain`, `orders/policies`, or any internal path. The API preserves encapsulation; internals stay free to change.
+Allowed: import `orders/api`. Forbidden: importing `orders/domain`, `orders/policies`, or any internal path — other modules MUST NOT do this. The public API preserves encapsulation; internals stay free to change.
 
 ## Module README
 
-Each module's `README.md` covers: purpose, public API, domain concepts (ubiquitous language), published events, consumed events, dependencies (and why), consistency model. Serves humans and AI agents; keep it current.
+Each module MUST carry a `README.md` covering: purpose, public API, domain concepts (ubiquitous language), published events, consumed events, dependencies (and why), consistency model. It serves humans and AI agents and MUST be kept current.
 
 ## Dependency direction
 
-Explicit, documented, one-way, acyclic.
+Dependencies MUST be explicit, one-way, and acyclic.
 
 ```text
 Orders → Inventory
@@ -100,8 +103,8 @@ Orders → Billing
 Shipping ✕ Orders        (forbidden)
 ```
 
-Document direction (READMEs + ADR) and enforce with architecture fitness functions (see `testing-and-governance.md`) once boundaries matter. Documentation alone won't hold — humans and agents violate unenforced rules.
+Document direction (READMEs + ADR). Once boundaries matter, you MUST enforce it with architecture fitness functions (see `testing-and-governance.md`); documentation alone CANNOT hold, because unenforced rules erode and agents cross any boundary nothing stops.
 
 ## Strategic DDD only
 
-Use bounded contexts, ubiquitous language, domain ownership, explicit business concepts. Do **not** import the tactical-DDD pattern zoo (aggregates/repositories/factories/specifications everywhere) by default — pull a pattern in only when a specific problem calls for it.
+Use bounded contexts, ubiquitous language, domain ownership, explicit business concepts. You MUST NOT import the tactical-DDD pattern zoo (aggregates/repositories/factories/specifications everywhere) by default; pull a pattern in ONLY when a specific problem calls for it.
