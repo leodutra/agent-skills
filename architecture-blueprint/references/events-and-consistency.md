@@ -10,14 +10,14 @@ Events MUST be past-tense business **facts**. Consumers: Inventory, Shipping, No
 OrderApproved   OrderCancelled   OrderRefunded   InventoryReserved
 ```
 
-You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`) — a consumer cannot act on them. Name the fact, not the table write.
+You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`).
 
 ## Direct call vs. event
 
 You SHOULD use a **direct call** when: same transaction, same invariant, or immediate (strong) consistency.
 You SHOULD use an **event** when: another module merely reacts, eventual consistency is acceptable, and coupling should drop.
 
-Trade-off: direct calls = immediate consistency + clear call graph but tight coupling; events = decoupling + load absorption but eventual consistency + idempotent handlers required. Decide on consistency first, then coupling.
+You SHOULD decide consistency first, then coupling.
 
 ## Consistency model
 
@@ -30,7 +30,7 @@ Email notification     → Eventual
 Analytics update       → Eventual
 ```
 
-Explicit declaration prevents over-strong (a notification blocking checkout) and under-strong (inventory drift) failures. Any handler crossing an eventual boundary (events, queues, retries) MUST be idempotent — see `domain-modeling.md`.
+Any handler crossing an eventual boundary (events, queues, retries) MUST be idempotent — see `domain-modeling.md`.
 
 ## Observability
 
@@ -41,4 +41,4 @@ Important workflows MUST be reconstructable. Emit milestones (`OrderCreated`, `O
 - **Traceability** — the workflow path MUST be recoverable.
 - **Event visibility** — emitted facts MUST be recorded.
 
-Test: from telemetry alone, can you reconstruct exactly what happened to one order, in order? If not, it is under-observed.
+You MUST be able to reconstruct exactly what happened to one order, in order, from telemetry alone.

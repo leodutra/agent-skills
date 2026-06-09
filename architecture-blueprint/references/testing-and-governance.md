@@ -9,17 +9,17 @@ Test strategy and placement, executable architecture rules, decision records, AI
 - **Acceptance** — business behavior in business language ("Given a delivered order, when a refund is requested within 30 days, then it is approved"). MAY be single-slice (one use case) or cross-module (a flow/lifecycle).
 - **E2E** — the whole system through real infrastructure (API → DB → bus → worker).
 
-A cross-module business flow (e.g., create → approve → invoice) is an **acceptance** test, NOT integration (which is single-module) and NOT e2e (which goes through the real stack). Use this to place it.
+A cross-module business flow (e.g., create → approve → invoice) is an **acceptance** test, NOT integration and NOT e2e.
 
 ## Test placement (by scope)
 
-Dividing rule (by **scope/ownership**, not by test type): a test that owns a **single** module/slice — unit, integration, OR acceptance — SHOULD be colocated with it; a test whose behavior spans **multiple** modules MUST live in `tests/`. Colocation maximizes cohesion — tests evolve and move with their code (safe refactors, no orphaned test tree) and stay discoverable.
+Dividing rule (by **scope/ownership**, not by test type): a test that owns a **single** module/slice — unit, integration, OR acceptance — SHOULD be colocated with it; a test whose behavior spans **multiple** modules MUST live in `tests/`.
 
-So a single-module integration test (one module's persistence) is **colocated**, not centralized; only cross-module behavior is centralized.
+A single-module integration test is **colocated**, not centralized.
 
 **Colocate (single-module):** a sibling test file or an in-module test block.
 
-> Rust: a sibling `tests.rs`, or in-file `#[cfg(test)] mod tests { ... }` — the in-file form can test private and `pub(crate)` items without exposing them.
+> Rust: use a sibling `tests.rs` or in-file `#[cfg(test)] mod tests { ... }`.
 
 ```text
 orders/
@@ -37,12 +37,12 @@ orders/
 ```text
 tests/
 ├── acceptance/           # cross-module business flows (e.g., create -> approve -> invoice)
-├── architecture/         # fitness functions (Rust: here or in xtask/)
+├── architecture/         # fitness functions (Rust: repo-level xtask/ MAY invoke these)
 ├── e2e/                  # API -> DB -> bus -> worker
 └── performance/          # load / latency / throughput
 ```
 
-A test that spans modules is a system concern, not a module concern, and MUST NOT be placed inside any one module.
+A test that spans modules MUST NOT be placed inside any one module.
 
 ## Architecture fitness functions
 
@@ -53,13 +53,13 @@ Orders must not depend on Shipping
 Domain must not depend on infrastructure
 ```
 
-Enforce via static analysis, dependency-constraint checks, or import-graph assertions; place them in `tests/architecture/` (Rust: there or `xtask/`). Documentation alone CANNOT hold — unenforced rules erode and agents cross any boundary nothing stops. Introduce at Evolution Path Stage 4.
+Enforce via static analysis, dependency-constraint checks, or import-graph assertions; place them in `tests/architecture/`. In Rust repositories, a repo-level `xtask/` MAY orchestrate or invoke those checks, but it does not replace the canonical `tests/architecture/` bucket. Documentation alone CANNOT enforce boundaries. Introduce at Evolution Path Stage 4.
 
 ## ADRs
 
-Significant decisions MUST be recorded as ADRs; they are the authoritative record of intent.
+Significant decisions MUST be recorded as ADRs.
 
-**Agent directive:** whenever you conclude a considerable architectural decision or definition — choosing a module boundary, a consistency model, an event vs. direct call, a persistence approach, escalating to a rich domain object, adopting a pattern, etc. — you MUST record it as an ADR (or, if unsure it clears that bar, explicitly propose one to the user). You MUST keep ADRs maintained: when a later decision changes an earlier one, mark the old ADR **Superseded** (linking the replacement) rather than editing away the history, and keep the index current. Stale or missing ADRs are a defect.
+**Agent directive:** when you conclude a considerable architectural decision or definition, you MUST record it as an ADR or explicitly propose one. When a later decision changes an earlier one, you MUST mark the old ADR **Superseded** and link the replacement. Stale or missing ADRs are a defect.
 
 ```text
 docs/adr/
@@ -70,8 +70,8 @@ docs/adr/
 └── 005-persistence.md
 ```
 
-Each ADR MUST contain: **Context** (forces/constraints), **Decision** (what was chosen), **Consequences** (what it eases and what it costs), and **Status** (Proposed / Accepted / Superseded). Capturing the "why" stops future maintainers and agents from re-learning old lessons.
+Each ADR MUST contain: **Context** (forces/constraints), **Decision** (what was chosen), **Consequences** (what it eases and what it costs), and **Status** (Proposed / Accepted / Superseded).
 
 ## AI context file
 
-Maintain `AGENTS.md` (or `ARCHITECTURE.md`) covering: architecture summary + North Star, module boundaries, naming rules, architectural constraints (what fitness functions enforce), ADR references, development conventions. It keeps humans and agents on the same model; without it, agents guess and drift.
+Maintain `AGENTS.md` (or `ARCHITECTURE.md`) covering: architecture summary + North Star, module boundaries, naming rules, architectural constraints (what fitness functions enforce), ADR references, development conventions.

@@ -5,9 +5,9 @@ description: Apply the Modern Architecture Blueprint (2026), a pragmatic domain-
 
 # Modern Architecture Blueprint
 
-Domain-first method for long-lived systems, optimized for humans and AI agents. Favors business capabilities over technical layers, locality over abstraction, strong types over runtime checks. This skill is the decision layer; detailed patterns live in `references/`. You MUST read the matching reference file before applying a pattern in depth.
+Domain-first method for long-lived systems. Prefer business capabilities over technical layers, locality over abstraction, and strong types over runtime checks. This skill is the decision layer. You MUST read the matching reference file before applying a pattern in depth.
 
-Core rule: **every abstraction MUST earn its existence.** The pattern catalog is a menu pulled from on demand; you MUST NOT build it up front as a checklist.
+Core rule: **every abstraction MUST earn its existence.** You MUST treat the pattern catalog as pull-based, not a checklist.
 
 ## Normative keywords
 
@@ -25,19 +25,19 @@ You MUST NOT invent exceptions to a SHOULD beyond those named in this skill. Whe
 - **Reviewing code/design** → use the Review Checklist.
 - **Modeling a concept** → read `references/domain-modeling.md`.
 
-**Record decisions as you go.** Whenever you conclude a considerable architectural decision or definition (a boundary, consistency model, pattern adoption, escalation to a rich object, etc.), you MUST record it as an ADR — or explicitly propose one — and MUST keep ADRs maintained (mark superseded decisions, never silently drop them). See `references/testing-and-governance.md`.
+**Record decisions as you go.** When you conclude a considerable architectural decision or definition, you MUST record it as an ADR — or explicitly propose one — and MUST keep ADRs maintained. See `references/testing-and-governance.md`.
 
 ## North Star
 
 Priority order: (1) **Correctness** — illegal states hard to reach; (2) **Comprehensibility**; (3) **Changeability**; (4) **AI navigability**; (5) **Operational simplicity**.
 
-You MUST NOT optimize for: maximum abstraction, framework independence, theoretical purity, maximum reuse, or speculative future-proofing. Real work is adding features and changing rules, not swapping databases or frameworks — make the common case cheap.
+You MUST NOT optimize for: maximum abstraction, framework independence, theoretical purity, maximum reuse, or speculative future-proofing.
 
 ## Core principles
 
 - **Optimize for change.** Structure around what changes together.
 - **Locality over layering.** SHOULD prefer feature folders (`orders/refund-order/`) over technical layers (`controllers/`, `services/`). Navigate by business behavior.
-- **Domain first.** Top-level folders MUST be business capabilities (`orders/`, `billing/`…). The ONLY sanctioned non-capability top-level entries are `shared/` (genuinely cross-cutting, business-free code) and `tests/` (cross-module tests). Any other technical-concern top-level folder is a defect.
+- **Domain first.** Within the application source tree (for example, `src/`), top-level folders MUST be business capabilities (`orders/`, `billing/`…). The ONLY sanctioned non-capability source-tree entries are optional `platform/` (genuinely cross-cutting, business-free technical substrate) and `tests/` (cross-module tests). Repository-level support folders such as `docs/adr/` and, in Rust repositories, `xtask/` MAY exist alongside the source tree. Any other technical-concern source-tree folder is a defect.
 - **Simplicity until complexity appears.** You MUST NOT introduce repositories, factories, CQRS, event sourcing, microservices, or specification hierarchies without a present, demonstrated need.
 - **Prefer deletion.** Before adding any abstraction, ask "can this be solved with fewer concepts?"
 
@@ -83,7 +83,7 @@ You SHOULD NOT introduce these without a present, demonstrated need: microservic
 
 ## Review checklist
 
-1. **Organization** — Are top-level folders business capabilities (the ONLY allowed non-capability entries being `shared/` and `tests/`)? Are features vertical slices? Does code that changes together live together?
+1. **Organization** — Within the application source tree, are top-level folders business capabilities (the ONLY allowed non-capability entries being optional `platform/` and `tests/`)? Are features vertical slices? Does code that changes together live together?
 2. **Boundaries** — Narrow module public API (`orders/api`)? No module reaching into another's internals? Dependencies explicit and acyclic? Authorization a `can*` policy at use-case entry (deny-by-default), kept OUT of entities, never scattered role conditionals?
 3. **Types** — Identities are newtypes? Rule-bearing concepts are value objects? Both under `domain/`? Validation done once at the boundary? Illegal states unrepresentable via typed unions?
 4. **Behavior** — Logic in slice + functional core by default? Behavior centralized on an object ONLY on a named trigger (flag rich objects that have not earned it)? Shared `policies/` genuinely shared by 2+ slices (authorization `can*` policies excepted) and distinct from reactive processes?

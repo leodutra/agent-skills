@@ -19,7 +19,7 @@ Microservices come later (Evolution Path Stage 5). You MUST NOT start with micro
 
 ## Top-level structure
 
-Top-level folders MUST be **business capabilities**. The ONLY sanctioned non-capability top-level entries are `shared/` and `tests/`.
+Within the application source tree (for example, `src/`), top-level folders MUST be **business capabilities**. The ONLY sanctioned non-capability entries there are optional `platform/` and `tests/`. Repository-level support folders such as `docs/adr/` and, in Rust repositories, `xtask/` MAY exist alongside the source tree.
 
 ```text
 src/
@@ -28,7 +28,7 @@ src/
 ├── shipping/
 ├── billing/
 ├── notifications/
-├── shared/
+├── platform/
 └── tests/
     ├── acceptance/
     ├── architecture/
@@ -36,9 +36,13 @@ src/
     └── performance/
 ```
 
-`tests/` holds ONLY cross-module/system tests, in exactly these four canonical buckets (see `testing-and-governance.md`); single-module tests are colocated, and you MUST NOT invent other top-level test folders.
+`tests/` holds ONLY cross-module/system tests, in exactly these four canonical buckets (see `testing-and-governance.md`); single-module tests are colocated, and you MUST NOT invent other source-tree top-level test folders.
 
-`shared/` MUST contain ONLY genuinely cross-cutting, business-free code (e.g., logging, clock, id generation, error types). Business logic, domain types, and decisions MUST NOT live in `shared/`. When in doubt, code SHOULD belong to a capability, not `shared/` — `shared/` is not an escape hatch. If something in `shared/` acquires business meaning, it MUST move into the owning capability.
+`platform/` MAY exist ONLY for cross-cutting, business-free technical substrate with no owning capability. It SHOULD appear ONLY when 2+ capabilities need it. It SHOULD NOT exist if it would be empty or mostly generic helpers.
+
+`platform/` MAY hold time/identity primitives, observability substrate, generic technical error primitives, business-free technical utilities, and app-wide bootstrap wiring with no owning capability.
+
+Business logic, domain types, policies, permissions, and decisions MUST NOT live in `platform/`. When in doubt, code SHOULD live in a capability. If code in `platform/` acquires business meaning, it MUST move to the owning capability.
 
 ## Module structure
 
@@ -87,11 +91,11 @@ orders/
     └── getOrder
 ```
 
-Allowed: import `orders/api`. Forbidden: importing `orders/domain`, `orders/policies`, or any internal path — other modules MUST NOT do this. The public API preserves encapsulation; internals stay free to change.
+Allowed: import `orders/api`. Forbidden: import `orders/domain`, `orders/policies`, or any internal path. Other modules MUST NOT do this.
 
 ## Module README
 
-Each module MUST carry a `README.md` covering: purpose, public API, domain concepts (ubiquitous language), published events, consumed events, dependencies (and why), consistency model. It serves humans and AI agents and MUST be kept current.
+Each module MUST carry a `README.md` covering: purpose, public API, domain concepts (ubiquitous language), published events, consumed events, dependencies (and why), consistency model. It MUST be kept current.
 
 ## Dependency direction
 
@@ -103,7 +107,7 @@ Orders → Billing
 Shipping ✕ Orders        (forbidden)
 ```
 
-Document direction (READMEs + ADR). Once boundaries matter, you MUST enforce it with architecture fitness functions (see `testing-and-governance.md`); documentation alone CANNOT hold, because unenforced rules erode and agents cross any boundary nothing stops.
+Document direction (READMEs + ADR). Once boundaries matter, you MUST enforce it with architecture fitness functions (see `testing-and-governance.md`). Documentation alone CANNOT enforce boundaries.
 
 ## Strategic DDD only
 
