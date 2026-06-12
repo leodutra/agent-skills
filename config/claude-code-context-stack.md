@@ -48,6 +48,7 @@ A second principle, inherited from how the layers differ epistemically: **source
 **Why it's in the stack:** it is the only layer that provides ground truth. `find_referencing_symbols` returns actual call sites, not text matches — no false positives from comments, strings, or same-named methods on unrelated types. `get_diagnostics_for_file` returns structured compile/type/lint state without running (or paying for) a full `cargo check` dump.
 
 **Hard boundaries:**
+
 1. Serena's `execute_shell_command` stays **disabled** (it is disabled by default in the `ide-assistant` context — keep it that way). Reason: MCP tool calls bypass RTK's Bash hook. If tests run through Serena, you pay full uncompressed output cost. All shell goes through Claude Code's native Bash.
 2. Serena's `read_file` / `search_for_pattern` also stay disabled in `ide-assistant` context — Claude Code already has those natively, and duplicate tools confuse routing.
 
@@ -58,6 +59,7 @@ A second principle, inherited from how the layers differ epistemically: **source
 **Why it's in the stack:** test/build/git/tooling output is the single largest uncontrolled token sink in a session. `cargo test` compresses ~92%, `git status` ~81%. Over a session this is the difference between one context window and three.
 
 **Two usage modes:**
+
 - **Output mode (automatic, primary):** the PreToolUse hook. Zero workflow change.
 - **Input mode (manual, for deliberate context assembly):** call filters directly and capture stdout when constructing context on purpose — `rtk ls src/`, `rtk git log -n 20`, `rtk read path/to/file`, `rtk grep pattern`. Use this when writing prompts, session-start summaries, or feeding compressed state into subagents. (A first-class "inject into prompt at position X" mode is an open upstream feature request, not shipped — the manual capture pattern is the supported path today.)
 
@@ -96,6 +98,7 @@ This is the core decision table. Route every information need to exactly one lay
 | Fuzzy "where's the code that handles ~concept~?" | graphify query first; Serena once a symbol name surfaces | reading many files | Graph narrows the neighborhood; LSP takes over at symbol granularity |
 
 **Tie-breakers:**
+
 - Question names a **specific symbol** → Serena, always.
 - Question spans **more than one module** or asks about *shape* → graphify first.
 - Question is about **uncommitted work-in-progress** → Serena or direct reads, never graphify (graph trails the working tree).
@@ -129,6 +132,7 @@ rtk discover      # audit: surfaces commands with suspiciously low savings (mis-
 ```
 
 **Operational notes (the whys):**
+
 - On test failure, RTK preserves failure detail and writes full unfiltered output to disk for retrieval. Verify this once on a deliberately broken test: passing tests are noise, failing tests are the entire signal. If a filter ever flattens a failure you needed, that command can be excluded from rewriting in RTK's config.
 - RTK's tracking DB (`~/.local/share/rtk/tracking.db`) stores full command strings for ~90 days. Don't pass secrets as CLI args (you shouldn't anyway); a reported issue notes bearer tokens/passwords in args persist verbatim.
 - Telemetry: check `rtk telemetry status` and disable if undesired.
@@ -251,6 +255,7 @@ The five context sources can disagree. Tiered by how they acquire truth:
 | 4 | Serena memories, worklog | Observations and notes | Informal; verify before relying |
 
 **Rules:**
+
 1. A tier-3 claim about code (signatures, types, structure) is a *hypothesis* until confirmed at tier 1. Never implement against a spec-stated signature without a `find_symbol` confirmation when the code already exists.
 2. Tier 2 vs tier 1 conflict → the graph is stale; trust the LSP, note that a rebuild is due.
 3. Tier 1 vs tier 3 conflict → **divergence event**: stop, flag, ask direction (code→spec or spec→code), record in worklog. Silent reconciliation is the prohibited move — it hides drift until it compounds.
