@@ -1,8 +1,9 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 1.0
+> **Version:** 1.1
 > **Status:** Active
-> **Scope:** Per-project setup for Claude Code with graphify (structure), Serena (symbols), RTK (output compression), and a docs layer (intent). Targets Arch Linux; Rust/TypeScript/Python projects.
+> **Scope:** Claude Code context stack — graphify (structure), Serena (symbols), RTK (output compression), docs layer (intent). Targets Arch Linux; Rust/TypeScript/Python projects. §4 documents each component's per-project configuration in full; §10 is the operating model: install the global layer once, then bootstrap each repo with `stack-init`.
+> **Changelog:** 1.1 — added §10 (global single-setup + per-project bootstrap); 1.0 — initial.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are meant to be referenced from CLAUDE.md.
 
 ---
@@ -48,7 +49,6 @@ A second principle, inherited from how the layers differ epistemically: **source
 **Why it's in the stack:** it is the only layer that provides ground truth. `find_referencing_symbols` returns actual call sites, not text matches — no false positives from comments, strings, or same-named methods on unrelated types. `get_diagnostics_for_file` returns structured compile/type/lint state without running (or paying for) a full `cargo check` dump.
 
 **Hard boundaries:**
-
 1. Serena's `execute_shell_command` stays **disabled** (it is disabled by default in the `ide-assistant` context — keep it that way). Reason: MCP tool calls bypass RTK's Bash hook. If tests run through Serena, you pay full uncompressed output cost. All shell goes through Claude Code's native Bash.
 2. Serena's `read_file` / `search_for_pattern` also stay disabled in `ide-assistant` context — Claude Code already has those natively, and duplicate tools confuse routing.
 
@@ -59,7 +59,6 @@ A second principle, inherited from how the layers differ epistemically: **source
 **Why it's in the stack:** test/build/git/tooling output is the single largest uncontrolled token sink in a session. `cargo test` compresses ~92%, `git status` ~81%. Over a session this is the difference between one context window and three.
 
 **Two usage modes:**
-
 - **Output mode (automatic, primary):** the PreToolUse hook. Zero workflow change.
 - **Input mode (manual, for deliberate context assembly):** call filters directly and capture stdout when constructing context on purpose — `rtk ls src/`, `rtk git log -n 20`, `rtk read path/to/file`, `rtk grep pattern`. Use this when writing prompts, session-start summaries, or feeding compressed state into subagents. (A first-class "inject into prompt at position X" mode is an open upstream feature request, not shipped — the manual capture pattern is the supported path today.)
 
@@ -98,7 +97,6 @@ This is the core decision table. Route every information need to exactly one lay
 | Fuzzy "where's the code that handles ~concept~?" | graphify query first; Serena once a symbol name surfaces | reading many files | Graph narrows the neighborhood; LSP takes over at symbol granularity |
 
 **Tie-breakers:**
-
 - Question names a **specific symbol** → Serena, always.
 - Question spans **more than one module** or asks about *shape* → graphify first.
 - Question is about **uncommitted work-in-progress** → Serena or direct reads, never graphify (graph trails the working tree).
@@ -132,7 +130,6 @@ rtk discover      # audit: surfaces commands with suspiciously low savings (mis-
 ```
 
 **Operational notes (the whys):**
-
 - On test failure, RTK preserves failure detail and writes full unfiltered output to disk for retrieval. Verify this once on a deliberately broken test: passing tests are noise, failing tests are the entire signal. If a filter ever flattens a failure you needed, that command can be excluded from rewriting in RTK's config.
 - RTK's tracking DB (`~/.local/share/rtk/tracking.db`) stores full command strings for ~90 days. Don't pass secrets as CLI args (you shouldn't anyway); a reported issue notes bearer tokens/passwords in args persist verbatim.
 - Telemetry: check `rtk telemetry status` and disable if undesired.
@@ -255,7 +252,6 @@ The five context sources can disagree. Tiered by how they acquire truth:
 | 4 | Serena memories, worklog | Observations and notes | Informal; verify before relying |
 
 **Rules:**
-
 1. A tier-3 claim about code (signatures, types, structure) is a *hypothesis* until confirmed at tier 1. Never implement against a spec-stated signature without a `find_symbol` confirmation when the code already exists.
 2. Tier 2 vs tier 1 conflict → the graph is stale; trust the LSP, note that a rebuild is due.
 3. Tier 1 vs tier 3 conflict → **divergence event**: stop, flag, ask direction (code→spec or spec→code), record in worklog. Silent reconciliation is the prohibited move — it hides drift until it compounds.
@@ -367,3 +363,90 @@ git commit --allow-empty -m test && ls -l graphify-out/graph.json   # mtime adva
 **Spec as tiered index, not loaded document** — front-loading durable context would consume the budget the compression layers free up; progressive disclosure preserves it. Epistemic tags + precedence rules exist because cheap retrieval makes stale sources *more* dangerous, not less.
 
 **Worklog separate from ADRs** — ADRs are durable, append-only decisions; the worklog is ephemeral continuity (including rejected attempts). Merging them either bloats the ADR record or loses the "we already tried that" signal.
+
+---
+
+## 10. Single global setup — one install, every project
+
+§4 remains the authoritative reference for what each component's configuration *means*. This section reorganizes those same steps into the operating model: a **global layer** installed exactly once, and a **per-project residue** collapsed into one idempotent script (`stack-init`, shipped alongside this doc — the script is the canonical executable; this section describes it, it does not duplicate it).
+
+### 10.1 Why the split falls where it does
+
+Everything in the stack is either *configuration* (how tools behave — global by nature) or *state* (derivations and content of one codebase — per-project by nature):
+
+| | Global (config) | Per-project (state) | Why it can't move |
+|---|---|---|---|
+| RTK | hook in `~/.claude/settings.json` (`rtk init -g`) | — | matcher `Bash` already applies everywhere |
+| Serena | MCP registration at user scope | `.serena/project.yml`, onboarding memories | memories describe one repo's structure |
+| graphify | `pip install`, `graphify install`, `graphify claude install` | `graphify .`, post-commit hook, `graphify-out/` | the graph is a derivation of *a* codebase; `.git/hooks` is per-repo by construction |
+| Routing contract | `~/.claude/CLAUDE.md` (§4.4 content) | thin project `CLAUDE.md` (pointers only) | rules are universal; pointers are content |
+| Docs layer | template (inside `stack-init`) | SPEC.md, ADRs, worklog, ROADMAP | it *is* the project's content |
+| Language servers | rust-analyzer, ts-ls, pyright — once per language | — | the LSP serves any repo in that language |
+
+### 10.2 Global layer (run once, ever)
+
+```bash
+# RTK — global Bash PreToolUse hook
+cargo install --git https://github.com/rtk-ai/rtk
+rtk init -g
+
+# Serena — user scope, NO --project flag (the one delta vs §4.2):
+# pinning --project at registration binds the server to a single repo.
+# Registered bare, Serena activates the project from the session's cwd
+# (or via its activate_project tool), so one registration serves all repos.
+claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena \
+  serena start-mcp-server --context ide-assistant
+
+# graphify — skill + Claude integration at global scope
+pip install 'graphifyy[all]'
+graphify install
+graphify claude install
+
+# Language servers — once per language
+rustup component add rust-analyzer
+# + typescript-language-server / pyright per Serena's language docs
+
+# Routing contract — promote the §4.4 block to ~/.claude/CLAUDE.md
+# with ONE amendment (see 10.4): graphify rules become conditional.
+```
+
+### 10.3 Per-project bootstrap — `stack-init`
+
+Run once from a repo root; idempotent (re-runs only fill gaps, never overwrite spec/worklog content). It performs, in order: `graphify .` (initial graph) → `graphify hook install` (post-commit incremental rebuild) → gitignore `graphify-out/` → write `.serena/project.yml` with standard ignores (Serena onboards itself on the first agent session) → scaffold the §6 docs layer (SPEC.md index with epistemic tags, `docs/adr/INDEX.md`, `docs/worklog.md`, `ROADMAP.md`) → write a *thin* project `CLAUDE.md` containing only pointers (the contract itself lives globally) → verify graph artifact, post-commit hook, rtk on PATH, and Serena registration.
+
+End state: **install once + `stack-init` once per repo** → every session in every project gets identical routing behavior with zero per-session setup.
+
+### 10.4 Deltas the global arrangement introduces
+
+**The contract outruns the bootstrap.** `~/.claude/CLAUDE.md` applies even in repos where `stack-init` never ran — the agent would be ordered to consult a graph that doesn't exist. Amend rule 1 of the §4.4 contract when promoting it to global:
+
+```markdown
+1. Architecture / cross-module / blast radius:
+   IF graphify-out/ exists → read GRAPH_REPORT.md or run `graphify query`/`graphify path`;
+   never orient by reading files or grepping.
+   IF it does not exist → orient normally, and suggest running `stack-init` once.
+```
+
+Un-bootstrapped repos degrade gracefully instead of erroring; the agent itself nudges toward bootstrap.
+
+**Serena first-session cost moves, not disappears.** One user-scope server serves whatever repo the cwd points at; per-project memories stay in each repo's `.serena/`, so there is no cross-project contamination — but the first session in a fresh repo pays onboarding time. Right trade: once per project, not once per registration, and never per session.
+
+**Multi-language becomes free.** Nothing in the global layer is language-pinned; the same setup covers Rust, TypeScript, and Python projects with no per-project language work. The only language cost is the LSP install, paid once ever (10.2).
+
+**Project skill becomes optional, not default.** With the routing contract global, a per-project `.claude/skills/` entry is only warranted when a repo has conventions that genuinely diverge from your house defaults. Default to nothing; add when divergence is real. (This is §7's spec-bloat guardrail applied to skills.)
+
+### 10.5 Verification additions (beyond §8)
+
+```bash
+# Global contract present?
+grep -q "Context routing" ~/.claude/CLAUDE.md
+
+# Serena at user scope (not project-pinned)?
+claude mcp list | grep -i serena        # registration should show no --project arg
+
+# Graceful degradation: in a repo WITHOUT graphify-out/, ask an architecture
+# question → agent orients normally and suggests stack-init (does not error,
+# does not pretend a graph exists).
+
+# Cross-project isolation: .serena/memories/ in repo A contains nothing about repo B.
+```
