@@ -1,109 +1,160 @@
 #!/usr/bin/env bash
-# stack-init — one-shot per-project bootstrap for the Claude Code context stack.
-# Prereqs (global, once): rtk init -g; serena registered at user scope;
-# graphify install + graphify claude install; routing contract in ~/.claude/CLAUDE.md.
-# Usage: run from the repo root. Idempotent — safe to re-run.
+# =============================================================================
+#  Claude Code Context Stack  —  global installer + per-repo init  (Linux/macOS)
+# =============================================================================
+#
+#  WHAT THIS IS
+#  Three tools that cut the token cost of working in a real codebase with Claude
+#  Code, plus the routing rules that make Claude actually use them. Nothing else
+#  — no spec/ADR/worklog layer. Each tool kills one source of wasted context:
+#
+#    graphify  structure   one-time codebase graph (tree-sitter, local).
+#                          Kills ORIENTATION cost — answers "what connects X to
+#                          Y / blast radius / how is this organized" without the
+#                          agent reading dozens of files to find out.
+#    Serena    symbols     LSP over MCP (rust-analyzer / tsserver / pyright).
+#                          Kills RETRIEVAL+EDIT cost — exact symbol defs, refs,
+#                          implementations, diagnostics, and symbol-level edits
+#                          instead of whole-file dumps and grep walls.
+#    RTK       output      Bash PreToolUse hook that compresses command output
+#                          60-90% before it reaches the window. Kills TOOL-OUTPUT
+#                          noise (cargo test ~92%, git status ~81%). Invisible.
+#
+#  DESIGN PRINCIPLE: one question per layer, no layer answers another's.
+#    architecture/cross-module -> graphify   |   specific symbols -> Serena
+#    compile/type diagnostics   -> Serena     |   execute anything -> Bash (RTK)
+#  PRECEDENCE on conflict: LSP (Serena, live ground truth) > graph (can be stale).
+#
+#  WHAT IS GLOBAL vs PER-REPO
+#    Global (run once): RTK hook, Serena at user scope (auto-activates per repo
+#      from cwd), graphify install, and the routing contract in ~/.claude/CLAUDE.md.
+#    Per-repo (one command): the graph is a derivation of a specific codebase, so
+#      `stack-setup init` builds it and installs a local post-commit rebuild hook.
+#      Repos without a graph still work — the contract degrades gracefully.
+#
+#  USAGE
+#    stack-setup            # or: stack-setup global   -> global install (once)
+#    stack-setup init       # inside a repo            -> build graph + hook
+#    stack-setup verify     # check everything is wired
+#    stack-setup contract   # print the routing contract it installs
+#
+#  PREREQS: cargo, pip, uv, claude (Claude Code CLP), git. A language server per
+#  language (rust-analyzer via `rustup component add rust-analyzer`, etc.).
+# =============================================================================
 set -euo pipefail
 
-[ -d .git ] || { echo "error: run from a git repo root"; exit 1; }
-PROJECT="$(basename "$PWD")"
-say() { printf '\033[1;32m==>\033[0m %s\n' "$*"; }
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+B='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
+say()  { printf "${B}==>${N} %s\n" "$*"; }
+warn() { printf "${Y}warn:${N} %s\n" "$*"; }
+err()  { printf "${R}error:${N} %s\n" "$*" >&2; }
+have() { command -v "$1" >/dev/null 2>&1; }
 
-# --- 1. Knowledge graph: build + keep fresh on commit ------------------------
-say "building knowledge graph (graphify .)"
-graphify .
+print_contract() {
+cat <<'BLOCK'
+# >>> claude-context-stack >>> (managed by stack-setup — edits here are overwritten)
+## Context routing (non-negotiable)
+1. Architecture / cross-module / "what connects X to Y" / blast radius:
+   IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
+   `graphify query "..."` / `graphify path A B`. Never orient by reading files or grep.
+   IF absent -> orient normally, and suggest running the stack init in this repo.
+2. Specific symbols (definitions, references, implementations, file overviews)
+   -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview).
+   Never grep for symbol names.
+3. Compile / type / lint state -> Serena get_diagnostics_for_file.
+   Do not run a full type-check just to read diagnostics Serena already provides.
+4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
+   insert_after_symbol, rename_symbol), not string/regex replacement.
+5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
+   Do NOT route execution through any MCP shell tool — that bypasses RTK.
+6. The graph reflects the LAST COMMIT. For uncommitted work, use Serena (live).
 
-say "installing git post-commit hook (incremental graph rebuild)"
-graphify hook install
-
-grep -q '^graphify-out/' .gitignore 2>/dev/null || {
-  printf '\n# Knowledge graph outputs\ngraphify-out/\n' >> .gitignore
-  say "gitignored graphify-out/"
+## Source-of-truth precedence (on conflict)
+code/LSP (Serena)  >  graph (graphify)
+The LSP is live ground truth; the graph is a derivation that can trail the working
+tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
+# <<< claude-context-stack <<<
+BLOCK
 }
 
-# --- 2. Serena: project config (onboarding runs on first agent session) ------
-if [ ! -f .serena/project.yml ]; then
-  mkdir -p .serena
-  cat > .serena/project.yml <<'YAML'
-read_only: false
-ignored_paths:
-  - graphify-out
-  - target
-  - node_modules
-  - dist
-YAML
-  say "wrote .serena/project.yml (Serena will onboard on first session)"
-else
-  say ".serena/project.yml exists — skipped"
-fi
+check_deps() {
+  local miss=0
+  for d in git claude; do have "$d" || { err "missing required: $d"; miss=1; }; done
+  have cargo || warn "cargo not found — needed to install RTK (Arch: pacman -S rust / rustup)"
+  have pip   || warn "pip not found — needed to install graphify"
+  have uv    || warn "uv not found — needed to run Serena (Arch: pacman -S uv)"
+  [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
+}
 
-# --- 3. Docs layer scaffold (only files that don't exist yet) ----------------
-mkdir -p docs/adr docs/spec
+install_global() {
+  check_deps
+  say "RTK — output compression (global Bash hook)"
+  if have rtk; then say "  rtk present ($(rtk --version 2>/dev/null))"
+  else say "  installing rtk"; cargo install --git https://github.com/rtk-ai/rtk; fi
+  rtk init -g && say "  rtk init -g (PreToolUse Bash hook registered)"
 
-if [ ! -f SPEC.md ]; then
-  cat > SPEC.md <<EOF
-# ${PROJECT} — Specification index
+  say "Serena — LSP symbols over MCP (user scope, auto-activates per repo)"
+  if claude mcp list 2>/dev/null | grep -qi '^serena\|serena '; then
+    say "  serena already registered — skipped"
+  else
+    claude mcp add --scope user serena -- \
+      uvx --from git+https://github.com/oraios/serena \
+      serena start-mcp-server --context ide-assistant
+    say "  serena registered at user scope (--context ide-assistant: no shell/read tools)"
+  fi
 
-> SPEC.md is an INDEX, not a document. Deep sections live in docs/spec/,
-> pulled on demand. Tag every section: [INVARIANT] | [AS-BUILT] | [PROPOSED].
+  say "graphify — codebase knowledge graph"
+  have graphify || { say "  installing graphify (PyPI package: graphifyy)"; pip install 'graphifyy[all]'; }
+  graphify install        >/dev/null 2>&1 && say "  /graphify skill installed"
+  graphify claude install >/dev/null 2>&1 && say "  Claude Code integration installed"
 
-## Statement
-One paragraph: what this is and for whom.
+  say "Routing contract -> $CLAUDE_MD"
+  mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
+  if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD"; then
+    local tmp; tmp="$(mktemp)"
+    awk '/>>> claude-context-stack >>>/{s=1} !s{print} /<<< claude-context-stack <<</{s=0}' \
+      "$CLAUDE_MD" > "$tmp" && mv "$tmp" "$CLAUDE_MD"
+    say "  refreshed existing managed block"
+  fi
+  print_contract >> "$CLAUDE_MD"
+  say "  contract written (idempotent — re-running replaces the managed block)"
 
-## Invariants [INVARIANT]
-Machine-checkable rules only (phrased so a lint/fitness function can verify):
-- (none yet)
+  have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
+  echo; say "Global install done. In each repo, run:  $(basename "$0") init"
+}
 
-## Section index
-| When touching… | Read |
-|---|---|
-| (area) | docs/spec/(file).md, ADR-NNN |
+init_project() {
+  [ -d .git ] || { err "run from a git repo root (no .git here)"; exit 1; }
+  have graphify || { err "graphify not installed — run '$(basename "$0") global' first"; exit 1; }
+  say "building knowledge graph (graphify .)"; graphify .
+  say "installing local post-commit hook (incremental rebuild)"; graphify hook install
+  if ! { [ -f .gitignore ] && grep -q '^graphify-out/' .gitignore; }; then
+    printf '\n# Claude context-stack knowledge graph\ngraphify-out/\n' >> .gitignore
+    say "gitignored graphify-out/"
+  fi
+  echo; say "Repo ready. First Claude session: let Serena onboard, then ask one"
+  say "architecture question and confirm it reads the graph instead of grepping."
+}
 
-## Non-goals
-- (explicitly out of scope)
+verify() {
+  say "verifying"
+  have rtk && echo "  rtk:            OK ($(rtk --version 2>/dev/null))" || echo "  rtk:            NOT ON PATH"
+  rtk gain >/dev/null 2>&1 && echo "  rtk hook:       active" || echo "  rtk hook:       no stats yet (run a few Bash cmds)"
+  claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
+  have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
+  grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
+  if [ -d .git ]; then
+    [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — run: $(basename "$0") init"
+    [ -x .git/hooks/post-commit ]  && echo "  post-commit:    OK" || echo "  post-commit:    none"
+  fi
+}
 
-## Open decisions
-- (unsettled — do NOT assume an answer exists)
-EOF
-  say "scaffolded SPEC.md"
-fi
-
-if [ ! -f docs/adr/INDEX.md ]; then
-  cat > docs/adr/INDEX.md <<'EOF'
-# ADR index
-| ID | Title | Status |
-|---|---|---|
-EOF
-  say "scaffolded docs/adr/INDEX.md"
-fi
-
-if [ ! -f docs/worklog.md ]; then
-  cat > docs/worklog.md <<EOF
-# Worklog — ${PROJECT}
-<!-- newest first; per session: Done / Rejected (with reason) / In flight -->
-EOF
-  say "scaffolded docs/worklog.md"
-fi
-
-[ -f ROADMAP.md ] || { printf '# Roadmap — %s\n\n## Now\n\n## Next\n\n## Later\n' "$PROJECT" > ROADMAP.md; say "scaffolded ROADMAP.md"; }
-
-# --- 4. Thin project CLAUDE.md (global one carries the routing contract) -----
-if [ ! -f CLAUDE.md ]; then
-  cat > CLAUDE.md <<'EOF'
-# Project context
-Global routing contract applies (~/.claude/CLAUDE.md). Project specifics:
-- Spec index: SPEC.md (pull deep sections from docs/spec/ on demand)
-- Decisions: docs/adr/INDEX.md   - Continuity: docs/worklog.md
-- Conventions: .claude/skills/ (if present)
-EOF
-  say "wrote thin project CLAUDE.md"
-fi
-
-# --- 5. Verify ----------------------------------------------------------------
-say "verifying"
-[ -f graphify-out/graph.json ] && echo "  graph:        OK ($(du -h graphify-out/graph.json | cut -f1))"
-[ -x .git/hooks/post-commit ]  && echo "  post-commit:  OK" || echo "  post-commit:  MISSING — rerun: graphify hook install"
-command -v rtk >/dev/null      && echo "  rtk:          OK ($(rtk --version 2>/dev/null))" || echo "  rtk:          NOT ON PATH"
-claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp): OK" || echo "  serena (mcp): not registered at user scope"
-
-say "done. First session in this repo: let Serena finish onboarding, then ask one architecture question to confirm graph-first routing."
+case "${1:-global}" in
+  global|"")  install_global ;;
+  init)       init_project ;;
+  verify)     verify ;;
+  contract)   print_contract ;;
+  -h|--help|help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract]"; exit 1 ;;
+esac
