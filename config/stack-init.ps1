@@ -103,9 +103,16 @@ function Install-Global {
   }
 
   Say "graphify - codebase knowledge graph"
-  if (-not (Have 'graphify')) { Say "  installing graphify (PyPI package: graphifyy)"; pip install 'graphifyy[all]' }
-  graphify install        2>$null | Out-Null; Say "  /graphify skill installed"
-  graphify claude install 2>$null | Out-Null; Say "  Claude Code integration installed"
+  if (-not (Have 'graphify')) {
+    Say "  installing graphify (PyPI package: graphifyy, double-y)"
+    if (Have 'uv') { uv tool install 'graphifyy[all]' } else { pip install 'graphifyy[all]' }
+  }
+  graphify install 2>$null | Out-Null; Say "  /graphify skill installed (global)"
+  # Deliberately NOT running `graphify claude install`: it would write a second,
+  # near-duplicate CLAUDE.md directive into the same global file as our routing
+  # contract, and its Glob/Grep PreToolUse hook is a no-op on Claude Code builds
+  # after the late-May-2026 tool-architecture change. Rule 1 of our contract is
+  # the authoritative, always-on instruction instead.
 
   Say "Routing contract -> $ClaudeMd"
   New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null

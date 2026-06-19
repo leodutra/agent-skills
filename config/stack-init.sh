@@ -105,9 +105,16 @@ install_global() {
   fi
 
   say "graphify — codebase knowledge graph"
-  have graphify || { say "  installing graphify (PyPI package: graphifyy)"; pip install 'graphifyy[all]'; }
-  graphify install        >/dev/null 2>&1 && say "  /graphify skill installed"
-  graphify claude install >/dev/null 2>&1 && say "  Claude Code integration installed"
+  if ! have graphify; then
+    say "  installing graphify (PyPI package: graphifyy, double-y)"
+    if have uv; then uv tool install 'graphifyy[all]'; else pip install 'graphifyy[all]'; fi
+  fi
+  graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)"
+  # Deliberately NOT running `graphify claude install`: it would write a second,
+  # near-duplicate CLAUDE.md directive into the same global file as our routing
+  # contract, and its Glob/Grep PreToolUse hook is a no-op on Claude Code builds
+  # after the late-May-2026 tool-architecture change. Rule 1 of our contract is
+  # the authoritative, always-on instruction instead.
 
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
