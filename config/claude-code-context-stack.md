@@ -1,9 +1,9 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 1.1
+> **Version:** 1.2
 > **Status:** Active
 > **Scope:** Claude Code context stack — graphify (structure), Serena (symbols), RTK (output compression), docs layer (intent). Targets Arch Linux; Rust/TypeScript/Python projects. §4 documents each component's per-project configuration in full; §10 is the operating model: install the global layer once, then bootstrap each repo with `stack-init`.
-> **Changelog:** 1.1 — added §10 (global single-setup + per-project bootstrap); 1.0 — initial.
+> **Changelog:** 1.2 — added §10.6 (Windows / PowerShell) and `stack-init.ps1`; 1.1 — added §10 (global single-setup + per-project bootstrap); 1.0 — initial.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are meant to be referenced from CLAUDE.md.
 
 ---
@@ -450,3 +450,22 @@ claude mcp list | grep -i serena        # registration should show no --project 
 
 # Cross-project isolation: .serena/memories/ in repo A contains nothing about repo B.
 ```
+
+### 10.6 Windows
+
+The global layer (10.2) is cross-platform as written — `cargo install`, `rtk init -g`, `claude mcp add`, `pip install`, `graphify install`, and `rustup component add` run identically in PowerShell. Only paths and the bootstrap script differ.
+
+**Use PowerShell, not cmd.** `stack-init.ps1` is the Windows bootstrap. Classic `cmd.exe`/batch is a poor fit because the script generates multi-line markdown/YAML and batch has no heredoc — every `|`/`>`/`<`/`&` would need `^`-escaping. If a `cmd.exe` entry point is required, wrap it: a one-line `stack-init.bat` containing `@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`. (`graphify hook install` writes a shell post-commit hook; it runs via Git for Windows' bundled bash, so Git for Windows is a prerequisite.)
+
+**Path translations:**
+
+| Concept | Unix | Windows (PowerShell) |
+|---|---|---|
+| Claude config dir | `~/.claude/` | `$env:USERPROFILE\.claude\` |
+| Global routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
+| Bootstrap on PATH | `~/.local/bin/stack-init` | any dir on `$env:PATH` (e.g. `$env:USERPROFILE\bin\stack-init.ps1`) |
+| Run the bootstrap | `stack-init` | `stack-init.ps1` (or `pwsh -File stack-init.ps1`) |
+
+**Behavioral parity:** the `.ps1` mirrors the `.sh` step-for-step and is equally idempotent. The only intentional difference is the post-commit verification — Windows has no execute bit, so the check is existence (`Test-Path .git\hooks\post-commit`) rather than executability.
+
+**ExecutionPolicy:** first run may require `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` (or invoke with `-ExecutionPolicy Bypass`). This is a one-time, user-scoped allowance.
