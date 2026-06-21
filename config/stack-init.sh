@@ -110,12 +110,13 @@ install_global() {
     if have uv; then uv tool install 'graphifyy[all]'; else pip install 'graphifyy[all]'; fi
   fi
   graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)"
-  # Deliberately NOT running `graphify claude install`: it would write a second,
-  # near-duplicate CLAUDE.md directive into the same global file as our routing
-  # contract. (It also installs a Glob/Grep PreToolUse hook that we suspect is a
-  # no-op on current Claude Code builds, post the late-May-2026 tool-architecture
-  # change — unverified, not load-bearing for this decision.) Rule 1 of our
-  # contract is the authoritative, always-on instruction instead.
+  # Deliberately NOT running `graphify claude install` here: it targets the
+  # CLAUDE.md / .claude/settings.json in the CURRENT DIRECTORY, not this
+  # script's global $CLAUDE_MD - wrong layer for a global install step. Its
+  # PreToolUse Bash/Read/Glob hook also fires unconditionally on every
+  # matching call (confirmed active, not a no-op) - noisier than contract
+  # rule 1 below, which scopes graphify to architecture questions only. Wire
+  # this into init_project instead if per-repo defense-in-depth is wanted.
 
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
