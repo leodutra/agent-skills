@@ -1,10 +1,10 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 2.0
+> **Version:** 2.1
 > **Status:** Active
-> **Scope:** Three tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression) — plus the global routing contract that makes Claude use each for the one thing it's best at. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
+> **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude use each for the one thing it's best at. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-setup.sh` (Linux/macOS) and `stack-setup.ps1` (Windows). They are self-documenting and self-installing. This document is the spec-of-whys; the scripts are the source of truth for behavior. Change behavior in the scripts; record reasoning here.
-> **Changelog:** 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (`stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and `stack-init` bootstrap.
+> **Changelog:** 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (`stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and `stack-init` bootstrap.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
 
 ---
@@ -18,14 +18,17 @@ Claude Code's effectiveness on a real codebase is bounded by context quality, no
 | **Orientation** | Re-reading dozens of files to learn what connects to what | graphify |
 | **Retrieval & editing** | Whole-file dumps, grep walls, regex edits that miss aliased refs | Serena |
 | **Tool-output noise** | Thousands of tokens of passing-test boilerplate per `cargo test` | RTK |
+| **Wire-level residue** | Whatever still reaches the API after the three layers above act — `Read`-tool file dumps, growing conversation history | Headroom |
 
-Two design principles:
+Three design principles:
 
 **One question per layer; no layer answers another layer's question.** Most failure modes are *layer bleed* — the agent BFS-ing the graph for a symbol lookup, grepping for a symbol name, or running tests through an MCP shell that bypasses RTK. The configuration makes boundaries structural where possible (e.g. Serena's shell tool is simply not exposed) and instructional (the routing contract) where not.
 
 **Sources have tiers of truth.** The LSP is ground truth by construction — it is the compiler's live model. The graph is a deterministic but potentially stale *derivation* of committed code. When they disagree, the LSP wins and the graph is rebuilt (§5). This matters more once retrieval is cheap, not less: the cheaper a wrong answer is to obtain, the more explicitly its trust level must be marked.
 
-What this stack deliberately does **not** do: manage intent (specs, ADRs, roadmaps) or conventions. Those are valuable but they are not context *compression* — they are content, and earlier versions that scaffolded them added a maintenance surface that drifted. The stack is now only the three tools that move tokens, plus the contract.
+**Compression layers compose, they don't compete.** graphify, Serena, and RTK each *eliminate* a waste source at its origin — there's nothing left for a later layer to compress. Headroom sits one level further out, at the proxy boundary, and squeezes whatever the first three didn't already remove (§2.4). It is additive on top of RTK's output, not a second attempt at RTK's job: compressing already-compressed Bash output again is harmless and small, never required.
+
+What this stack deliberately does **not** do: manage intent (specs, ADRs, roadmaps) or conventions. Those are valuable but they are not context *compression* — they are content, and earlier versions that scaffolded them added a maintenance surface that drifted. The stack is now only the four tools that move tokens, plus the contract.
 
 ---
 
@@ -71,6 +74,21 @@ These are structural, not instructional: the tools simply aren't in Serena's sur
 
 **Hard boundary:** RTK compresses output of ~100 known dev commands. It is not a semantic/prose compressor — it will not shrink markdown or arbitrary text. Don't ask it to.
 
+### 2.4 Headroom — the safety net (wire-level compression)
+
+**Answers:** nothing, like RTK. Headroom is the last thing that touches a request before it leaves the machine.
+
+**Mechanism:** [chopratejas/headroom](https://github.com/chopratejas/headroom) (PyPI: `headroom-ai`) runs as a local proxy. Launching a session with `headroom wrap claude` starts the proxy, points Claude Code's API traffic at it (`ANTHROPIC_BASE_URL`), and recompresses whatever is in the outgoing request — reversibly, so full content is retrievable on demand. Unlike RTK's PreToolUse hook (fires per Bash command, before the result ever enters context), Headroom sits at the wire, after everything else has already shaped the context.
+
+**Why it's in the stack:** the other three layers eliminate waste at its source, but two things still reach the API uncompressed by design: `Read`-tool file dumps (Serena's own `read_file` is structurally disabled, §2.2, so file content comes through Claude Code's native tool instead) and the conversation history itself, which only grows over a session. Headroom is the one layer positioned to catch both.
+
+**Hard boundaries:**
+
+1. Only engages for sessions launched via `headroom wrap claude`. A bare `claude` invocation skips the proxy entirely — RTK, Serena, and graphify are unaffected (they wire into the session, not the launch command), but Headroom contributes nothing. `stack-setup verify` can confirm the binary is installed; it cannot detect how the current session was launched (§7).
+2. `--code-graph` is deliberately never passed. It would have Headroom build its own structure graph, duplicating graphify and creating two disagreeing sources for the same question — exactly the layer bleed §1 exists to prevent.
+3. `--memory` is deliberately never passed. This stack manages no intent/memory layer by design (§1); that flag's scope is out of bounds here regardless of what it does upstream.
+4. Compression is additive on RTK's output, never a substitute for it — RTK runs first and is free to skip (it only rewrites ~100 known commands); Headroom runs second and compresses whatever's left, known commands or not.
+
 ---
 
 ## 3. `[AGENT]` Routing matrix
@@ -97,6 +115,8 @@ Route every information need to exactly one layer.
 - Question spans **more than one module** or asks about *shape* → graphify first.
 - Question is about **uncommitted work-in-progress** → Serena (live), never graphify (graph trails the working tree).
 - Anything that **executes** → Bash.
+
+Headroom doesn't appear in this matrix because it never routes a question — like RTK, it is invisible plumbing, not a layer the agent chooses to query. The only thing it requires of the human, not the agent, is launching the session correctly (§2.4, §7).
 
 ---
 
@@ -159,6 +179,7 @@ Everything in the stack is either *configuration* (how tools behave — global b
 | RTK | hook in `~/.claude/settings.json` (`rtk init -g`) | — |
 | Serena | MCP registration at **user scope** | onboarding memories (auto, first session) |
 | graphify | `uv tool install graphifyy[all]`, `graphify install` | `graphify .`, post-commit hook, `graphify-out/` |
+| Headroom | `uv tool install headroom-ai[all]` | — (launch each session with `headroom wrap claude`) |
 | Routing contract | `~/.claude/CLAUDE.md` (§4) | — |
 | Language servers | rust-analyzer / ts-ls / pyright — once per language | — |
 
@@ -171,7 +192,8 @@ Run once. The installer:
 1. **RTK** — `cargo install` if absent, then `rtk init -g` (global Bash PreToolUse hook).
 2. **Serena** — `claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant`. **No `--project` flag** — registered bare, Serena activates the project from the session's cwd, so one registration serves every repo. `--context ide-assistant` is what disables the shell/read/search tools (§2.2).
 3. **graphify** — `uv tool install 'graphifyy[all]'` (PyPI package is `graphifyy`, double-y; `uv tool`/`pipx` over plain `pip` because PATH issues are the most common "command not found" cause), then `graphify install` for the `/graphify` skill. It deliberately does **not** run `graphify claude install` — see §8.
-4. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent).
+4. **Headroom** — `uv tool install 'headroom-ai[all]'` (PyPI package is `headroom-ai`; same `uv tool` preference and reasoning as graphify). Installing it is necessary but not sufficient: it only takes effect for sessions launched with `headroom wrap claude` (§2.4, §7) — the installer prints this as a reminder but cannot enforce it.
+5. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent).
 
 Prereqs: `git`, `claude` (required); `cargo`, `uv`, `pip` (for the installs); a language server per language.
 
@@ -181,7 +203,7 @@ Run once from each repo root (idempotent). Builds the graph (`graphify .`), inst
 
 ### 6.3 Other subcommands
 
-`stack-setup verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, contract present, and — in a repo — graph built and hook landed). `stack-setup contract` prints the routing contract for inspection.
+`stack-setup verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, Headroom installed, contract present, and — in a repo — graph built and hook landed). It cannot check that a given session was actually launched with `headroom wrap claude` — that's a per-launch choice, not an install-time state. `stack-setup contract` prints the routing contract for inspection.
 
 ### 6.4 Windows
 
@@ -213,11 +235,19 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-setup verify`).
 
+**Headroom silently inert.** Installed but the session was launched with a bare `claude`, not `headroom wrap claude` — everything still works, just without the wire-level compression, and nothing errors to say so. Mitigation: it's a launch-habit problem, not a config one; `stack-setup verify` confirms the binary exists but can't confirm how *this* session started.
+
 ---
 
 ## 8. Decisions log (the whys, condensed)
 
-**Docs/intent layer removed (vs 1.x).** The stack is only the three token-reducing tools. Specs/ADRs/worklogs are content, not compression; scaffolding them added a maintenance surface that drifted and a precedence tangle. Out of scope here.
+**Docs/intent layer removed (vs 1.x).** The stack is only the four token-reducing tools. Specs/ADRs/worklogs are content, not compression; scaffolding them added a maintenance surface that drifted and a precedence tangle. Out of scope here.
+
+**Headroom added as a fourth, proxy-layer tool (2.1).** graphify/Serena/RTK each eliminate a waste source at its origin; nothing in the original three was positioned to catch `Read`-tool file dumps or the conversation history's own growth, both of which still reach the API uncompressed. Headroom's proxy sits exactly there. See §2.4.
+
+**Headroom's `--code-graph` and `--memory` flags never passed.** `--code-graph` would have Headroom build a second structure graph, directly duplicating graphify and reopening the layer-bleed problem §1 exists to close. `--memory` is an intent/memory feature, and this stack manages no intent layer by design (§1) — adding one back in through a flag would undo that decision by a side door.
+
+**No automatic shell alias for `claude` → `headroom wrap claude`.** The installer prints the reminder instead of writing a shell function/profile entry for it. Two reasons: editing a user's shell profile is a persistent, easy-to-miss change to their environment that this installer otherwise avoids (it only ever touches `CLAUDE.md` and `settings.json`, both Claude-owned files); and a function literally named `claude` risks recursing into itself depending on how `headroom wrap` resolves the real binary on a given shell — untested across every shell this stack targets, so it's left as an opt-in step for the human, not a default the installer commits them to.
 
 **`graphify claude install` dropped.** It would write a second, near-duplicate "read GRAPH_REPORT.md" directive into the same global `CLAUDE.md` as the routing contract, and its Glob/Grep PreToolUse hook is a no-op on Claude Code builds after the late-May-2026 tool-architecture change. Rule 1 of the contract is the authoritative, always-on instruction; `graphify install` (the skill) is still wired so `/graphify` and the CLI work.
 
@@ -247,6 +277,7 @@ rtk gain                                   # non-zero after a few Bash commands 
 claude mcp list | grep -i serena           # registered, no --project arg
 grep -q "Context routing" ~/.claude/CLAUDE.md   # contract present
 command -v graphify                        # installed and on PATH
+command -v headroom                        # installed and on PATH
 
 # Per repo (after `stack-setup init`)
 ls -l graphify-out/graph.json              # graph built
@@ -259,4 +290,7 @@ git commit --allow-empty -m test && ls -l graphify-out/graph.json  # mtime advan
 #  - agent tool list shows NO serena execute_shell_command / read_file
 #  - one-time: break a test on purpose -> failure detail survives RTK compression
 #  - repo WITHOUT graphify-out/ -> agent orients normally and suggests init (no error)
+#  - session started with `headroom wrap claude` -> headroom stats/logs show traffic
+#    compressed; a bare `claude` session shows none (expected - confirms §7's
+#    "silently inert" failure mode rather than a broken install)
 ```

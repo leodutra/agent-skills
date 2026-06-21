@@ -5,7 +5,7 @@
 =============================================================================
 
   WHAT THIS IS
-  Three tools that cut the token cost of working in a real codebase with Claude
+  Four tools that cut the token cost of working in a real codebase with Claude
   Code, plus the routing rules that make Claude actually use them. Nothing else
   - no spec/ADR/worklog layer. Each tool kills one source of wasted context:
 
@@ -18,15 +18,21 @@
                           implementations, diagnostics, symbol-level edits.
     RTK       output      Bash PreToolUse hook compressing command output
                           60-90% before it hits the window. Invisible.
+    Headroom  wire        Local proxy (`headroom wrap claude`) that recompresses
+                          whatever still reaches the API after the three layers
+                          above - file dumps, growing history. Second pass, not
+                          a replacement for any of them.
 
   PRINCIPLE: one question per layer.
     architecture/cross-module -> graphify  |  specific symbols -> Serena
     compile/type diagnostics  -> Serena    |  execute anything  -> Bash (RTK)
+    everything left over at the wire -> Headroom (catch-all, not a router)
   PRECEDENCE on conflict: LSP (Serena, live) > graph (can be stale).
 
   GLOBAL vs PER-REPO
     Global (once): RTK hook, Serena at user scope (auto-activates per repo),
-      graphify install, routing contract in $env:USERPROFILE\.claude\CLAUDE.md.
+      graphify install, Headroom install, routing contract in
+      $env:USERPROFILE\.claude\CLAUDE.md.
     Per-repo (one command): the graph derives from a specific codebase, so
       `stack-setup.ps1 init` builds it and installs a local post-commit hook.
 
@@ -35,6 +41,10 @@
     .\stack-setup.ps1 init       # inside a repo -> build graph + hook
     .\stack-setup.ps1 verify     # check wiring
     .\stack-setup.ps1 contract   # print the routing contract
+
+  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
+  `claude`, or Headroom's compression never engages (RTK/Serena/graphify are
+  unaffected either way - they wire into the session, not the launch command).
 
   PREREQS: cargo, pip, uv, claude (Claude Code CLI), Git for Windows (its bash
   runs the post-commit hook). A language server per language. First run may need
@@ -116,6 +126,20 @@ function Install-Global {
   # rule 1 below, which scopes graphify to architecture questions only. Wire
   # this into Init-Project instead if per-repo defense-in-depth is wanted.
 
+  Say "Headroom - proxy-layer compression (final pass before the API)"
+  if (Have 'headroom') { Say "  headroom present ($(headroom --version 2>$null))" }
+  else {
+    Say "  installing headroom (PyPI package: headroom-ai)"
+    if (Have 'uv') { uv tool install 'headroom-ai[all]' } else { pip install 'headroom-ai[all]' }
+  }
+  Say "  installed - launch sessions with 'headroom wrap claude', not bare 'claude'"
+  Say "  (not aliasing 'claude' here: a shell function/alias named 'claude' may"
+  Say "  recurse into itself when headroom resolves the target binary - opt in"
+  Say "  yourself once you've confirmed it's safe on your shell)"
+  # Deliberately not passing --code-graph (would build a second structure graph,
+  # duplicating graphify - rule 1 below already owns that question) or --memory
+  # (this stack manages no intent/memory layer by design, see decisions log).
+
   Say "Routing contract -> $ClaudeMd"
   New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
   $existing = if (Test-Path $ClaudeMd) { Get-Content -Raw $ClaudeMd } else { '' }
@@ -147,6 +171,7 @@ function Invoke-Verify {
   if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" } else { Write-Host "  rtk:            NOT ON PATH" }
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
+  if (Have 'headroom') { Write-Host "  headroom:       OK (remember: launch via 'headroom wrap claude')" } else { Write-Host "  headroom:       NOT installed" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-setup.ps1 init" }

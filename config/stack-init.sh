@@ -4,7 +4,7 @@
 # =============================================================================
 #
 #  WHAT THIS IS
-#  Three tools that cut the token cost of working in a real codebase with Claude
+#  Four tools that cut the token cost of working in a real codebase with Claude
 #  Code, plus the routing rules that make Claude actually use them. Nothing else
 #  — no spec/ADR/worklog layer. Each tool kills one source of wasted context:
 #
@@ -19,15 +19,21 @@
 #    RTK       output      Bash PreToolUse hook that compresses command output
 #                          60-90% before it reaches the window. Kills TOOL-OUTPUT
 #                          noise (cargo test ~92%, git status ~81%). Invisible.
+#    Headroom  wire        Local proxy (`headroom wrap claude`) that recompresses
+#                          whatever still reaches the API after the three layers
+#                          above — file dumps, growing history. Second pass, not
+#                          a replacement for any of them.
 #
 #  DESIGN PRINCIPLE: one question per layer, no layer answers another's.
 #    architecture/cross-module -> graphify   |   specific symbols -> Serena
 #    compile/type diagnostics   -> Serena     |   execute anything -> Bash (RTK)
+#    everything left over at the wire -> Headroom (catch-all, not a router)
 #  PRECEDENCE on conflict: LSP (Serena, live ground truth) > graph (can be stale).
 #
 #  WHAT IS GLOBAL vs PER-REPO
 #    Global (run once): RTK hook, Serena at user scope (auto-activates per repo
-#      from cwd), graphify install, and the routing contract in ~/.claude/CLAUDE.md.
+#      from cwd), graphify install, Headroom install, and the routing contract
+#      in ~/.claude/CLAUDE.md.
 #    Per-repo (one command): the graph is a derivation of a specific codebase, so
 #      `stack-setup init` builds it and installs a local post-commit rebuild hook.
 #      Repos without a graph still work — the contract degrades gracefully.
@@ -37,6 +43,10 @@
 #    stack-setup init       # inside a repo            -> build graph + hook
 #    stack-setup verify     # check everything is wired
 #    stack-setup contract   # print the routing contract it installs
+#
+#  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
+#  `claude`, or Headroom's compression never engages (RTK/Serena/graphify wire
+#  into the session itself, so they're unaffected either way).
 #
 #  PREREQS: cargo, pip, uv, claude (Claude Code CLP), git. A language server per
 #  language (rust-analyzer via `rustup component add rust-analyzer`, etc.).
@@ -118,6 +128,20 @@ install_global() {
   # rule 1 below, which scopes graphify to architecture questions only. Wire
   # this into init_project instead if per-repo defense-in-depth is wanted.
 
+  say "Headroom — proxy-layer compression (final pass before the API)"
+  if have headroom; then say "  headroom present ($(headroom --version 2>/dev/null))"
+  else
+    say "  installing headroom (PyPI package: headroom-ai)"
+    if have uv; then uv tool install 'headroom-ai[all]'; else pip install 'headroom-ai[all]'; fi
+  fi
+  say "  installed — launch sessions with 'headroom wrap claude', not bare 'claude'"
+  say "  (not aliasing 'claude' here: a shell function/alias named 'claude' may"
+  say "  recurse into itself when headroom resolves the target binary — opt in"
+  say "  yourself once you've confirmed it's safe on your shell)"
+  # Deliberately not passing --code-graph (would build a second structure graph,
+  # duplicating graphify - rule 1 below already owns that question) or --memory
+  # (this stack manages no intent/memory layer by design, see decisions log).
+
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
   if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD"; then
@@ -152,6 +176,7 @@ verify() {
   rtk gain >/dev/null 2>&1 && echo "  rtk hook:       active" || echo "  rtk hook:       no stats yet (run a few Bash cmds)"
   claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
   have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
+  have headroom && echo "  headroom:       OK (remember: launch via 'headroom wrap claude')" || echo "  headroom:       NOT installed"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
   if [ -d .git ]; then
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — run: $(basename "$0") init"

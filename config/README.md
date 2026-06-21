@@ -1,6 +1,6 @@
 # Claude Code Context Stack
 
-A pre-configured setup for Claude Code that cuts the token cost of working in a real codebase, using three tools and the routing rules that make Claude use each for the one thing it's best at: **graphify** (codebase knowledge graph — structure), **Serena** (LSP symbol tools via MCP — symbols), **RTK** (CLI output compression). Install the global layer once; initialize each repo with a single command. Every project then gets identical routing behavior — graph for architecture, LSP for symbols, compressed Bash for execution.
+A pre-configured setup for Claude Code that cuts the token cost of working in a real codebase, using four tools and the routing rules that make Claude use each for the one thing it's best at: **graphify** (codebase knowledge graph — structure), **Serena** (LSP symbol tools via MCP — symbols), **RTK** (CLI output compression), **Headroom** (proxy-layer compression). Install the global layer once; initialize each repo with a single command. Every project then gets identical routing behavior — graph for architecture, LSP for symbols, compressed Bash for execution, compressed wire traffic for whatever's left.
 
 No intent/docs layer: this stack is only the parts that move tokens, plus the global routing contract.
 
@@ -18,8 +18,8 @@ The scripts are self-contained — the document is the deep reasoning, but you c
 
 ```bash
 # 1. Global layer — once, ever
-#    Installs RTK (Bash hook) + Serena (user scope) + graphify, and writes the
-#    routing contract to ~/.claude/CLAUDE.md.
+#    Installs RTK (Bash hook) + Serena (user scope) + graphify + Headroom, and
+#    writes the routing contract to ~/.claude/CLAUDE.md.
 install -m 755 stack-setup.sh ~/.local/bin/stack-setup      # put it on PATH
 stack-setup                                                 # = stack-setup global
 #   Windows: copy stack-setup.ps1 to a dir on $env:PATH, then  .\stack-setup.ps1
@@ -30,6 +30,9 @@ cd /path/to/project && stack-setup init                     # Unix/macOS
 
 # 3. Check the wiring any time
 stack-setup verify
+
+# 4. Every session after that — launch via Headroom's wrapper, not bare `claude`
+headroom wrap claude
 ```
 
 On Windows use PowerShell (`stack-setup.ps1`), not cmd — see doc §6.4 for path translations, the Git-for-Windows requirement, and the optional `.bat` wrapper.
@@ -43,6 +46,7 @@ First session in a freshly initialized repo: let Serena finish onboarding, then 
 | graphify | orientation, cross-module structure, blast radius | symbol lookup |
 | Serena | symbol definitions/references, diagnostics, symbol-level edits | running anything |
 | RTK | compressing Bash output (invisible) | prose/markdown compression |
+| Headroom | compressing whatever still reaches the API — file dumps, history (invisible, requires `headroom wrap claude`) | replacing RTK, or building a second structure graph (`--code-graph` is never passed) |
 
 On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground truth; the graph is a derivation that can trail the working tree, so trust the LSP and rebuild the graph (doc §5).
 
@@ -52,4 +56,4 @@ Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and
 
 ## Versioning
 
-Doc is at **v2.0** (changelog in its header). The doc is the source of truth for *why*; `stack-setup.sh` (Unix) and `stack-setup.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally identical — change behavior in the scripts, record the reasoning in the doc.
+Doc is at **v2.1** (changelog in its header). The doc is the source of truth for *why*; `stack-setup.sh` (Unix) and `stack-setup.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally identical — change behavior in the scripts, record the reasoning in the doc.
