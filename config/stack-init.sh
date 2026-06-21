@@ -112,9 +112,10 @@ install_global() {
   graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)"
   # Deliberately NOT running `graphify claude install`: it would write a second,
   # near-duplicate CLAUDE.md directive into the same global file as our routing
-  # contract, and its Glob/Grep PreToolUse hook is a no-op on Claude Code builds
-  # after the late-May-2026 tool-architecture change. Rule 1 of our contract is
-  # the authoritative, always-on instruction instead.
+  # contract. (It also installs a Glob/Grep PreToolUse hook that we suspect is a
+  # no-op on current Claude Code builds, post the late-May-2026 tool-architecture
+  # change — unverified, not load-bearing for this decision.) Rule 1 of our
+  # contract is the authoritative, always-on instruction instead.
 
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
