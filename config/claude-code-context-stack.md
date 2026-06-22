@@ -2,7 +2,7 @@
 
 > **Version:** 2.1
 > **Status:** Active
-> **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude use each for the one thing it's best at. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
+> **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude route the first three to the one thing each is best at. Headroom needs no routing decision; see §2.4. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-setup.sh` (Linux/macOS) and `stack-setup.ps1` (Windows). They are self-documenting and self-installing. This document is the spec-of-whys; the scripts are the source of truth for behavior. Change behavior in the scripts; record reasoning here.
 > **Changelog:** 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (`stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and `stack-init` bootstrap.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
@@ -11,7 +11,7 @@
 
 ## 1. Purpose and design principle
 
-Claude Code's effectiveness on a real codebase is bounded by context quality, not model intelligence. Context degrades from three uncontrolled sources of waste, and each tool eliminates exactly one:
+Claude Code's effectiveness on a real codebase is bounded by context quality, not model intelligence. Context degrades from four uncontrolled sources of waste, and each tool eliminates exactly one:
 
 | Waste source | What it looks like | Owned by |
 |---|---|---|
@@ -22,7 +22,7 @@ Claude Code's effectiveness on a real codebase is bounded by context quality, no
 
 Three design principles:
 
-**One question per layer; no layer answers another layer's question.** Most failure modes are *layer bleed* — the agent BFS-ing the graph for a symbol lookup, grepping for a symbol name, or running tests through an MCP shell that bypasses RTK. The configuration makes boundaries structural where possible (e.g. Serena's shell tool is simply not exposed) and instructional (the routing contract) where not.
+**One question per layer; no layer answers another layer's question.** Most failure modes are *layer bleed* — the agent BFS-ing the graph for a symbol lookup, grepping for a symbol name, or running tests through an MCP shell that bypasses RTK. The configuration makes boundaries structural where possible (e.g. Serena's shell tool is simply not exposed) and instructional (the routing contract) where not. graphify and Serena chain rather than bleed on compound questions: for blast radius or fuzzy "where's the code for X" asks, graphify narrows a multi-module question to a neighborhood first, then Serena confirms the exact symbol or reference within it (§3) — two questions in sequence, each still answered by exactly the layer that owns it.
 
 **Sources have tiers of truth.** The LSP is ground truth by construction — it is the compiler's live model. The graph is a deterministic but potentially stale *derivation* of committed code. When they disagree, the LSP wins and the graph is rebuilt (§5). This matters more once retrieval is cheap, not less: the cheaper a wrong answer is to obtain, the more explicitly its trust level must be marked.
 
@@ -172,18 +172,18 @@ Two sources can disagree. Tiered by how they acquire truth:
 
 ## 6. Installation and operating model
 
-Everything in the stack is either *configuration* (how tools behave — global by nature) or *state* (a derivation of one codebase — per-repo by nature). The split:
+Most of the stack is either *configuration* (how tools behave — global by nature) or *state* (a derivation of one codebase — per-repo by nature). The split (Headroom's one exception is noted below the table):
 
 | | Global (once, ever) | Per-repo (`stack-setup init`) |
 |---|---|---|
 | RTK | hook in `~/.claude/settings.json` (`rtk init -g`) | — |
 | Serena | MCP registration at **user scope** | onboarding memories (auto, first session) |
 | graphify | `uv tool install graphifyy[all]`, `graphify install` | `graphify .`, post-commit hook, `graphify-out/` |
-| Headroom | `uv tool install headroom-ai[all]` | — (launch each session with `headroom wrap claude`) |
+| Headroom | `uv tool install headroom-ai[all]` | — |
 | Routing contract | `~/.claude/CLAUDE.md` (§4) | — |
 | Language servers | rust-analyzer / ts-ls / pyright — once per language | — |
 
-The graph and its refresh hook are the only irreducibly per-repo pieces: there is no graph until a repo exists, and `.git/hooks` is per-repo by construction. Everything else is set once.
+The graph and its refresh hook are the only irreducibly per-repo pieces: there is no graph until a repo exists, and `.git/hooks` is per-repo by construction. Everything else in this table is set once. Headroom is the exception to "once": the *install* is global-once like the rest, but *activation* is a third axis — neither global nor per-repo — decided fresh at every session launch (`headroom wrap claude` vs bare `claude`, §2.4, §7).
 
 ### 6.1 Global install — `stack-setup` (no args)
 
