@@ -93,8 +93,15 @@ check_deps() {
   for d in git claude; do have "$d" || { err "missing required: $d"; miss=1; }; done
   have cargo || warn "cargo not found — needed to install RTK (Arch: pacman -S rust / rustup)"
   have pip   || warn "pip not found — needed to install graphify"
-  have uv    || warn "uv not found — needed to run Serena (Arch: pacman -S uv)"
   [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
+}
+
+install_uv() {
+  have uv && return
+  say "  installing uv (needed to run Serena)"
+  if have pacman; then sudo pacman -S --noconfirm uv
+  else curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+  have uv || warn "uv install failed — Serena will not be able to launch"
 }
 
 install_global() {
@@ -108,9 +115,8 @@ install_global() {
   if claude mcp list 2>/dev/null | grep -qi '^serena\|serena '; then
     say "  serena already registered — skipped"
   else
-    claude mcp add --scope user serena -- \
-      uvx --from git+https://github.com/oraios/serena \
-      serena start-mcp-server --context ide-assistant
+    install_uv
+    claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
     say "  serena registered at user scope (--context ide-assistant: no shell/read tools)"
   fi
 

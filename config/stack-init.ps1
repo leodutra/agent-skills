@@ -91,8 +91,15 @@ function Check-Deps {
   foreach ($d in 'git','claude') { if (-not (Have $d)) { Err "missing required: $d"; $miss = $true } }
   if (-not (Have 'cargo')) { Warn "cargo not found - needed to install RTK" }
   if (-not (Have 'pip'))   { Warn "pip not found - needed to install graphify" }
-  if (-not (Have 'uv'))    { Warn "uv not found - needed to run Serena" }
   if ($miss) { Err "install the required tools above, then re-run"; exit 1 }
+}
+
+function Install-Uv {
+  if (Have 'uv') { return }
+  Say "  installing uv (needed to run Serena)"
+  if (Have 'winget') { winget install --id astral-sh.uv -e --silent }
+  else { powershell -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex" }
+  if (-not (Have 'uv')) { Warn "uv install failed - Serena will not be able to launch" }
 }
 
 function Install-Global {
@@ -106,9 +113,8 @@ function Install-Global {
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) {
     Say "  serena already registered - skipped"
   } else {
-    claude mcp add --scope user serena -- `
-      uvx --from git+https://github.com/oraios/serena `
-      serena start-mcp-server --context ide-assistant
+    Install-Uv
+    claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
     Say "  serena registered at user scope (ide-assistant: no shell/read tools)"
   }
 
