@@ -140,6 +140,53 @@ function Install-Global {
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
 
+  Say "worktrunk - parallel worktrees (workflow tool, OUTSIDE the routing contract)"
+  # Not a token layer and deliberately absent from the contract below - it routes
+  # nothing. It manages worktree lifecycle so parallel agents/tasks each get their
+  # own checkout. One rule makes worktrees indistinguishable from any checkout:
+  # the global post-start hook below re-runs the stack's per-checkout init
+  # (graphify graph + rebuild hook) in every new worktree, but only for repos
+  # whose primary checkout opted in (graphify-out/ exists). Every step here is
+  # non-fatal: a worktrunk failure must never block the token stack.
+  # Winget installs the binary as git-wt (avoids the Windows Terminal wt.exe
+  # collision). NEVER detect via bare 'wt' here - that matches Windows Terminal's
+  # launcher on stock Win11. Accept only git-wt or cargo's own wt.exe by path.
+  $CargoWt = Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'
+  if ((Have 'git-wt') -or (Test-Path $CargoWt)) { Say "  worktrunk present" }
+  else {
+    Say "  installing worktrunk (winget: max-sixty.worktrunk, binary: git-wt)"
+    try {
+      if (Have 'winget') { winget install --id max-sixty.worktrunk --accept-source-agreements --accept-package-agreements }
+      else { cargo install worktrunk }
+    } catch { Warn "worktrunk install failed: $_" }
+  }
+  $WtBin = if (Have 'git-wt') { 'git-wt' } elseif (Test-Path $CargoWt) { $CargoWt } else { $null }
+  if ($WtBin) {
+    try { & $WtBin config shell install }
+    catch { Warn "shell integration failed - run '$WtBin config shell install' manually" }
+    $WtCfgDir = Join-Path $env:APPDATA 'worktrunk'
+    $WtCfg    = Join-Path $WtCfgDir 'config.toml'
+    New-Item -ItemType Directory -Force -Path $WtCfgDir | Out-Null
+    $wtExisting = if (Test-Path $WtCfg) { Get-Content -Raw $WtCfg } else { '' }
+    if ($wtExisting -match 'claude-context-stack') {
+      Say "  post-start hook already present - skipped"
+    } else {
+      # Hook body is POSIX sh: worktrunk runs hooks via Git for Windows' bash.
+      $wtHook = @'
+
+# claude-context-stack: replicate the stack's per-checkout state (graphify graph
+# + post-commit rebuild hook) into every new worktree, only where the primary
+# checkout was stack-inited. Delete this block to opt out.
+[post-start]
+claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true"
+'@
+      Add-Content -Path $WtCfg -Value $wtHook -Encoding utf8
+      Say "  global post-start hook written -> $WtCfg"
+    }
+  } else {
+    Warn "worktrunk unavailable - parallel-worktree support skipped (stack unaffected)"
+  }
+
   Say "Routing contract -> $ClaudeMd"
   New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
   $existing = if (Test-Path $ClaudeMd) { Get-Content -Raw $ClaudeMd } else { '' }
@@ -172,6 +219,7 @@ function Invoke-Verify {
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
   if (Have 'headroom') { Write-Host "  headroom:       OK (remember: launch via 'headroom wrap claude')" } else { Write-Host "  headroom:       NOT installed" }
+  if ((Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'))) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-setup.ps1 init" }

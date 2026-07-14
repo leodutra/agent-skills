@@ -1,6 +1,6 @@
 ---
 name: worktrunk
-description: Manage Git worktrees with Worktrunk (`wt`) for parallel/isolated work — one worktree per branch, paths auto-generated, lifecycle automated. Use this skill whenever the user asks to work on something "in parallel", "in isolation", "without touching my current branch", to run multiple agents/tasks side by side, to create/switch/list/remove worktrees, to merge a worktree back, or anything mentioning `wt`, worktrunk, or `git worktree`. Also trigger for setting up worktrunk hooks (post-create/pre-merge/post-merge) or debugging its shell integration.
+description: Manage Git worktrees with Worktrunk (`wt`) for parallel/isolated work — one worktree per branch, paths auto-generated, lifecycle automated. Use this skill whenever the user asks to work on something "in parallel", "in isolation", "without touching my current branch", to run multiple agents/tasks side by side, to create/switch/list/remove worktrees, to merge a worktree back, or anything mentioning `wt`, worktrunk, or `git worktree`. Also trigger for setting up worktrunk hooks (pre/post-start, pre/post-merge, pre/post-switch, pre/post-commit, pre/post-remove) or debugging its shell integration.
 ---
 
 # Worktrunk
@@ -48,20 +48,24 @@ If missing, offer install (do not install unasked):
 
 ## Hooks
 
-Configured per repo; run automatically on lifecycle events:
+Five lifecycle events, each with a blocking pre-hook and a background post-hook: `pre/post-switch`, `pre/post-start` (worktree creation), `pre/post-commit`, `pre/post-merge`, `pre/post-remove`. Pre-hooks block (a failing `pre-merge` stops the merge); post-hooks run in the background.
 
-- `post-create` — after a worktree is created (typical: install deps, copy `.env`, `wt step copy-ignored` for build caches).
-- `pre-merge` — before merging (typical: tests, lint — a failing hook blocks the merge).
-- `post-merge` — after merging.
+Defined as top-level TOML keys in either config layer — both run, global first:
+- User-global: `~/.config/worktrunk/config.toml` (Linux/macOS), `%APPDATA%\worktrunk\config.toml` (Windows)
+- Per-repo (version-controlled): `.config/wt.toml`
 
-If a fresh worktree "doesn't build" or lacks env files, the fix is usually a `post-create` hook, not manual setup notes. Manage with `wt hook`.
+Three forms: string (one command), table (concurrent named commands), `[[hook]]` array (sequential pipeline). Template variables: `{{ branch }}`, `{{ worktree_path }}`, `{{ primary_worktree_path }}`, `{{ repo }}`, `{{ default_branch }}`, plus filters like `{{ branch | hash_port }}` for unique ports per worktree.
+
+Hooks run in the new worktree's root (exceptions: `pre-switch` runs in the source worktree, `post-remove` in the primary). On Windows they execute via Git for Windows' bash, so write them in POSIX sh.
+
+If a fresh worktree "doesn't build" or lacks env files, the fix is usually a `post-start` hook (deps, `.env` copy, `wt step copy-ignored` for build caches), not manual setup notes.
 
 ## Interop with this environment
 
 - Worktrees created by `wt` are ordinary git worktrees — all git tooling works inside them.
 - On Windows, hooks execute via Git for Windows' bash; it must be installed.
 - Each worktree shares the repo's object store: cheap to create, but a branch checked out in one worktree cannot be checked out in another (git rule, not a worktrunk one).
-- If a `graphify` graph exists (Context Stack), it lives per checkout and reflects the last commit — a fresh worktree starts from its branch's last commit, so the graph is valid there after `stack-setup init`/`graphify update .` runs in that worktree.
+- If a `graphify` graph exists (Context Stack), it lives per checkout — a fresh worktree has no graph until one is built there. The stack's global installer writes a worktrunk `post-start` hook that rebuilds it automatically in every new worktree whose primary checkout was stack-inited; if that hook is absent, run `graphify . && graphify hook install` in the worktree.
 
 ## Failure modes
 

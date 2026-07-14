@@ -142,6 +142,44 @@ install_global() {
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
 
+  say "worktrunk — parallel worktrees (workflow tool, OUTSIDE the routing contract)"
+  # Not a token layer and deliberately absent from the contract below — it routes
+  # nothing. It manages worktree lifecycle so parallel agents/tasks each get their
+  # own checkout. One rule makes worktrees indistinguishable from any checkout:
+  # the global post-start hook below re-runs the stack's per-checkout init
+  # (graphify graph + rebuild hook) in every new worktree, but only for repos
+  # whose primary checkout opted in (graphify-out/ exists). Every step here is
+  # non-fatal: a worktrunk failure must never block the token stack.
+  if have wt || have git-wt; then say "  worktrunk present"
+  else
+    say "  installing worktrunk"
+    if have brew; then brew install worktrunk || warn "brew install worktrunk failed"
+    else cargo install worktrunk || warn "cargo install worktrunk failed"; fi
+  fi
+  WT_BIN="$(command -v wt || command -v git-wt || true)"
+  if [ -n "$WT_BIN" ]; then
+    "$WT_BIN" config shell install \
+      || warn "shell integration failed — run '$WT_BIN config shell install' manually"
+    WT_CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/worktrunk"
+    WT_CFG="$WT_CFG_DIR/config.toml"
+    mkdir -p "$WT_CFG_DIR"; touch "$WT_CFG"
+    if grep -q 'claude-context-stack' "$WT_CFG"; then
+      say "  post-start hook already present — skipped"
+    else
+      cat >> "$WT_CFG" <<'WTHOOK'
+
+# claude-context-stack: replicate the stack's per-checkout state (graphify graph
+# + post-commit rebuild hook) into every new worktree, only where the primary
+# checkout was stack-inited. Delete this block to opt out.
+[post-start]
+claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true"
+WTHOOK
+      say "  global post-start hook written -> $WT_CFG"
+    fi
+  else
+    warn "worktrunk unavailable — parallel-worktree support skipped (stack unaffected)"
+  fi
+
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
   if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD"; then
@@ -177,6 +215,7 @@ verify() {
   claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
   have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
   have headroom && echo "  headroom:       OK (remember: launch via 'headroom wrap claude')" || echo "  headroom:       NOT installed"
+  { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
   if [ -d .git ]; then
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — run: $(basename "$0") init"
