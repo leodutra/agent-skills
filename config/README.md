@@ -50,6 +50,18 @@ First session in a freshly initialized repo: let Serena finish onboarding, then 
 
 On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground truth; the graph is a derivation that can trail the working tree, so trust the LSP and rebuild the graph (doc §5).
 
+## Extra tools (outside the contract)
+
+The global installer also sets up two tools that are *not* part of the routing contract and never appear in it — the "only the parts that move tokens" claim above applies to the contract, not to what the installer ships. Both install non-fatally: their failure never blocks the stack.
+
+**opensrc** (`npm install -g opensrc`) — fetches the exact installed version of any dependency's source (npm/PyPI/crates.io/GitHub; version auto-detected from the lockfile) into a global cache at `~/.opensrc/` and prints its path (`opensrc path zod`). It answers the one question the four tools can't: "what does this dependency actually do." Zero per-repo state — nothing gitignored, nothing per-worktree; the cache is shared by every checkout. Usage guidance lives in the [`opensrc` skill](../skills/opensrc/SKILL.md), not the contract.
+
+**worktrunk** (`wt`; `git-wt` on Windows) — a git-worktree manager for parallel agents/tasks. It moves no tokens and routes no questions; it only manages where checkouts live.
+
+Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. The installer writes a single user-global worktrunk `post-start` hook that re-runs the stack's per-checkout step (`graphify .` + rebuild hook) in every new worktree, only for repos whose primary checkout has `graphify-out/`. Un-inited repos are untouched; the contract degrades gracefully there exactly as it always did. RTK, Serena, and Headroom are global and need nothing per-worktree (Serena re-onboards per directory; that's inherent to worktrees).
+
+One gotcha: `wt switch -x claude` launches bare `claude`, bypassing Headroom — use `wt switch -x 'headroom wrap claude'` (or launch the session yourself) to keep wire compression.
+
 ## Prerequisites
 
 Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and a language server per language used (rust-analyzer / typescript-language-server / pyright). On Windows: PowerShell 5.1+ and Git for Windows (its bundled bash runs the post-commit hook).

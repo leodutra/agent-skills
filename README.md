@@ -17,6 +17,7 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 |---|---|
 | [`architecture-blueprint`](skills/architecture-blueprint/SKILL.md) | Domain-first backend/full-stack architecture: modular monoliths, vertical slices, type-driven domain modeling, ADRs. |
 | [`macro-analyst`](skills/macro-analyst/SKILL.md) | Structured macro/FX analysis for currency pairs, rate differentials, central bank policy. |
+| [`opensrc`](skills/opensrc/SKILL.md) | Read the actual source of a dependency (npm/PyPI/crates.io/GitHub) at the installed version via `opensrc path`, instead of guessing from types or docs. |
 | [`rust-bevy-architecture`](skills/rust-bevy-architecture/SKILL.md) | Architecture method for Bevy (Rust ECS) game projects — layout, plugins, messages/observers, scheduling, determinism. |
 | [`rust-wgpu-functional`](skills/rust-wgpu-functional/SKILL.md) | Idiomatic Rust for wgpu / bare-metal GPU code, applying functional principles without sacrificing performance. |
 | [`worktrunk`](skills/worktrunk/SKILL.md) | Git worktree management via Worktrunk (`wt`) for parallel/isolated work — create, switch, merge, and clean up worktrees by branch name. |

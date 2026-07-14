@@ -142,6 +142,19 @@ install_global() {
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
 
+  say "opensrc — dependency source fetcher (context tool, OUTSIDE the routing contract)"
+  # Also not a routing layer: it answers one question the four tools can't —
+  # "what does this dependency actually do" — by fetching the exact installed
+  # version's source into a global cache (~/.opensrc, shared by all checkouts
+  # and worktrees; zero per-repo state). Usage guidance lives in the opensrc
+  # skill, not the contract. Non-fatal like every extra below.
+  if have opensrc; then say "  opensrc present"
+  elif have npm; then
+    npm install -g opensrc && say "  opensrc installed (npm -g)" \
+      || warn "npm install -g opensrc failed — install later, stack unaffected"
+  else warn "npm not found — skipping opensrc (npm install -g opensrc later)"
+  fi
+
   say "worktrunk — parallel worktrees (workflow tool, OUTSIDE the routing contract)"
   # Not a token layer and deliberately absent from the contract below — it routes
   # nothing. It manages worktree lifecycle so parallel agents/tasks each get their
@@ -216,6 +229,7 @@ verify() {
   have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
   have headroom && echo "  headroom:       OK (remember: launch via 'headroom wrap claude')" || echo "  headroom:       NOT installed"
   { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
+  have opensrc && echo "  opensrc:        OK (context tool — outside the contract)" || echo "  opensrc:        NOT installed (optional)"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
   if [ -d .git ]; then
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — run: $(basename "$0") init"

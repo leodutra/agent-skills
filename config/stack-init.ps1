@@ -140,6 +140,18 @@ function Install-Global {
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
 
+  Say "opensrc - dependency source fetcher (context tool, OUTSIDE the routing contract)"
+  # Also not a routing layer: it answers one question the four tools can't -
+  # "what does this dependency actually do" - by fetching the exact installed
+  # version's source into a global cache (~/.opensrc, shared by all checkouts
+  # and worktrees; zero per-repo state). Usage guidance lives in the opensrc
+  # skill, not the contract. Non-fatal like every extra below.
+  if (Have 'opensrc') { Say "  opensrc present" }
+  elseif (Have 'npm') {
+    try { npm install -g opensrc; Say "  opensrc installed (npm -g)" }
+    catch { Warn "npm install -g opensrc failed - install later, stack unaffected" }
+  } else { Warn "npm not found - skipping opensrc (npm install -g opensrc later)" }
+
   Say "worktrunk - parallel worktrees (workflow tool, OUTSIDE the routing contract)"
   # Not a token layer and deliberately absent from the contract below - it routes
   # nothing. It manages worktree lifecycle so parallel agents/tasks each get their
@@ -151,16 +163,33 @@ function Install-Global {
   # Winget installs the binary as git-wt (avoids the Windows Terminal wt.exe
   # collision). NEVER detect via bare 'wt' here - that matches Windows Terminal's
   # launcher on stock Win11. Accept only git-wt or cargo's own wt.exe by path.
-  $CargoWt = Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'
-  if ((Have 'git-wt') -or (Test-Path $CargoWt)) { Say "  worktrunk present" }
+  # Winget puts portable exes in a package dir it adds to the USER PATH in the
+  # registry - a shell started before that install (including the one running
+  # this script right after installing) never sees it, so probe the package dir
+  # directly instead of trusting Get-Command alone.
+  function Find-WtBin {
+    if (Have 'git-wt') { return 'git-wt' }
+    $cargoWt = Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'
+    if (Test-Path $cargoWt) { return $cargoWt }
+    $pkg = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') `
+      -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($pkg) {
+      $exe = Join-Path $pkg.FullName 'git-wt.exe'
+      if (Test-Path $exe) { return $exe }
+    }
+    return $null
+  }
+  $WtBin = Find-WtBin
+  if ($WtBin) { Say "  worktrunk present ($WtBin)" }
   else {
     Say "  installing worktrunk (winget: max-sixty.worktrunk, binary: git-wt)"
     try {
       if (Have 'winget') { winget install --id max-sixty.worktrunk --accept-source-agreements --accept-package-agreements }
       else { cargo install worktrunk }
     } catch { Warn "worktrunk install failed: $_" }
+    $global:LASTEXITCODE = 0   # winget exit codes (e.g. 'no upgrade') must not leak as ours
+    $WtBin = Find-WtBin
   }
-  $WtBin = if (Have 'git-wt') { 'git-wt' } elseif (Test-Path $CargoWt) { $CargoWt } else { $null }
   if ($WtBin) {
     try { & $WtBin config shell install }
     catch { Warn "shell integration failed - run '$WtBin config shell install' manually" }
@@ -219,7 +248,10 @@ function Invoke-Verify {
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
   if (Have 'headroom') { Write-Host "  headroom:       OK (remember: launch via 'headroom wrap claude')" } else { Write-Host "  headroom:       NOT installed" }
-  if ((Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'))) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
+  $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
+    [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
+  if ($wtFound) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
+  if (Have 'opensrc') { Write-Host "  opensrc:        OK (context tool - outside the contract)" } else { Write-Host "  opensrc:        NOT installed (optional)" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-setup.ps1 init" }
