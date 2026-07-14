@@ -1,10 +1,10 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 2.1.1
+> **Version:** 2.2
 > **Status:** Active
 > **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude route the first three to the one thing each is best at. Headroom needs no routing decision; see §2.4. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-init.sh` (Linux/macOS) and `stack-init.ps1` (Windows). They are self-documenting and self-installing. This document is the spec-of-whys; the scripts are the source of truth for behavior. Change behavior in the scripts; record reasoning here.
-> **Changelog:** 2.1.1 — installer name unified to `stack-init` everywhere (docs previously said `stack-setup` while the shipped files were already `stack-init.*`); no behavior change. 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (then called `stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and a `stack-init` bootstrap (name coincidence with the current installer; different tool).
+> **Changelog:** 2.2 — corrected the graph's staleness model to "last rebuild" rather than "last commit" and widened rule 6 to allow an on-demand refresh for uncommitted architectural questions (C1–C2); added `post-checkout`/`post-merge`/`post-rewrite` refresh hooks alongside `post-commit`, bounding staleness to one working-tree-moving git operation and explicitly documenting worktree support (C3, C7); added a Headroom launcher wrapper (`clw`/`hclaude`/`claudew`) plus a `SessionStart` hook that detects and flags an unwrapped session (C4–C5); the routing contract now propagates a condensed form into `~/.claude/agents/` and `.claude/agents/` (`stack-init contract --condensed`) so Task-tool subagents don't layer-bleed (C6); documented a cache-economics benchmark procedure for Headroom, since wire-level compression can bust Anthropic's prompt cache even while shrinking wire tokens (C8); added `stack-init stats` for dated rtk/headroom usage snapshots (C9). Serena tool-surface auditing (C10) is deferred, gated on real usage data. 2.1.1 — installer name unified to `stack-init` everywhere (docs previously said `stack-setup` while the shipped files were already `stack-init.*`); no behavior change. 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (then called `stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and a `stack-init` bootstrap (name coincidence with the current installer; different tool).
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
 
 ---
@@ -44,7 +44,7 @@ What this stack deliberately does **not** do: manage intent (specs, ADRs, roadma
 
 **Hard boundary:** graphify is NOT for targeted symbol lookup. A graph BFS can return ~1,500 tokens for a query Serena answers in a fraction of that. If the question names a specific symbol, it is not a graphify question.
 
-**Staleness model:** the graph is a build-time snapshot, kept fresh by a git post-commit hook (installed per repo by `stack-init init`). It is correct as of the **last commit** — never for uncommitted work-in-progress. The agent must know this: **the graph trails the working tree.**
+**Staleness model:** the graph is a build-time snapshot, kept fresh by git hooks (installed per repo by `stack-init init`; §6.2). It is correct as of the **last rebuild** (normally the last commit, because the rebuild hook fires post-commit) — never for uncommitted work-in-progress that hasn't triggered a rebuild. The agent must know this: **the graph trails the working tree.**
 
 ### 2.2 Serena — the eyes and hands (symbols)
 
@@ -88,6 +88,7 @@ These are structural, not instructional: the tools simply aren't in Serena's sur
 2. `--code-graph` is deliberately never passed. It would have Headroom build its own structure graph, duplicating graphify and creating two disagreeing sources for the same question — exactly the layer bleed §1 exists to prevent.
 3. `--memory` is deliberately never passed. This stack manages no intent/memory layer by design (§1); that flag's scope is out of bounds here regardless of what it does upstream.
 4. Compression is additive on RTK's output, never a substitute for it — RTK runs first and is free to skip (it only rewrites ~100 known commands); Headroom runs second and compresses whatever's left, known commands or not.
+5. Headroom's place in the stack is conditional, not assumed: it's retained only as long as the cache-economics benchmark (§9) shows it's net-positive on effective cost, not just on wire tokens (§7 "Compression that busts the prompt cache").
 
 ---
 
@@ -113,7 +114,7 @@ Route every information need to exactly one layer.
 
 - Question names a **specific symbol** → Serena, always.
 - Question spans **more than one module** or asks about *shape* → graphify first.
-- Question is about **uncommitted work-in-progress** → Serena (live), never graphify (graph trails the working tree).
+- Question is about **uncommitted work-in-progress**: symbol-level → Serena (live), never graphify. Architectural → run `graphify update .` first (cheap, incremental), then query the graph as normal.
 - Anything that **executes** → Bash.
 
 Headroom doesn't appear in this matrix because it never routes a question — like RTK, it is invisible plumbing, not a layer the agent chooses to query. The only thing it requires of the human, not the agent, is launching the session correctly (§2.4, §7).
@@ -139,7 +140,10 @@ This is the text the global installer writes into `~/.claude/CLAUDE.md` (between
    insert_after_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
    Do NOT route execution through any MCP shell tool - that bypasses RTK.
-6. The graph reflects the LAST COMMIT. For uncommitted work, use Serena (live).
+6. The graph reflects the last REBUILD (normally the last commit).
+   - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
+   - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
+     first (incremental, content-hash cached, cheap), then query the graph as normal.
 
 ## Source-of-truth precedence (on conflict)
 code/LSP (Serena)  >  graph (graphify)
@@ -158,7 +162,7 @@ Two sources can disagree. Tiered by how they acquire truth:
 | Tier | Source | Epistemic status | Staleness |
 |---|---|---|---|
 | 1 | Serena / LSP | Ground truth — the compiler's live model | Never (live working tree) |
-| 2 | graphify graph | Deterministic derivation of committed code | Trails the working tree by ≤1 commit (post-commit hook) |
+| 2 | graphify graph | Deterministic derivation of the working tree as of the last rebuild | Trails the working tree by rebuild lag (bounded by hooks, §6.2) |
 
 **Rules:**
 
@@ -167,6 +171,8 @@ Two sources can disagree. Tiered by how they acquire truth:
 3. The graph is for *shape* (what connects to what); the LSP is for *fact* (what a symbol is and where it's used). A graph edge is a hypothesis about a relationship; confirm specifics at tier 1 before acting on them.
 
 **Why precedence is explicit:** compression and cheap retrieval make every source easier to trust, including the stale one. Marking the trust order is the mitigation.
+
+**Staleness bound:** one working-tree-moving git operation (commit, checkout, merge, or rebase) — each has its own refresh hook (§6.2), so the graph is never more than one such operation behind.
 
 ---
 
@@ -192,18 +198,22 @@ Run once. The installer:
 1. **RTK** — `cargo install` if absent, then `rtk init -g` (global Bash PreToolUse hook).
 2. **Serena** — `claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant`. **No `--project` flag** — registered bare, Serena activates the project from the session's cwd, so one registration serves every repo. `--context ide-assistant` is what disables the shell/read/search tools (§2.2).
 3. **graphify** — `uv tool install 'graphifyy[all]'` (PyPI package is `graphifyy`, double-y; `uv tool`/`pipx` over plain `pip` because PATH issues are the most common "command not found" cause), then `graphify install` for the `/graphify` skill. It deliberately does **not** run `graphify claude install` — see §8.
-4. **Headroom** — `uv tool install 'headroom-ai[all]'` (PyPI package is `headroom-ai`; same `uv tool` preference and reasoning as graphify). Installing it is necessary but not sufficient: it only takes effect for sessions launched with `headroom wrap claude` (§2.4, §7) — the installer prints this as a reminder but cannot enforce it.
+4. **Headroom** — `uv tool install 'headroom-ai[all]'` (PyPI package is `headroom-ai`; same `uv tool` preference and reasoning as graphify). Installing it is necessary but not sufficient: it only takes effect for sessions launched with `headroom wrap claude`. Since 2.2 the installer also writes a launcher wrapper (`clw`, or `hclaude`/`claudew` if taken) to `~/.local/bin` that runs `exec headroom wrap claude "$@"` — launch with that instead of remembering the full `headroom wrap claude` invocation (§7).
 5. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent).
 
 Prereqs: `git`, `claude` (required); `cargo`, `uv`, `pip` (for the installs); a language server per language.
 
 ### 6.2 Per-repo init — `stack-init init`
 
-Run once from each repo root (idempotent). Builds the graph (`graphify .`), installs the post-commit incremental-rebuild hook (`graphify hook install`), and gitignores `graphify-out/`. Writes nothing to any CLAUDE.md — the global contract covers it. A repo where this never ran still works (rule 1 is conditional).
+Run once from each repo root (idempotent). Builds the graph (`graphify .`), installs four git hooks, and gitignores `graphify-out/`. Writes nothing to any CLAUDE.md — the global contract covers it. A repo where this never ran still works (rule 1 is conditional).
+
+**The four refresh hooks:** `post-commit` (`graphify hook install`, incremental rebuild) was the only one in 2.1.1. 2.2 adds three more, because any working-tree-moving git operation besides a commit left the graph stale with no bound: `post-checkout` (only on branch switches — `$3 = 1`, not per-file checkouts — backgrounded so switching isn't blocked), `post-merge`, and `post-rewrite` (fires once at the end of a rebase). All three are written merge-not-clobber: if the hook file already exists without the stack's marker comment, the refresh line is appended rather than the file being overwritten.
+
+**Worktrees:** deliberately supported, not forbidden. Git hooks execute with cwd at the root of whichever worktree triggered them, so the triggering worktree always self-refreshes correctly — no absolute paths are baked into any hook body. Sibling worktrees catch up via `post-checkout` on their next branch switch, and via rule 6's uncommitted-architectural-question refresh (§4) if queried before that. Residual risk: a long-lived sibling worktree that never switches branches and is never asked an architectural question can sit stale indefinitely — accepted, because nothing is querying it in that state.
 
 ### 6.3 Other subcommands
 
-`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, Headroom installed, contract present, and — in a repo — graph built and hook landed). It cannot check that a given session was actually launched with `headroom wrap claude` — that's a per-launch choice, not an install-time state. `stack-init contract` prints the routing contract for inspection.
+`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, Headroom installed, contract present, and — in a repo — graph built and hooks landed). It cannot check that a given session was actually launched wrapped — that's a per-launch choice, not an install-time state; the `SessionStart` headroom-check hook (§7) covers that gap at runtime instead. `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init stats` appends a dated usage snapshot for comparing stack versions (§9).
 
 ### 6.4 Windows
 
@@ -217,6 +227,12 @@ Run once from each repo root (idempotent). Builds the graph (`graphify .`), inst
 
 Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell.
 
+### 6.x Subagents
+
+Task-tool subagents get a fresh context that does not load `~/.claude/CLAUDE.md`. RTK's `Bash` PreToolUse hook is settings-level and applies to every session including subagents' — it propagates automatically. Headroom's env (`ANTHROPIC_BASE_URL`) is inherited by child processes — it propagates automatically too. The routing contract is neither: it's prose injected into one specific file, so subagents never see it unless something puts it there.
+
+Mitigation: `stack-init global`/`init` inject a condensed ~6-line form of the contract (rules 1, 2, 5, 6 plus the precedence line) into every `*.md` file under `~/.claude/agents/` and `.claude/agents/` respectively, between the same kind of sentinel markers used for `CLAUDE.md` (idempotent — re-running replaces the block, doesn't duplicate it). If neither directory has any agent files, the installer says so and does nothing. `stack-init contract --condensed` prints the same text for pasting into ad-hoc orchestrator prompts that spawn Task-tool subagents outside of a predefined agent file.
+
 ### 6.5 Optional — graphify MCP query server
 
 For graph queries as MCP tools instead of CLI calls, add a `graphify` server to `.mcp.json`. The CLI (`graphify query`, `graphify path` via Bash) is the leaner default — its output flows through RTK and it adds zero always-loaded tool definitions. Add the MCP server only if the agent under-uses the graph.
@@ -227,7 +243,7 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Layer bleed (most common).** Agent greps for a symbol, or graph-walks for a definition. Mitigation: the routing contract (§4). Note that graphify's own grep-redirect hook is *not* installed in this setup and is a no-op on current Claude Code anyway (§8) — the contract is the mechanism, not a hook.
 
-**Stale graph trusted as current.** Graph reflects the last commit; agent reasons about mid-refactor code from it. Mitigation: precedence rule (§5) + the post-commit hook bounding lag to one commit; `graphify update . --force` after branch switches or large refactors.
+**Stale graph trusted as current.** Graph reflects the last rebuild; agent reasons about mid-refactor code from it. Mitigation: precedence rule (§5) + the four refresh hooks (§6.2) bounding lag to one working-tree-moving git operation, plus rule 6's on-demand refresh before uncommitted architectural questions. `graphify update . --force` is now a fallback for anomalies (e.g. a hook failed to fire), not the primary mitigation.
 
 **Over-compression eating a needed signal.** An RTK filter strips context the agent needed. Mitigation: RTK preserves failures in full and dumps raw output to disk on failure; run `rtk discover` periodically; verify the broken-test path once at setup. Don't pass secrets as CLI args — RTK's tracking DB stores full command strings for ~90 days.
 
@@ -235,11 +251,17 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-init verify`).
 
-**Headroom silently inert.** Installed but the session was launched with a bare `claude`, not `headroom wrap claude` — everything still works, just without the wire-level compression, and nothing errors to say so. Mitigation: it's a launch-habit problem, not a config one; `stack-init verify` confirms the binary exists but can't confirm how *this* session started.
+**Headroom silently inert.** Installed but the session was launched with a bare `claude`, not through the wrapper — everything still works, just without the wire-level compression. 2.2 addresses this two ways: prevention via the launcher wrapper (§6.1 step 4, §2.4) so there's a short habitual command instead of a long one to remember, and detection via a `SessionStart` hook (`~/.claude/hooks/headroom-check.sh`/`.ps1`, installed by `stack-init global`) that checks whether `ANTHROPIC_BASE_URL` points at a local proxy and, if not, injects a one-line `NOTE: Headroom proxy not active this session...` into context. `stack-init verify` still can't check a *live* session's launch mode — the SessionStart hook is what actually catches it.
+
+**Subagent layer bleed.** Task-tool subagents get fresh contexts that don't include `~/.claude/CLAUDE.md` — RTK's hook and Headroom's env both inherit automatically (they're settings-level / process-level), but the routing contract does not, so spawned agents can grep for symbols or orient by file-reading exactly where token volume is highest. Mitigation (§6.x "Subagents"): `stack-init global`/`init` inject a condensed ~8-line form of the contract into every file under `~/.claude/agents/` and `.claude/agents/`; orchestrator prompts for ad-hoc Task calls should paste `stack-init contract --condensed` into the subagent prompt.
+
+**Compression that busts the prompt cache.** Headroom's wire-level rewriting is, by default, a prefix-cache invalidator: recompressing history changes the bytes the API sees turn to turn. Symptom: `headroom stats` shows savings while `cache_read_input_tokens` (from `/cost` or OTEL metrics) collapses relative to a bare session — fewer wire tokens can still mean *more* money once cache misses are priced in. A known contributor is CCR injecting a `headroom_retrieve` tool definition; changing the tool list between turns busts Anthropic's entire prefix cache regardless of what else changed. Mitigation: confirm Headroom's CacheAligner is active; check the upstream CCR/tool-injection issue status; escape hatch is running bare — RTK, Serena, and graphify are completely unaffected, since Headroom is the only optional-per-launch layer (§2.4). See §9 for the benchmark that decides whether Headroom is net-positive for a given usage pattern.
 
 ---
 
 ## 8. Decisions log (the whys, condensed)
+
+**Uncommitted architectural questions get a refresh, not a blanket ban (2.2).** 2.1.1's rule 6 forbade the graph outright for any uncommitted work, on the assumption that the graph is inherently commit-bound. C1 corrected that assumption: the graph is bound to the *last rebuild*, and `graphify update .` is an incremental, content-hash-cached, cheap operation — so an architectural question mid-refactor can legitimately trigger a refresh-then-query instead of falling back to file-reading. Symbol-level questions about uncommitted work still route to Serena, never the graph. Rejected alternative: a per-prompt structural-diff injection hook that kept the graph "live" by patching it every turn — rejected as a standing token cost on every turn that duplicates graphify's own parser in a second, ad hoc form.
 
 **Docs/intent layer removed (vs 1.x).** The stack is only the four token-reducing tools. Specs/ADRs/worklogs are content, not compression; scaffolding them added a maintenance surface that drifted and a precedence tangle. Out of scope here.
 
@@ -247,7 +269,7 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Headroom's `--code-graph` and `--memory` flags never passed.** `--code-graph` would have Headroom build a second structure graph, directly duplicating graphify and reopening the layer-bleed problem §1 exists to close. `--memory` is an intent/memory feature, and this stack manages no intent layer by design (§1) — adding one back in through a flag would undo that decision by a side door.
 
-**No automatic shell alias for `claude` → `headroom wrap claude`.** The installer prints the reminder instead of writing a shell function/profile entry for it. Two reasons: editing a user's shell profile is a persistent, easy-to-miss change to their environment that this installer otherwise avoids (it only ever touches `CLAUDE.md` and `settings.json`, both Claude-owned files); and a function literally named `claude` risks recursing into itself depending on how `headroom wrap` resolves the real binary on a given shell — untested across every shell this stack targets, so it's left as an opt-in step for the human, not a default the installer commits them to.
+**No automatic shell alias for `claude` → `headroom wrap claude`.** The installer prints the reminder instead of writing a shell function/profile entry for it. Two reasons: editing a user's shell profile is a persistent, easy-to-miss change to their environment that this installer otherwise avoids (it only ever touches `CLAUDE.md` and `settings.json`, both Claude-owned files); and a function literally named `claude` risks recursing into itself depending on how `headroom wrap` resolves the real binary on a given shell — untested across every shell this stack targets, so it's left as an opt-in step for the human, not a default the installer commits them to. **Superseded in 2.2** by a standalone wrapper script (`clw`, falling back to `hclaude`/`claudew`) written to `~/.local/bin`: both original objections — profile mutation and self-recursion — don't apply to a distinctly-named executable that `exec`s the real binary rather than shadowing `claude` itself.
 
 **`graphify claude install` dropped.** It would write a second, near-duplicate "read GRAPH_REPORT.md" directive into the same global `CLAUDE.md` as the routing contract, and its Glob/Grep PreToolUse hook is a no-op on Claude Code builds after the late-May-2026 tool-architecture change. Rule 1 of the contract is the authoritative, always-on instruction; `graphify install` (the skill) is still wired so `/graphify` and the CLI work.
 
@@ -269,6 +291,14 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 ---
 
+**Serena tool-surface audit deferred (C10, not implemented in 2.2).** If, after a few weeks of `stack-init stats` data, some Serena tools are never invoked, they could be excluded via Serena's tool include/exclude config — fewer standing tool-definition tokens and a more stable tool list (same prefix-cache-stability argument as the "compression that busts the cache" failure mode, §7). Not implemented speculatively: it's gated on real usage data that doesn't exist yet immediately after 2.2 ships.
+
+**Rejected: per-prompt structural-diff injection.** Keeping the graph "live" by patching it every turn was rejected as a standing token cost on every turn that duplicates graphify's own parser in a second, ad hoc form — see the C2 decision entry above.
+
+**Rejected: folding graphify into Serena's MCP server.** Would optimize subprocess launch latency (hundreds of ms) in a workflow dominated by inference latency (seconds); moves graph output out from under RTK's compression; enlarges and destabilizes Serena's tool list (cache-bust risk, same mechanism as §7's cache-busting failure mode); and requires forking upstream Serena, a maintenance surface 2.0 explicitly eliminated. §6.5's existing optional standalone graphify MCP server remains the sanctioned escape hatch if the agent under-uses the CLI-based graph.
+
+**Rejected: a wrapper literally named `cc`.** Shadows the system C compiler and breaks `cargo`/`gcc` toolchains that resolve `cc` on PATH — the §6.1 wrapper picks `clw`/`hclaude`/`claudew` instead and never falls through to `cc`.
+
 ## 9. Setup verification checklist
 
 ```bash
@@ -282,6 +312,10 @@ command -v headroom                        # installed and on PATH
 # Per repo (after `stack-init init`)
 ls -l graphify-out/graph.json              # graph built
 git commit --allow-empty -m test && ls -l graphify-out/graph.json  # mtime advanced -> hook fires
+git switch -c stack-check && ls -l graphify-out/graph.json  # mtime advanced -> post-checkout fires
+git switch - && git branch -d stack-check
+git worktree add ../stack-check-wt && cd ../stack-check-wt && git commit --allow-empty -m test \
+  && ls -l graphify-out/graph.json  # THIS worktree's graph updates, not the primary checkout's
 
 # Behavior, in a Claude session
 #  - architecture question  -> reads GRAPH_REPORT.md / runs graphify, does NOT grep
@@ -293,4 +327,14 @@ git commit --allow-empty -m test && ls -l graphify-out/graph.json  # mtime advan
 #  - session started with `headroom wrap claude` -> headroom stats/logs show traffic
 #    compressed; a bare `claude` session shows none (expected - confirms §7's
 #    "silently inert" failure mode rather than a broken install)
+#  - start a bare `claude` session -> the SessionStart NOTE about Headroom being
+#    inactive appears; start via the wrapper (§6.1) -> it does not appear
+#  - run `stack-init stats` once -> a dated snapshot file exists under
+#    ~/.claude/stack-stats/ and parses as JSON
 ```
+
+**Cache-economics benchmark (manual, run once per Headroom-affecting change):**
+
+1. Pick a fixed task shape — e.g. the same 10-turn session touching tests and edits — and run it twice against the same repo: once via the wrapper (§6.1), once with a bare `claude`.
+2. Compare, from API usage / `/cost` / OTEL metrics: `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and effective cost for both runs, plus `headroom stats` for the wrapped run.
+3. Acceptance: the wrapped run's *effective cost* must be ≤ the bare run's. If wire tokens dropped but cache reads collapsed, Headroom is net-negative for this usage pattern — the finding gets recorded in §8 (not silently ignored), and the recommendation becomes "prefer the bare launch" until the upstream cache-bust issue (§7) is resolved.

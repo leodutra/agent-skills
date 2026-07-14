@@ -38,9 +38,11 @@
 
   USAGE
     .\stack-init.ps1            # or: global   -> global install (once)
-    .\stack-init.ps1 init       # inside a repo -> build graph + hook
+    .\stack-init.ps1 init       # inside a repo -> build graph + hooks
     .\stack-init.ps1 verify     # check wiring
     .\stack-init.ps1 contract   # print the routing contract
+    .\stack-init.ps1 contract --condensed  # print the short form injected into agents
+    .\stack-init.ps1 stats      # append + print a usage snapshot (rtk/headroom)
 
   AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
   `claude`, or Headroom's compression never engages (RTK/Serena/graphify are
@@ -51,7 +53,7 @@
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned (or -ExecutionPolicy Bypass).
 =============================================================================
 #>
-param([string]$Command = 'global')
+param([string]$Command = 'global', [string]$SubOption = '')
 $ErrorActionPreference = 'Stop'
 
 $ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
@@ -77,7 +79,10 @@ $Contract = @'
    insert_after_symbol, rename_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
    Do NOT route execution through any MCP shell tool - that bypasses RTK.
-6. The graph reflects the LAST COMMIT. For uncommitted work, use Serena (live).
+6. The graph reflects the last REBUILD (normally the last commit).
+   - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
+   - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
+     first (incremental, content-hash cached, cheap), then query the graph as normal.
 
 ## Source-of-truth precedence (on conflict)
 code/LSP (Serena)  >  graph (graphify)
@@ -85,6 +90,37 @@ The LSP is live ground truth; the graph is a derivation that can trail the worki
 tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
 # <<< claude-context-stack <<<
 '@
+
+$ContractCondensed = @'
+# >>> claude-context-stack >>> (condensed, managed by stack-init - edits here are overwritten)
+1. Architecture/cross-module -> graphify (graphify-out/GRAPH_REPORT.md, `graphify query`/`path`). Never grep/read-many for this.
+2. Specific symbols -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview). Never grep for symbol names.
+5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool.
+6. Graph = last REBUILD. Uncommitted+symbol -> Serena. Uncommitted+architectural -> `graphify update .` first, then query.
+Precedence on conflict: code/LSP (Serena) > graph (graphify).
+# <<< claude-context-stack <<<
+'@
+
+function Invoke-InjectCondensedContract {
+  param([string]$Dir)
+  if (-not (Test-Path $Dir -PathType Container)) {
+    Say "  no agent files at $Dir - skipping condensed contract injection"
+    return
+  }
+  $files = Get-ChildItem -Path $Dir -Filter '*.md' -File -ErrorAction SilentlyContinue
+  if (-not $files) {
+    Say "  no agent files at $Dir - skipping condensed contract injection"
+    return
+  }
+  foreach ($f in $files) {
+    $existing = Get-Content -Raw $f.FullName
+    $stripped = [regex]::Replace($existing,
+      '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<\r?\n?', '')
+    $out = ($stripped.TrimEnd() + "`r`n`r`n" + $ContractCondensed).TrimStart()
+    Set-Content -Path $f.FullName -Value $out -Encoding utf8
+  }
+  Say "  condensed contract injected into $Dir\*.md"
+}
 
 function Check-Deps {
   $miss = $false
@@ -94,12 +130,83 @@ function Check-Deps {
   if ($miss) { Err "install the required tools above, then re-run"; exit 1 }
 }
 
+function Write-GitHook {
+  # Merge-not-clobber: skip if our marker is already there, append under the
+  # marker if some other tool owns the file, otherwise create it fresh. Hook
+  # bodies are POSIX sh - Git for Windows runs hooks via its bundled bash
+  # regardless of host OS, same as the existing post-commit hook.
+  param([string]$Name, [string]$Body)
+  # [IO.File] resolves relative paths against .NET's process-wide current
+  # directory, which does NOT track PowerShell's Set-Location/Push-Location -
+  # always resolve to an absolute path via $PWD first, or this can write into
+  # whatever directory the process originally launched from instead of cwd.
+  $path = Join-Path (Join-Path $PWD.Path '.git\hooks') $Name
+  if ((Test-Path $path) -and (Select-String -Path $path -Pattern 'claude-context-stack:' -Quiet)) { return }
+  if (Test-Path $path) {
+    [IO.File]::AppendAllText($path, "`n$Body`n")
+  } else {
+    [IO.File]::WriteAllText($path, "#!/bin/sh`n$Body`n")
+  }
+}
+
+function Install-RefreshHooks {
+  Write-GitHook 'post-checkout' @'
+# claude-context-stack: refresh graph on branch switch (not file checkout)
+if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
+  ( graphify update . >/dev/null 2>&1 & )
+fi
+'@
+  Write-GitHook 'post-merge' @'
+# claude-context-stack: refresh graph after merge/pull
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true
+'@
+  Write-GitHook 'post-rewrite' @'
+# claude-context-stack: refresh graph after rebase
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true
+'@
+}
+
 function Install-Uv {
   if (Have 'uv') { return }
   Say "  installing uv (needed to run Serena)"
   if (Have 'winget') { winget install --id astral-sh.uv -e --silent }
   else { powershell -ExecutionPolicy ByPass -Command "irm https://astral.sh/uv/install.ps1 | iex" }
   if (-not (Have 'uv')) { Warn "uv install failed - Serena will not be able to launch" }
+}
+
+function Install-HeadroomCheck {
+  $hooksDir = Join-Path $ClaudeDir 'hooks'
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $checkPath = Join-Path $hooksDir 'headroom-check.ps1'
+  Set-Content -Path $checkPath -Encoding utf8 -Value @'
+$url = $env:ANTHROPIC_BASE_URL
+if ($url -match "127\.0\.0\.1|localhost") { exit 0 }
+$note = "NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."
+@{ hookSpecificOutput = @{ hookEventName = "SessionStart"; additionalContext = $note } } | ConvertTo-Json -Compress
+exit 0
+'@
+
+  $settingsPath = Join-Path $ClaudeDir 'settings.json'
+  $json = if (Test-Path $settingsPath) { Get-Content -Raw $settingsPath } else { '{}' }
+  try { $data = $json | ConvertFrom-Json } catch { $data = [PSCustomObject]@{} }
+  if (-not $data.PSObject.Properties['hooks']) { $data | Add-Member -NotePropertyName hooks -NotePropertyValue ([PSCustomObject]@{}) }
+  if (-not $data.hooks.PSObject.Properties['SessionStart']) { $data.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @() }
+  $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$checkPath`""
+  $starts = @($data.hooks.SessionStart)
+  $already = $starts | Where-Object { $_.hooks | Where-Object { $_.command -eq $cmd } }
+  if (-not $already) {
+    $starts += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $cmd }) }
+    $data.hooks.SessionStart = $starts
+  }
+  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
+  $data | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding utf8
+
+  $rtkPresent = $false
+  if ($data.hooks.PSObject.Properties['PreToolUse']) {
+    $rtkPresent = (($data.hooks.PreToolUse | ConvertTo-Json -Depth 10) -match 'rtk')
+  }
+  if ($rtkPresent) { Say "  SessionStart headroom-check hook installed; RTK PreToolUse hook still present" }
+  else { Warn "settings.json written but RTK's Bash hook wasn't found afterward - check $settingsPath manually" }
 }
 
 function Install-Global {
@@ -138,10 +245,23 @@ function Install-Global {
     Say "  installing headroom (PyPI package: headroom-ai)"
     if (Have 'uv') { uv tool install 'headroom-ai[all]' } else { pip install 'headroom-ai[all]' }
   }
-  Say "  installed - launch sessions with 'headroom wrap claude', not bare 'claude'"
-  Say "  (not aliasing 'claude' here: a shell function/alias named 'claude' may"
-  Say "  recurse into itself when headroom resolves the target binary - opt in"
-  Say "  yourself once you've confirmed it's safe on your shell)"
+  Say "  installed - writing a launcher wrapper (never aliasing 'claude' itself,"
+  Say "  which risks self-recursion when headroom resolves the target binary)"
+  $WrapperName = $null
+  foreach ($candidate in @('clw', 'hclaude', 'claudew')) {
+    if (-not (Have $candidate)) { $WrapperName = $candidate; break }
+  }
+  if (-not $WrapperName) {
+    Warn "clw/hclaude/claudew all taken - skipping wrapper; launch via 'headroom wrap claude' manually"
+  } else {
+    $binDir = Join-Path $env:USERPROFILE '.local\bin'
+    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+    Set-Content -Path (Join-Path $binDir "$WrapperName.ps1") -Value 'headroom wrap claude @args' -Encoding utf8
+    Set-Content -Path (Join-Path $binDir "$WrapperName.cmd") -Value "@powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$WrapperName.ps1`" %*" -Encoding utf8
+    Say "  wrapper installed: $WrapperName (launch sessions with '$WrapperName')"
+    if (";$env:PATH;" -notlike "*;$binDir;*") { Warn "$binDir not on PATH - add it to use '$WrapperName'" }
+  }
+  Install-HeadroomCheck
   # Deliberately not passing --code-graph (would build a second structure graph,
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
@@ -242,6 +362,9 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
   Set-Content -Path $ClaudeMd -Value $out -Encoding utf8
   Say "  contract written (idempotent - re-running replaces the managed block)"
 
+  Say "Condensed contract -> subagent files ($env:USERPROFILE\.claude\agents\)"
+  Invoke-InjectCondensedContract (Join-Path $ClaudeDir 'agents')
+
   if (-not (Have 'rust-analyzer')) { Warn "rust-analyzer not on PATH - Serena needs it for Rust (rustup component add rust-analyzer)" }
   Write-Host ""; Say "Global install done. In each repo, run:  .\stack-init.ps1 init"
 }
@@ -251,12 +374,34 @@ function Init-Project {
   if (-not (Have 'graphify')) { Err "graphify not installed - run '.\stack-init.ps1 global' first"; exit 1 }
   Say "building knowledge graph (graphify .)"; graphify .
   Say "installing local post-commit hook (incremental rebuild)"; graphify hook install
+  Say "installing post-checkout/post-merge/post-rewrite refresh hooks"; Install-RefreshHooks
   if (-not ((Test-Path .gitignore) -and (Select-String -Path .gitignore -Pattern '^graphify-out/' -Quiet))) {
     Add-Content -Path .gitignore -Value "`r`n# Claude context-stack knowledge graph`r`ngraphify-out/" -Encoding utf8
     Say "gitignored graphify-out/"
   }
+  Say "Condensed contract -> subagent files (.claude\agents\)"
+  Invoke-InjectCondensedContract '.claude\agents'
   Write-Host ""; Say "Repo ready. First Claude session: let Serena onboard, then ask one"
   Say "architecture question and confirm it reads the graph instead of grepping."
+}
+
+function Get-Stats {
+  $dir = Join-Path $ClaudeDir 'stack-stats'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $ts = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
+  $snapPath = Join-Path $dir "$ts.json"
+  if (Have 'rtk') { $rtkOut = (rtk gain 2>&1 | Out-String); $global:LASTEXITCODE = 0 } else { $rtkOut = 'rtk not on PATH' }
+  if (Have 'headroom') { $headroomOut = (headroom stats 2>&1 | Out-String); $global:LASTEXITCODE = 0 } else { $headroomOut = 'headroom not installed' }
+  @{ date = $ts; rtk_gain = $rtkOut; headroom_stats = $headroomOut } | ConvertTo-Json | Set-Content -Path $snapPath -Encoding utf8
+  Say "  snapshot written -> $snapPath"
+  $snaps = Get-ChildItem -Path $dir -Filter '*.json' | Sort-Object Name | Select-Object -Last 2
+  if ($snaps) {
+    Say "  last two snapshots:"
+    foreach ($f in $snaps) {
+      Write-Host "--- $($f.FullName) ---"
+      Write-Host (Get-Content -Raw $f.FullName)
+    }
+  }
 }
 
 function Invoke-Verify {
@@ -281,8 +426,9 @@ switch ($Command.ToLower()) {
   ''         { Install-Global }
   'init'     { Init-Project }
   'verify'   { Invoke-Verify }
-  'contract' { Write-Output $Contract }
-  default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-init.ps1 [global|init|verify|contract]"; exit 1 }
+  'contract' { if ($SubOption -eq '--condensed') { Write-Output $ContractCondensed } else { Write-Output $Contract } }
+  'stats'    { Get-Stats }
+  default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-init.ps1 [global|init|verify|contract [--condensed]|stats]"; exit 1 }
 }
 # A stray $LASTEXITCODE from any native command above (pip/npm/winget/claude)
 # must not become this script's exit code - completing the switch means success.

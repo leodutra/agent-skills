@@ -40,9 +40,11 @@
 #
 #  USAGE
 #    stack-init            # or: stack-init global    -> global install (once)
-#    stack-init init       # inside a repo            -> build graph + hook
+#    stack-init init       # inside a repo            -> build graph + hooks
 #    stack-init verify     # check everything is wired
 #    stack-init contract   # print the routing contract it installs
+#    stack-init contract --condensed  # print the short form injected into agents
+#    stack-init stats      # append + print a usage snapshot (rtk/headroom)
 #
 #  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
 #  `claude`, or Headroom's compression never engages (RTK/Serena/graphify wire
@@ -78,7 +80,10 @@ cat <<'BLOCK'
    insert_after_symbol, rename_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
    Do NOT route execution through any MCP shell tool — that bypasses RTK.
-6. The graph reflects the LAST COMMIT. For uncommitted work, use Serena (live).
+6. The graph reflects the last REBUILD (normally the last commit).
+   - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
+   - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
+     first (incremental, content-hash cached, cheap), then query the graph as normal.
 
 ## Source-of-truth precedence (on conflict)
 code/LSP (Serena)  >  graph (graphify)
@@ -86,6 +91,38 @@ The LSP is live ground truth; the graph is a derivation that can trail the worki
 tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
 # <<< claude-context-stack <<<
 BLOCK
+}
+
+print_contract_condensed() {
+cat <<'BLOCK'
+# >>> claude-context-stack >>> (condensed, managed by stack-init — edits here are overwritten)
+1. Architecture/cross-module -> graphify (graphify-out/GRAPH_REPORT.md, `graphify query`/`path`). Never grep/read-many for this.
+2. Specific symbols -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview). Never grep for symbol names.
+5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool.
+6. Graph = last REBUILD. Uncommitted+symbol -> Serena. Uncommitted+architectural -> `graphify update .` first, then query.
+Precedence on conflict: code/LSP (Serena) > graph (graphify).
+# <<< claude-context-stack <<<
+BLOCK
+}
+
+inject_condensed_contract() {
+  local dir="$1" f found=0
+  if [ ! -d "$dir" ]; then
+    say "  no agent files at $dir — skipping condensed contract injection"
+    return
+  fi
+  for f in "$dir"/*.md; do
+    [ -e "$f" ] || continue
+    found=1
+    if grep -q '>>> claude-context-stack >>>' "$f"; then
+      local tmp; tmp="$(mktemp)"
+      awk '/>>> claude-context-stack >>>/{s=1} !s{print} /<<< claude-context-stack <<</{s=0}' \
+        "$f" > "$tmp" && mv "$tmp" "$f"
+    fi
+    print_contract_condensed >> "$f"
+  done
+  if [ "$found" = 1 ]; then say "  condensed contract injected into $dir/*.md"
+  else say "  no agent files at $dir — skipping condensed contract injection"; fi
 }
 
 check_deps() {
@@ -96,12 +133,79 @@ check_deps() {
   [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
 }
 
+write_git_hook() {
+  # Merge-not-clobber: skip if our marker is already there, append under the
+  # marker if some other tool owns the file, otherwise create it fresh.
+  local name="$1" body="$2"
+  local path=".git/hooks/$name"
+  if [ -f "$path" ] && grep -q 'claude-context-stack:' "$path" 2>/dev/null; then
+    return
+  fi
+  if [ -f "$path" ]; then printf '\n%s\n' "$body" >> "$path"
+  else printf '#!/bin/sh\n%s\n' "$body" > "$path"; fi
+  chmod +x "$path"
+}
+
+install_refresh_hooks() {
+  write_git_hook post-checkout '# claude-context-stack: refresh graph on branch switch (not file checkout)
+if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
+  ( graphify update . >/dev/null 2>&1 & )
+fi'
+  write_git_hook post-merge '# claude-context-stack: refresh graph after merge/pull
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+  write_git_hook post-rewrite '# claude-context-stack: refresh graph after rebase
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+}
+
 install_uv() {
   have uv && return
   say "  installing uv (needed to run Serena)"
   if have pacman; then sudo pacman -S --noconfirm uv
   else curl -LsSf https://astral.sh/uv/install.sh | sh; fi
   have uv || warn "uv install failed — Serena will not be able to launch"
+}
+
+install_headroom_check() {
+  mkdir -p "$CLAUDE_DIR/hooks"
+  cat > "$CLAUDE_DIR/hooks/headroom-check.sh" <<'HOOK'
+#!/usr/bin/env bash
+# claude-context-stack: detect a bare (unwrapped) Claude Code launch
+url="${ANTHROPIC_BASE_URL:-}"
+case "$url" in
+  *127.0.0.1*|*localhost*) exit 0 ;;
+esac
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."}}'
+exit 0
+HOOK
+  chmod +x "$CLAUDE_DIR/hooks/headroom-check.sh"
+
+  local settings="$CLAUDE_DIR/settings.json" merge_py result
+  mkdir -p "$CLAUDE_DIR"; [ -f "$settings" ] || echo '{}' > "$settings"
+  merge_py="$(mktemp)"
+  cat > "$merge_py" <<'PYEOF'
+import json, sys
+path, hook_cmd = sys.argv[1], sys.argv[2]
+try:
+    with open(path) as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+hooks = data.setdefault('hooks', {})
+starts = hooks.setdefault('SessionStart', [])
+if not any(h.get('command') == hook_cmd for entry in starts for h in entry.get('hooks', [])):
+    starts.append({'hooks': [{'type': 'command', 'command': hook_cmd}]})
+with open(path, 'w') as f:
+    json.dump(data, f, indent=2)
+rtk_present = any('rtk' in str(h) for h in hooks.get('PreToolUse', []))
+print('rtk-hook-present' if rtk_present else 'rtk-hook-missing')
+PYEOF
+  result="$(python3 "$merge_py" "$settings" "bash \"$CLAUDE_DIR/hooks/headroom-check.sh\"" 2>&1)"
+  rm -f "$merge_py"
+  if [ "$result" = "rtk-hook-present" ]; then
+    say "  SessionStart headroom-check hook installed; RTK PreToolUse hook still present"
+  else
+    warn "settings.json written but RTK's Bash hook wasn't found afterward ($result) — check $settings manually"
+  fi
 }
 
 install_global() {
@@ -140,10 +244,22 @@ install_global() {
     say "  installing headroom (PyPI package: headroom-ai)"
     if have uv; then uv tool install 'headroom-ai[all]'; else pip install 'headroom-ai[all]'; fi
   fi
-  say "  installed — launch sessions with 'headroom wrap claude', not bare 'claude'"
-  say "  (not aliasing 'claude' here: a shell function/alias named 'claude' may"
-  say "  recurse into itself when headroom resolves the target binary — opt in"
-  say "  yourself once you've confirmed it's safe on your shell)"
+  say "  installed — writing a launcher wrapper (never aliasing 'claude' itself,"
+  say "  which risks self-recursion when headroom resolves the target binary)"
+  WRAPPER_NAME=""
+  for candidate in clw hclaude claudew; do
+    if ! have "$candidate"; then WRAPPER_NAME="$candidate"; break; fi
+  done
+  if [ -z "$WRAPPER_NAME" ]; then
+    warn "clw/hclaude/claudew all taken — skipping wrapper; launch via 'headroom wrap claude' manually"
+  else
+    mkdir -p "$HOME/.local/bin"
+    printf '#!/usr/bin/env bash\nexec headroom wrap claude "$@"\n' > "$HOME/.local/bin/$WRAPPER_NAME"
+    chmod +x "$HOME/.local/bin/$WRAPPER_NAME"
+    say "  wrapper installed: $WRAPPER_NAME (launch sessions with '$WRAPPER_NAME')"
+    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "$HOME/.local/bin not on PATH — add it to use '$WRAPPER_NAME'" ;; esac
+  fi
+  install_headroom_check
   # Deliberately not passing --code-graph (would build a second structure graph,
   # duplicating graphify - rule 1 below already owns that question) or --memory
   # (this stack manages no intent/memory layer by design, see decisions log).
@@ -215,6 +331,9 @@ WTHOOK
   print_contract >> "$CLAUDE_MD"
   say "  contract written (idempotent — re-running replaces the managed block)"
 
+  say "Condensed contract -> subagent files (~/.claude/agents/)"
+  inject_condensed_contract "$CLAUDE_DIR/agents"
+
   have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
   echo; say "Global install done. In each repo, run:  $(basename "$0") init"
 }
@@ -224,12 +343,38 @@ init_project() {
   have graphify || { err "graphify not installed — run '$(basename "$0") global' first"; exit 1; }
   say "building knowledge graph (graphify .)"; graphify .
   say "installing local post-commit hook (incremental rebuild)"; graphify hook install
+  say "installing post-checkout/post-merge/post-rewrite refresh hooks"; install_refresh_hooks
   if ! { [ -f .gitignore ] && grep -q '^graphify-out/' .gitignore; }; then
     printf '\n# Claude context-stack knowledge graph\ngraphify-out/\n' >> .gitignore
     say "gitignored graphify-out/"
   fi
+  say "Condensed contract -> subagent files (.claude/agents/)"
+  inject_condensed_contract ".claude/agents"
   echo; say "Repo ready. First Claude session: let Serena onboard, then ask one"
   say "architecture question and confirm it reads the graph instead of grepping."
+}
+
+stats() {
+  local dir="$CLAUDE_DIR/stack-stats" ts snap rtk_out headroom_out
+  mkdir -p "$dir"
+  ts="$(date -u +%Y%m%dT%H%M%SZ)"
+  snap="$dir/$ts.json"
+  if have rtk; then rtk_out="$(rtk gain 2>&1 || true)"; else rtk_out="rtk not on PATH"; fi
+  if have headroom; then headroom_out="$(headroom stats 2>&1 || true)"; else headroom_out="headroom not installed"; fi
+  python3 - "$snap" "$ts" "$rtk_out" "$headroom_out" <<'PYEOF'
+import json, sys
+path, ts, rtk_out, headroom_out = sys.argv[1:5]
+with open(path, 'w') as f:
+    json.dump({'date': ts, 'rtk_gain': rtk_out, 'headroom_stats': headroom_out}, f, indent=2)
+PYEOF
+  say "  snapshot written -> $snap"
+  local snaps
+  snaps="$(ls -1 "$dir"/*.json 2>/dev/null | sort | tail -2)"
+  [ -z "$snaps" ] && return
+  say "  last two snapshots:"
+  echo "$snaps" | while IFS= read -r f; do
+    echo "--- $f ---"; cat "$f"
+  done
 }
 
 verify() {
@@ -252,7 +397,8 @@ case "${1:-global}" in
   global|"")  install_global ;;
   init)       init_project ;;
   verify)     verify ;;
-  contract)   print_contract ;;
+  contract)   [ "${2:-}" = "--condensed" ] && print_contract_condensed || print_contract ;;
+  stats)      stats ;;
   -h|--help|help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//' ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats]"; exit 1 ;;
 esac
