@@ -19,6 +19,7 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 | [`macro-analyst`](skills/macro-analyst/SKILL.md) | Structured macro/FX analysis for currency pairs, rate differentials, central bank policy. |
 | [`rust-bevy-architecture`](skills/rust-bevy-architecture/SKILL.md) | Architecture method for Bevy (Rust ECS) game projects — layout, plugins, messages/observers, scheduling, determinism. |
 | [`rust-wgpu-functional`](skills/rust-wgpu-functional/SKILL.md) | Idiomatic Rust for wgpu / bare-metal GPU code, applying functional principles without sacrificing performance. |
+| [`worktrunk`](skills/worktrunk/SKILL.md) | Git worktree management via Worktrunk (`wt`) for parallel/isolated work — create, switch, merge, and clean up worktrees by branch name. |
 
 Skills are picked up automatically by Claude Code when their trigger conditions match a request — no manual invocation needed beyond what each `SKILL.md` describes.
 
