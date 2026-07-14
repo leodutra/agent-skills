@@ -1,10 +1,10 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 2.1
+> **Version:** 2.1.1
 > **Status:** Active
 > **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude route the first three to the one thing each is best at. Headroom needs no routing decision; see §2.4. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
-> **Canonical executables:** `stack-setup.sh` (Linux/macOS) and `stack-setup.ps1` (Windows). They are self-documenting and self-installing. This document is the spec-of-whys; the scripts are the source of truth for behavior. Change behavior in the scripts; record reasoning here.
-> **Changelog:** 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (`stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and `stack-init` bootstrap.
+> **Canonical executables:** `stack-init.sh` (Linux/macOS) and `stack-init.ps1` (Windows). They are self-documenting and self-installing. This document is the spec-of-whys; the scripts are the source of truth for behavior. Change behavior in the scripts; record reasoning here.
+> **Changelog:** 2.1.1 — installer name unified to `stack-init` everywhere (docs previously said `stack-setup` while the shipped files were already `stack-init.*`); no behavior change. 2.1 — added Headroom as a fourth, proxy-layer tool (§2.4); sessions must launch via `headroom wrap claude` for it to engage (see §6.1, §7). 2.0 — removed the docs/intent layer (SPEC/ADR/worklog) and per-project skill; consolidated install into a single self-documenting installer per OS (then called `stack-setup`); dropped `graphify claude install` (see §8); Serena now registered at user scope. 1.x — five-layer model with docs layer and a `stack-init` bootstrap (name coincidence with the current installer; different tool).
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
 
 ---
@@ -44,7 +44,7 @@ What this stack deliberately does **not** do: manage intent (specs, ADRs, roadma
 
 **Hard boundary:** graphify is NOT for targeted symbol lookup. A graph BFS can return ~1,500 tokens for a query Serena answers in a fraction of that. If the question names a specific symbol, it is not a graphify question.
 
-**Staleness model:** the graph is a build-time snapshot, kept fresh by a git post-commit hook (installed per repo by `stack-setup init`). It is correct as of the **last commit** — never for uncommitted work-in-progress. The agent must know this: **the graph trails the working tree.**
+**Staleness model:** the graph is a build-time snapshot, kept fresh by a git post-commit hook (installed per repo by `stack-init init`). It is correct as of the **last commit** — never for uncommitted work-in-progress. The agent must know this: **the graph trails the working tree.**
 
 ### 2.2 Serena — the eyes and hands (symbols)
 
@@ -84,7 +84,7 @@ These are structural, not instructional: the tools simply aren't in Serena's sur
 
 **Hard boundaries:**
 
-1. Only engages for sessions launched via `headroom wrap claude`. A bare `claude` invocation skips the proxy entirely — RTK, Serena, and graphify are unaffected (they wire into the session, not the launch command), but Headroom contributes nothing. `stack-setup verify` can confirm the binary is installed; it cannot detect how the current session was launched (§7).
+1. Only engages for sessions launched via `headroom wrap claude`. A bare `claude` invocation skips the proxy entirely — RTK, Serena, and graphify are unaffected (they wire into the session, not the launch command), but Headroom contributes nothing. `stack-init verify` can confirm the binary is installed; it cannot detect how the current session was launched (§7).
 2. `--code-graph` is deliberately never passed. It would have Headroom build its own structure graph, duplicating graphify and creating two disagreeing sources for the same question — exactly the layer bleed §1 exists to prevent.
 3. `--memory` is deliberately never passed. This stack manages no intent/memory layer by design (§1); that flag's scope is out of bounds here regardless of what it does upstream.
 4. Compression is additive on RTK's output, never a substitute for it — RTK runs first and is free to skip (it only rewrites ~100 known commands); Headroom runs second and compresses whatever's left, known commands or not.
@@ -122,7 +122,7 @@ Headroom doesn't appear in this matrix because it never routes a question — li
 
 ## 4. The routing contract `[AGENT]`
 
-This is the text the global installer writes into `~/.claude/CLAUDE.md` (between sentinel markers, so re-running replaces it cleanly and touches nothing else). `stack-setup contract` prints it. It is the authoritative, always-on instruction — there is no per-project copy.
+This is the text the global installer writes into `~/.claude/CLAUDE.md` (between sentinel markers, so re-running replaces it cleanly and touches nothing else). `stack-init contract` prints it. It is the authoritative, always-on instruction — there is no per-project copy.
 
 ```markdown
 ## Context routing (non-negotiable)
@@ -147,7 +147,7 @@ The LSP is live ground truth; the graph is a derivation that can trail the worki
 tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
 ```
 
-Rule 1 is **conditional** because the contract is global: it applies even in repos where `stack-setup init` never ran. Without the guard, the agent would be ordered to consult a graph that doesn't exist; with it, un-initialized repos degrade gracefully and the agent nudges toward init.
+Rule 1 is **conditional** because the contract is global: it applies even in repos where `stack-init init` never ran. Without the guard, the agent would be ordered to consult a graph that doesn't exist; with it, un-initialized repos degrade gracefully and the agent nudges toward init.
 
 ---
 
@@ -174,7 +174,7 @@ Two sources can disagree. Tiered by how they acquire truth:
 
 Most of the stack is either *configuration* (how tools behave — global by nature) or *state* (a derivation of one codebase — per-repo by nature). The split (Headroom's one exception is noted below the table):
 
-| | Global (once, ever) | Per-repo (`stack-setup init`) |
+| | Global (once, ever) | Per-repo (`stack-init init`) |
 |---|---|---|
 | RTK | hook in `~/.claude/settings.json` (`rtk init -g`) | — |
 | Serena | MCP registration at **user scope** | onboarding memories (auto, first session) |
@@ -185,7 +185,7 @@ Most of the stack is either *configuration* (how tools behave — global by natu
 
 The graph and its refresh hook are the only irreducibly per-repo pieces: there is no graph until a repo exists, and `.git/hooks` is per-repo by construction. Everything else in this table is set once. Headroom is the exception to "once": the *install* is global-once like the rest, but *activation* is a third axis — neither global nor per-repo — decided fresh at every session launch (`headroom wrap claude` vs bare `claude`, §2.4, §7).
 
-### 6.1 Global install — `stack-setup` (no args)
+### 6.1 Global install — `stack-init` (no args)
 
 Run once. The installer:
 
@@ -197,23 +197,23 @@ Run once. The installer:
 
 Prereqs: `git`, `claude` (required); `cargo`, `uv`, `pip` (for the installs); a language server per language.
 
-### 6.2 Per-repo init — `stack-setup init`
+### 6.2 Per-repo init — `stack-init init`
 
 Run once from each repo root (idempotent). Builds the graph (`graphify .`), installs the post-commit incremental-rebuild hook (`graphify hook install`), and gitignores `graphify-out/`. Writes nothing to any CLAUDE.md — the global contract covers it. A repo where this never ran still works (rule 1 is conditional).
 
 ### 6.3 Other subcommands
 
-`stack-setup verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, Headroom installed, contract present, and — in a repo — graph built and hook landed). It cannot check that a given session was actually launched with `headroom wrap claude` — that's a per-launch choice, not an install-time state. `stack-setup contract` prints the routing contract for inspection.
+`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, Headroom installed, contract present, and — in a repo — graph built and hook landed). It cannot check that a given session was actually launched with `headroom wrap claude` — that's a per-launch choice, not an install-time state. `stack-init contract` prints the routing contract for inspection.
 
 ### 6.4 Windows
 
-`stack-setup.ps1` is the Windows installer — same `global` / `init` / `verify` / `contract` modes, step-for-step parity, equally idempotent. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-setup.ps1" %*`).
+`stack-init.ps1` is the Windows installer — same `global` / `init` / `verify` / `contract` modes, step-for-step parity, equally idempotent. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
 
 | Concept | Unix | Windows (PowerShell) |
 |---|---|---|
 | Claude config dir | `~/.claude/` | `$env:USERPROFILE\.claude\` |
 | Routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
-| Run the installer | `stack-setup` | `.\stack-setup.ps1` |
+| Run the installer | `stack-init` | `.\stack-init.ps1` |
 
 Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell.
 
@@ -233,9 +233,9 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Shell routing around RTK.** Any MCP tool that executes commands bypasses the Bash hook. Mitigation: structural — `ide-assistant` exposes no Serena shell tool. If you add another MCP server with an exec tool, decide its compression story explicitly.
 
-**Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-setup verify`).
+**Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-init verify`).
 
-**Headroom silently inert.** Installed but the session was launched with a bare `claude`, not `headroom wrap claude` — everything still works, just without the wire-level compression, and nothing errors to say so. Mitigation: it's a launch-habit problem, not a config one; `stack-setup verify` confirms the binary exists but can't confirm how *this* session started.
+**Headroom silently inert.** Installed but the session was launched with a bare `claude`, not `headroom wrap claude` — everything still works, just without the wire-level compression, and nothing errors to say so. Mitigation: it's a launch-habit problem, not a config one; `stack-init verify` confirms the binary exists but can't confirm how *this* session started.
 
 ---
 
@@ -265,7 +265,7 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **RTK input mode = manual `$(rtk ...)` capture.** The first-class prompt-injection mode is an unshipped upstream proposal; manual capture is the supported equivalent and keeps placement under your control.
 
-**Single self-documenting installer per OS.** The doc is the spec-of-whys; `stack-setup.sh` / `stack-setup.ps1` are the executables and the source of truth for behavior. One fact, one home: change behavior in the script, record reasoning here.
+**Single self-documenting installer per OS.** The doc is the spec-of-whys; `stack-init.sh` / `stack-init.ps1` are the executables and the source of truth for behavior. One fact, one home: change behavior in the script, record reasoning here.
 
 ---
 
@@ -279,7 +279,7 @@ grep -q "Context routing" ~/.claude/CLAUDE.md   # contract present
 command -v graphify                        # installed and on PATH
 command -v headroom                        # installed and on PATH
 
-# Per repo (after `stack-setup init`)
+# Per repo (after `stack-init init`)
 ls -l graphify-out/graph.json              # graph built
 git commit --allow-empty -m test && ls -l graphify-out/graph.json  # mtime advanced -> hook fires
 

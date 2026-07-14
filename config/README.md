@@ -9,8 +9,8 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 | File | What it is | When to read/run |
 |---|---|---|
 | `claude-code-context-stack.md` | The spec-of-whys. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), decisions log (§8), verification (§9). | Read §1–3 first; the rest is reference. |
-| `stack-setup.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the global layer; `init` builds a repo's graph + rebuild hook; also `verify` and `contract`. | `stack-setup` once globally, `stack-setup init` once per repo. |
-| `stack-setup.ps1` | The same installer for Windows (PowerShell). Same modes, step-for-step parity, equally idempotent. | `.\stack-setup.ps1` global, then `init` per repo. |
+| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the global layer; `init` builds a repo's graph + rebuild hook; also `verify` and `contract`. | `stack-init` once globally, `stack-init init` once per repo. |
+| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent (tool detection is platform-specific — e.g. worktrunk lookup probes winget paths on Windows). | `.\stack-init.ps1` global, then `init` per repo. |
 
 The scripts are self-contained — the document is the deep reasoning, but you can run the stack from the scripts alone.
 
@@ -20,22 +20,22 @@ The scripts are self-contained — the document is the deep reasoning, but you c
 # 1. Global layer — once, ever
 #    Installs RTK (Bash hook) + Serena (user scope) + graphify + Headroom, and
 #    writes the routing contract to ~/.claude/CLAUDE.md.
-install -m 755 stack-setup.sh ~/.local/bin/stack-setup      # put it on PATH
-stack-setup                                                 # = stack-setup global
-#   Windows: copy stack-setup.ps1 to a dir on $env:PATH, then  .\stack-setup.ps1
+install -m 755 stack-init.sh ~/.local/bin/stack-init        # put it on PATH
+stack-init                                                  # = stack-init global
+#   Windows: copy stack-init.ps1 to a dir on $env:PATH, then  .\stack-init.ps1
 
 # 2. Per repo — once (builds the graph + post-commit rebuild hook)
-cd /path/to/project && stack-setup init                     # Unix/macOS
-#   Windows (from repo root): .\stack-setup.ps1 init
+cd /path/to/project && stack-init init                      # Unix/macOS
+#   Windows (from repo root): .\stack-init.ps1 init
 
 # 3. Check the wiring any time
-stack-setup verify
+stack-init verify
 
 # 4. Every session after that — launch via Headroom's wrapper, not bare `claude`
 headroom wrap claude
 ```
 
-On Windows use PowerShell (`stack-setup.ps1`), not cmd — see doc §6.4 for path translations, the Git-for-Windows requirement, and the optional `.bat` wrapper.
+On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.4 for path translations, the Git-for-Windows requirement, and the optional `.bat` wrapper.
 
 First session in a freshly initialized repo: let Serena finish onboarding, then ask one architecture question and confirm the agent reads the graph instead of grepping. A repo where you haven't run `init` still works — the contract degrades gracefully.
 
@@ -68,4 +68,4 @@ Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and
 
 ## Versioning
 
-Doc is at **v2.1** (changelog in its header). The doc is the source of truth for *why*; `stack-setup.sh` (Unix) and `stack-setup.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally identical — change behavior in the scripts, record the reasoning in the doc.
+Doc is at **v2.1.1** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally equivalent — change behavior in the scripts, record the reasoning in the doc.

@@ -34,13 +34,13 @@
       graphify install, Headroom install, routing contract in
       $env:USERPROFILE\.claude\CLAUDE.md.
     Per-repo (one command): the graph derives from a specific codebase, so
-      `stack-setup.ps1 init` builds it and installs a local post-commit hook.
+      `stack-init.ps1 init` builds it and installs a local post-commit hook.
 
   USAGE
-    .\stack-setup.ps1            # or: global   -> global install (once)
-    .\stack-setup.ps1 init       # inside a repo -> build graph + hook
-    .\stack-setup.ps1 verify     # check wiring
-    .\stack-setup.ps1 contract   # print the routing contract
+    .\stack-init.ps1            # or: global   -> global install (once)
+    .\stack-init.ps1 init       # inside a repo -> build graph + hook
+    .\stack-init.ps1 verify     # check wiring
+    .\stack-init.ps1 contract   # print the routing contract
 
   AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
   `claude`, or Headroom's compression never engages (RTK/Serena/graphify are
@@ -62,7 +62,7 @@ function Err ($m){ Write-Host "error: "-ForegroundColor Red    -NoNewline; Write
 function Have($c){ [bool](Get-Command $c -ErrorAction SilentlyContinue) }
 
 $Contract = @'
-# >>> claude-context-stack >>> (managed by stack-setup - edits here are overwritten)
+# >>> claude-context-stack >>> (managed by stack-init - edits here are overwritten)
 ## Context routing (non-negotiable)
 1. Architecture / cross-module / "what connects X to Y" / blast radius:
    IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
@@ -146,10 +146,14 @@ function Install-Global {
   # version's source into a global cache (~/.opensrc, shared by all checkouts
   # and worktrees; zero per-repo state). Usage guidance lives in the opensrc
   # skill, not the contract. Non-fatal like every extra below.
+  # Native exes don't throw on non-zero exit, so try/catch is useless here -
+  # test $LASTEXITCODE explicitly, then reset it so it can't leak as our own.
   if (Have 'opensrc') { Say "  opensrc present" }
   elseif (Have 'npm') {
-    try { npm install -g opensrc; Say "  opensrc installed (npm -g)" }
-    catch { Warn "npm install -g opensrc failed - install later, stack unaffected" }
+    npm install -g opensrc
+    if ($LASTEXITCODE -eq 0) { Say "  opensrc installed (npm -g)" }
+    else { Warn "npm install -g opensrc failed (exit $LASTEXITCODE) - install later, stack unaffected" }
+    $global:LASTEXITCODE = 0
   } else { Warn "npm not found - skipping opensrc (npm install -g opensrc later)" }
 
   Say "worktrunk - parallel worktrees (workflow tool, OUTSIDE the routing contract)"
@@ -183,22 +187,27 @@ function Install-Global {
   if ($WtBin) { Say "  worktrunk present ($WtBin)" }
   else {
     Say "  installing worktrunk (winget: max-sixty.worktrunk, binary: git-wt)"
-    try {
-      if (Have 'winget') { winget install --id max-sixty.worktrunk --accept-source-agreements --accept-package-agreements }
-      else { cargo install worktrunk }
-    } catch { Warn "worktrunk install failed: $_" }
+    if (Have 'winget') { winget install --id max-sixty.worktrunk --accept-source-agreements --accept-package-agreements }
+    else { cargo install worktrunk }
+    if ($LASTEXITCODE -ne 0) { Warn "worktrunk install failed (exit $LASTEXITCODE)" }
     $global:LASTEXITCODE = 0   # winget exit codes (e.g. 'no upgrade') must not leak as ours
     $WtBin = Find-WtBin
   }
   if ($WtBin) {
-    try { & $WtBin config shell install }
-    catch { Warn "shell integration failed - run '$WtBin config shell install' manually" }
+    & $WtBin config shell install
+    if ($LASTEXITCODE -ne 0) { Warn "shell integration failed - run '$WtBin config shell install' manually" }
+    $global:LASTEXITCODE = 0
     $WtCfgDir = Join-Path $env:APPDATA 'worktrunk'
     $WtCfg    = Join-Path $WtCfgDir 'config.toml'
     New-Item -ItemType Directory -Force -Path $WtCfgDir | Out-Null
     $wtExisting = if (Test-Path $WtCfg) { Get-Content -Raw $WtCfg } else { '' }
     if ($wtExisting -match 'claude-context-stack') {
       Say "  post-start hook already present - skipped"
+    } elseif ($wtExisting -match '(?m)^\s*(\[\[?post-start|post-start\s*=)') {
+      # Appending a second [post-start] table would make the whole TOML invalid
+      # and break worktrunk entirely - never do it. Ask for a manual merge.
+      Warn "config.toml already defines post-start - add this line to it manually:"
+      Warn 'claude-context-stack = "[ -d ''{{ primary_worktree_path }}/graphify-out'' ] && graphify . && graphify hook install || true"'
     } else {
       # Hook body is POSIX sh: worktrunk runs hooks via Git for Windows' bash.
       $wtHook = @'
@@ -209,7 +218,9 @@ function Install-Global {
 [post-start]
 claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true"
 '@
-      Add-Content -Path $WtCfg -Value $wtHook -Encoding utf8
+      # IO.File writes BOM-less UTF-8 on both PS 5.1 and 7; Add-Content -Encoding
+      # utf8 on 5.1 stamps a BOM when creating the file, which TOML parsers reject.
+      [IO.File]::AppendAllText($WtCfg, ($wtHook -replace "`r`n", "`n") + "`n")
       Say "  global post-start hook written -> $WtCfg"
     }
   } else {
@@ -226,12 +237,12 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
   Say "  contract written (idempotent - re-running replaces the managed block)"
 
   if (-not (Have 'rust-analyzer')) { Warn "rust-analyzer not on PATH - Serena needs it for Rust (rustup component add rust-analyzer)" }
-  Write-Host ""; Say "Global install done. In each repo, run:  .\stack-setup.ps1 init"
+  Write-Host ""; Say "Global install done. In each repo, run:  .\stack-init.ps1 init"
 }
 
 function Init-Project {
   if (-not (Test-Path .git -PathType Container)) { Err "run from a git repo root (no .git here)"; exit 1 }
-  if (-not (Have 'graphify')) { Err "graphify not installed - run '.\stack-setup.ps1 global' first"; exit 1 }
+  if (-not (Have 'graphify')) { Err "graphify not installed - run '.\stack-init.ps1 global' first"; exit 1 }
   Say "building knowledge graph (graphify .)"; graphify .
   Say "installing local post-commit hook (incremental rebuild)"; graphify hook install
   if (-not ((Test-Path .gitignore) -and (Select-String -Path .gitignore -Pattern '^graphify-out/' -Quiet))) {
@@ -254,7 +265,7 @@ function Invoke-Verify {
   if (Have 'opensrc') { Write-Host "  opensrc:        OK (context tool - outside the contract)" } else { Write-Host "  opensrc:        NOT installed (optional)" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
-    if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-setup.ps1 init" }
+    if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-init.ps1 init" }
     if (Test-Path .git\hooks\post-commit) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
   }
 }
@@ -265,5 +276,8 @@ switch ($Command.ToLower()) {
   'init'     { Init-Project }
   'verify'   { Invoke-Verify }
   'contract' { Write-Output $Contract }
-  default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-setup.ps1 [global|init|verify|contract]"; exit 1 }
+  default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-init.ps1 [global|init|verify|contract]"; exit 1 }
 }
+# A stray $LASTEXITCODE from any native command above (pip/npm/winget/claude)
+# must not become this script's exit code - completing the switch means success.
+exit 0

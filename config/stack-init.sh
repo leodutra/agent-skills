@@ -35,20 +35,20 @@
 #      from cwd), graphify install, Headroom install, and the routing contract
 #      in ~/.claude/CLAUDE.md.
 #    Per-repo (one command): the graph is a derivation of a specific codebase, so
-#      `stack-setup init` builds it and installs a local post-commit rebuild hook.
+#      `stack-init init` builds it and installs a local post-commit rebuild hook.
 #      Repos without a graph still work — the contract degrades gracefully.
 #
 #  USAGE
-#    stack-setup            # or: stack-setup global   -> global install (once)
-#    stack-setup init       # inside a repo            -> build graph + hook
-#    stack-setup verify     # check everything is wired
-#    stack-setup contract   # print the routing contract it installs
+#    stack-init            # or: stack-init global    -> global install (once)
+#    stack-init init       # inside a repo            -> build graph + hook
+#    stack-init verify     # check everything is wired
+#    stack-init contract   # print the routing contract it installs
 #
 #  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
 #  `claude`, or Headroom's compression never engages (RTK/Serena/graphify wire
 #  into the session itself, so they're unaffected either way).
 #
-#  PREREQS: cargo, pip, uv, claude (Claude Code CLP), git. A language server per
+#  PREREQS: cargo, pip, uv, claude (Claude Code CLI), git. A language server per
 #  language (rust-analyzer via `rustup component add rust-analyzer`, etc.).
 # =============================================================================
 set -euo pipefail
@@ -63,7 +63,7 @@ have() { command -v "$1" >/dev/null 2>&1; }
 
 print_contract() {
 cat <<'BLOCK'
-# >>> claude-context-stack >>> (managed by stack-setup — edits here are overwritten)
+# >>> claude-context-stack >>> (managed by stack-init — edits here are overwritten)
 ## Context routing (non-negotiable)
 1. Architecture / cross-module / "what connects X to Y" / blast radius:
    IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
@@ -178,6 +178,11 @@ install_global() {
     mkdir -p "$WT_CFG_DIR"; touch "$WT_CFG"
     if grep -q 'claude-context-stack' "$WT_CFG"; then
       say "  post-start hook already present — skipped"
+    elif grep -Eq '^[[:space:]]*(\[\[?post-start|post-start[[:space:]]*=)' "$WT_CFG"; then
+      # Appending a second [post-start] table would make the whole TOML invalid
+      # and break worktrunk entirely — never do it. Ask for a manual merge.
+      warn "config.toml already defines post-start — add this line to it manually:"
+      warn "claude-context-stack = \"[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true\""
     else
       cat >> "$WT_CFG" <<'WTHOOK'
 
@@ -242,6 +247,6 @@ case "${1:-global}" in
   init)       init_project ;;
   verify)     verify ;;
   contract)   print_contract ;;
-  -h|--help|help) sed -n '2,46p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract]"; exit 1 ;;
 esac
