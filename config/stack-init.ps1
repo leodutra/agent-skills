@@ -31,22 +31,26 @@
 
   GLOBAL vs PER-REPO
     Global (once): RTK hook, Serena at user scope (auto-activates per repo),
-      graphify install, Headroom install, routing contract in
-      $env:USERPROFILE\.claude\CLAUDE.md.
-    Per-repo (one command): the graph derives from a specific codebase, so
-      `stack-init.ps1 init` builds it and installs a local post-commit hook.
+      graphify install + graph-autobuild SessionStart hook, Headroom install +
+      claude shim, routing contract in $env:USERPROFILE\.claude\CLAUDE.md.
+    Per-repo: nothing required - the first session inside any git repo builds
+      its graph in the background. `init` remains for building one eagerly (and
+      for the tracked-file extras autobuild never touches: .gitignore,
+      .claude\agents contract injection).
 
   USAGE
     .\stack-init.ps1            # or: global   -> global install (once)
-    .\stack-init.ps1 init       # inside a repo -> build graph + hooks
+    .\stack-init.ps1 init       # inside a repo -> build graph + hooks eagerly
     .\stack-init.ps1 verify     # check wiring
     .\stack-init.ps1 contract   # print the routing contract
     .\stack-init.ps1 contract --condensed  # print the short form injected into agents
     .\stack-init.ps1 stats      # append + print a usage snapshot (rtk/headroom)
 
-  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
-  `claude`, or Headroom's compression never engages (RTK/Serena/graphify are
-  unaffected either way - they wire into the session, not the launch command).
+  AFTER GLOBAL INSTALL: open a NEW terminal. Bare `claude` then launches through
+  Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
+  run), and the first session in any git repo autobuilds its graph in the
+  background (opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in
+  the repo root).
 
   PREREQS: cargo, pip, uv, claude (Claude Code CLI), Git for Windows (its bash
   runs the post-commit hook). A language server per language. First run may need
@@ -69,7 +73,8 @@ $Contract = @'
 1. Architecture / cross-module / "what connects X to Y" / blast radius:
    IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
    `graphify query "..."` / `graphify path A B`. Never orient by reading files or grep.
-   IF absent -> orient normally, and suggest running the stack init in this repo.
+   IF absent -> orient normally (the stack autobuilds the graph in the background
+   at session start - it may simply not be ready yet).
 2. Specific symbols (definitions, references, implementations, file overviews)
    -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview).
    Never grep for symbol names.
@@ -174,6 +179,26 @@ function Install-Uv {
   if (-not (Have 'uv')) { Warn "uv install failed - Serena will not be able to launch" }
 }
 
+function Register-SessionStartHook {
+  # Adds a SessionStart command hook to global settings.json (idempotent) and
+  # returns the parsed settings object so callers can inspect other hooks.
+  param([string]$Cmd)
+  $settingsPath = Join-Path $ClaudeDir 'settings.json'
+  $json = if (Test-Path $settingsPath) { Get-Content -Raw $settingsPath } else { '{}' }
+  try { $data = $json | ConvertFrom-Json } catch { $data = [PSCustomObject]@{} }
+  if (-not $data.PSObject.Properties['hooks']) { $data | Add-Member -NotePropertyName hooks -NotePropertyValue ([PSCustomObject]@{}) }
+  if (-not $data.hooks.PSObject.Properties['SessionStart']) { $data.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @() }
+  $starts = @($data.hooks.SessionStart)
+  $already = $starts | Where-Object { $_.hooks | Where-Object { $_.command -eq $Cmd } }
+  if (-not $already) {
+    $starts += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $Cmd }) }
+    $data.hooks.SessionStart = $starts
+  }
+  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
+  $data | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding utf8
+  return $data
+}
+
 function Install-HeadroomCheck {
   $hooksDir = Join-Path $ClaudeDir 'hooks'
   New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
@@ -186,27 +211,207 @@ $note = "NOTE: Headroom proxy not active this session (bare launch). Wire-level 
 exit 0
 '@
 
-  $settingsPath = Join-Path $ClaudeDir 'settings.json'
-  $json = if (Test-Path $settingsPath) { Get-Content -Raw $settingsPath } else { '{}' }
-  try { $data = $json | ConvertFrom-Json } catch { $data = [PSCustomObject]@{} }
-  if (-not $data.PSObject.Properties['hooks']) { $data | Add-Member -NotePropertyName hooks -NotePropertyValue ([PSCustomObject]@{}) }
-  if (-not $data.hooks.PSObject.Properties['SessionStart']) { $data.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @() }
   $cmd = "powershell -NoProfile -ExecutionPolicy Bypass -File `"$checkPath`""
-  $starts = @($data.hooks.SessionStart)
-  $already = $starts | Where-Object { $_.hooks | Where-Object { $_.command -eq $cmd } }
-  if (-not $already) {
-    $starts += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $cmd }) }
-    $data.hooks.SessionStart = $starts
-  }
-  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
-  $data | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding utf8
-
+  $data = Register-SessionStartHook $cmd
   $rtkPresent = $false
   if ($data.hooks.PSObject.Properties['PreToolUse']) {
     $rtkPresent = (($data.hooks.PreToolUse | ConvertTo-Json -Depth 10) -match 'rtk')
   }
   if ($rtkPresent) { Say "  SessionStart headroom-check hook installed; RTK PreToolUse hook still present" }
-  else { Warn "settings.json written but RTK's Bash hook wasn't found afterward - check $settingsPath manually" }
+  else { Warn "settings.json written but RTK's Bash hook wasn't found afterward - check settings.json manually" }
+}
+
+function Install-GraphAutobuild {
+  # Replaces per-repo `init` for the common case: a SessionStart hook that, in
+  # any git repo, builds a missing graph in the background and refreshes an
+  # existing one (incremental, content-hash cached). All side effects stay
+  # under .git/ (hooks, info/exclude, lock) - it never mutates tracked files,
+  # which is why it writes .git/info/exclude rather than .gitignore and does
+  # NOT inject the condensed contract into repo .claude\agents\. Run `init`
+  # for the eager/tracked-file variant.
+  $hooksDir = Join-Path $ClaudeDir 'hooks'
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $autoPath = Join-Path $hooksDir 'graph-autobuild.ps1'
+  Set-Content -Path $autoPath -Encoding utf8 -Value @'
+param([switch]$Build)
+# claude-context-stack: per-repo graph autobuild/refresh at session start.
+# Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
+# root. Remove the SessionStart entry in settings.json to uninstall.
+$ErrorActionPreference = 'SilentlyContinue'
+
+$top = git rev-parse --show-toplevel 2>$null
+if (-not $top -or -not (Test-Path $top)) { exit 0 }
+Set-Location $top
+$gd  = git rev-parse --git-dir 2>$null
+if (-not $gd) { exit 0 }
+if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $top $gd }
+$cgd = git rev-parse --git-common-dir 2>$null
+if (-not $cgd) { $cgd = $gd }
+elseif (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
+$lock = Join-Path $gd 'claude-stack-autobuild.lock'
+
+if ($Build) {
+  # Background worker: the actual first build. Everything it writes lives
+  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
+  try {
+    graphify . *> $null
+    graphify hook install *> $null
+    $hooksDir = Join-Path $cgd 'hooks'
+    New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+    $nl = "`n"
+    $bodies = @{
+      'post-checkout' = ('# claude-context-stack: refresh graph on branch switch (not file checkout)' + $nl +
+        'if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then' + $nl +
+        '  ( graphify update . >/dev/null 2>&1 & )' + $nl + 'fi')
+      'post-merge'    = ('# claude-context-stack: refresh graph after merge/pull' + $nl +
+        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+      'post-rewrite'  = ('# claude-context-stack: refresh graph after rebase' + $nl +
+        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+    }
+    foreach ($name in @($bodies.Keys)) {
+      $p = Join-Path $hooksDir $name
+      if ((Test-Path $p) -and (Select-String -Path $p -Pattern 'claude-context-stack:' -Quiet)) { continue }
+      if (Test-Path $p) { [IO.File]::AppendAllText($p, $nl + $bodies[$name] + $nl) }
+      else { [IO.File]::WriteAllText($p, '#!/bin/sh' + $nl + $bodies[$name] + $nl) }
+    }
+    $info = Join-Path $cgd 'info'
+    New-Item -ItemType Directory -Force -Path $info | Out-Null
+    $excl = Join-Path $info 'exclude'
+    $cur = if (Test-Path $excl) { Get-Content -Raw $excl } else { '' }
+    if ($cur -notmatch '(?m)^graphify-out/') { [IO.File]::AppendAllText($excl, $nl + 'graphify-out/' + $nl) }
+  } finally { Remove-Item -Recurse -Force $lock }
+  exit 0
+}
+
+if ($env:CLAUDE_STACK_NO_AUTOBUILD) { exit 0 }
+if (Test-Path (Join-Path $top '.graphify-skip')) { exit 0 }
+if (-not (Get-Command graphify -ErrorAction SilentlyContinue)) { exit 0 }
+
+if (Test-Path (Join-Path $top 'graphify-out')) {
+  Start-Process -WindowStyle Hidden -FilePath graphify -ArgumentList 'update','.' -WorkingDirectory $top | Out-Null
+  exit 0
+}
+
+try { New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null }
+catch {
+  $item = Get-Item $lock -ErrorAction SilentlyContinue
+  if ($item -and ((Get-Date) - $item.CreationTime).TotalMinutes -lt 60) { exit 0 }
+  Remove-Item -Recurse -Force $lock -ErrorAction SilentlyContinue
+  try { New-Item -ItemType Directory -Path $lock -ErrorAction Stop | Out-Null } catch { exit 0 }
+}
+Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList @(
+  '-NoProfile','-ExecutionPolicy','Bypass','-File',$PSCommandPath,'-Build') -WorkingDirectory $top | Out-Null
+@{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext =
+  'graphify: no graph in this repo yet - the stack is building one in the background (first build can take a while on big repos). Orient normally until graphify-out/ appears; do not run graphify . yourself.' } } | ConvertTo-Json -Compress
+exit 0
+'@
+
+  Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$autoPath`"" | Out-Null
+  Say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
+}
+
+function Install-ClaudeShim {
+  # Shadows bare `claude` so it launches through Headroom automatically. The
+  # self-recursion hazard that made shadowing dangerous (headroom re-resolving
+  # 'claude' back to the shim - `headroom wrap` only accepts tool names, so
+  # re-resolution is unavoidable) is bounded by construction: the shim exports
+  # a re-entry guard (CLAUDE_STACK_SHIM) before delegating, so when headroom's
+  # PATH search lands back on the shim, that second entry execs the REAL
+  # binary (which the shim resolves itself, skipping its own directory) -
+  # exactly one bounce, never a loop. An already-wrapped session (localhost
+  # ANTHROPIC_BASE_URL) is never double-wrapped. Headroom missing or
+  # CLAUDE_NO_HEADROOM=1 falls through to the real binary - a broken shim
+  # never blocks a session.
+  # $HeadroomFlags carries ' --no-tokensave' when supported: newer headroom
+  # builds its own code graph by default, which the stack's decisions log
+  # forbids (duplicate of graphify; see the --code-graph entry).
+  param([string]$HeadroomFlags = '')
+  $binDir = Join-Path $ClaudeDir 'stack-bin'
+  New-Item -ItemType Directory -Force -Path $binDir | Out-Null
+
+  $shimPs1 = @'
+# claude-context-stack: auto-wrap claude with Headroom (managed by stack-init).
+# CLAUDE_NO_HEADROOM=1 skips wrapping for one launch; delete this directory
+# (and its PATH entry) to remove the shim entirely.
+# `headroom wrap` re-resolves 'claude' on PATH itself and can land back on
+# this shim - the CLAUDE_STACK_SHIM guard bounds that to exactly one bounce:
+# the re-entered shim execs the real binary directly.
+$selfDir = Split-Path -Parent $MyInvocation.MyCommand.Path
+$real = Get-Command claude -CommandType Application -All -ErrorAction SilentlyContinue |
+  Where-Object { (Split-Path -Parent $_.Source) -ne $selfDir } |
+  Select-Object -First 1
+if (-not $real) { [Console]::Error.WriteLine('claude shim: real claude binary not found on PATH'); exit 127 }
+$bypass = $env:CLAUDE_NO_HEADROOM -or $env:CLAUDE_STACK_SHIM -or
+  ($env:ANTHROPIC_BASE_URL -match '127\.0\.0\.1|localhost') -or
+  -not (Get-Command headroom -ErrorAction SilentlyContinue)
+if ($bypass) { & $real.Source @args; exit $LASTEXITCODE }
+$env:CLAUDE_STACK_SHIM = '1'
+'@
+  $shimPs1 += "`nheadroom wrap claude$HeadroomFlags @args`nexit `$LASTEXITCODE`n"
+  Set-Content -Path (Join-Path $binDir 'claude.ps1') -Encoding utf8 -Value $shimPs1
+
+  Set-Content -Path (Join-Path $binDir 'claude.cmd') -Encoding ascii -Value @'
+@echo off
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0claude.ps1" %*
+exit /b %ERRORLEVEL%
+'@
+
+  # Git Bash resolves 'claude' by exact name (+.exe), never .cmd - it needs a
+  # POSIX shim in the same dir. Must be BOM-less LF or the shebang breaks.
+  $shimSh = @'
+#!/bin/sh
+# claude-context-stack: auto-wrap claude with Headroom (managed by stack-init).
+# CLAUDE_NO_HEADROOM=1 skips wrapping for one launch; delete this file (and
+# its PATH entry) to remove the shim entirely.
+self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+real=
+old_ifs=$IFS
+IFS=:
+for d in $PATH; do
+  [ -n "$d" ] || continue
+  [ "$(CDPATH= cd -- "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
+  for n in claude claude.exe claude.cmd; do
+    if [ -f "$d/$n" ] && [ -x "$d/$n" ]; then real="$d/$n"; break 2; fi
+  done
+done
+IFS=$old_ifs
+if [ -z "$real" ]; then
+  echo "claude shim: real claude binary not found on PATH" >&2
+  exit 127
+fi
+wrapped=
+case "${ANTHROPIC_BASE_URL:-}" in *127.0.0.1*|*localhost*) wrapped=1 ;; esac
+if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "$wrapped" ] \
+   || ! command -v headroom >/dev/null 2>&1; then
+  exec "$real" "$@"
+fi
+CLAUDE_STACK_SHIM=1
+export CLAUDE_STACK_SHIM
+'@
+  $shimSh += "`nexec headroom wrap claude$HeadroomFlags `"`$@`""
+  [IO.File]::WriteAllText((Join-Path $binDir 'claude'), ($shimSh -replace "`r`n", "`n") + "`n")
+  Say "  shim written -> $binDir (claude.cmd / claude.ps1 / claude for Git Bash)"
+
+  # Prepend to user PATH. Raw registry read/write (not [Environment]::Set...)
+  # so REG_EXPAND_SZ entries like %USERPROFILE% in the existing PATH survive.
+  $rawPath = [string](Get-Item 'HKCU:\Environment').GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+  $expanded = [Environment]::ExpandEnvironmentVariables($rawPath)
+  if ((';' + $expanded + ';') -notlike "*;$binDir;*") {
+    $newPath = if ($rawPath) { "$binDir;$rawPath" } else { $binDir }
+    Set-ItemProperty -Path 'HKCU:\Environment' -Name Path -Value $newPath -Type ExpandString
+    # Broadcast the change so terminals opened from Explorer see it without a
+    # logoff. Best-effort - a failed broadcast just means "new terminal after
+    # next logon".
+    try {
+      Add-Type -Namespace Win32 -Name Native -MemberDefinition '[DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, UIntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out UIntPtr lpdwResult);'
+      [UIntPtr]$res = [UIntPtr]::Zero
+      [Win32.Native]::SendMessageTimeout([IntPtr]0xffff, 0x1A, [UIntPtr]::Zero, 'Environment', 2, 5000, [ref]$res) | Out-Null
+    } catch {}
+    Say "  shim dir prepended to user PATH (open a NEW terminal to pick it up)"
+  } else {
+    Say "  shim dir already on user PATH"
+  }
+  if ((';' + $env:PATH + ';') -notlike "*;$binDir;*") { $env:PATH = "$binDir;$env:PATH" }
 }
 
 function Install-Global {
@@ -239,27 +444,34 @@ function Install-Global {
   # rule 1 below, which scopes graphify to architecture questions only. Wire
   # this into Init-Project instead if per-repo defense-in-depth is wanted.
 
+  Say "graph autobuild - per-repo init, automated (SessionStart hook)"
+  Install-GraphAutobuild
+
   Say "Headroom - proxy-layer compression (final pass before the API)"
   if (Have 'headroom') { Say "  headroom present ($(headroom --version 2>$null))" }
   else {
     Say "  installing headroom (PyPI package: headroom-ai)"
     if (Have 'uv') { uv tool install 'headroom-ai[all]' } else { pip install 'headroom-ai[all]' }
   }
-  Say "  installed - writing a launcher wrapper (never aliasing 'claude' itself,"
-  Say "  which risks self-recursion when headroom resolves the target binary)"
-  $WrapperName = $null
-  foreach ($candidate in @('clw', 'hclaude', 'claudew')) {
-    if (-not (Have $candidate)) { $WrapperName = $candidate; break }
-  }
-  if (-not $WrapperName) {
-    Warn "clw/hclaude/claudew all taken - skipping wrapper; launch via 'headroom wrap claude' manually"
-  } else {
-    $binDir = Join-Path $env:USERPROFILE '.local\bin'
-    New-Item -ItemType Directory -Force -Path $binDir | Out-Null
-    Set-Content -Path (Join-Path $binDir "$WrapperName.ps1") -Value 'headroom wrap claude @args' -Encoding utf8
-    Set-Content -Path (Join-Path $binDir "$WrapperName.cmd") -Value "@powershell -NoProfile -ExecutionPolicy Bypass -File `"%~dp0$WrapperName.ps1`" %*" -Encoding utf8
-    Say "  wrapper installed: $WrapperName (launch sessions with '$WrapperName')"
-    if (";$env:PATH;" -notlike "*;$binDir;*") { Warn "$binDir not on PATH - add it to use '$WrapperName'" }
+  # Newer headroom builds its own "tokensave" code graph by default - the
+  # renamed, default-on incarnation of --code-graph, which the decisions log
+  # forbids as a duplicate of graphify. Disable it when the flag exists;
+  # probing keeps older headroom versions (no such flag) launching cleanly.
+  $HeadroomFlags = ''
+  if ((headroom wrap claude --help 2>$null | Out-String) -match '--no-tokensave') { $HeadroomFlags = ' --no-tokensave' }
+  $global:LASTEXITCODE = 0
+  Say "  shadowing bare 'claude' with a recursion-safe shim (see Install-ClaudeShim"
+  Say "  for how the old self-recursion hazard is closed)"
+  Install-ClaudeShim -HeadroomFlags $HeadroomFlags
+  # The shim supersedes the 2.2 clw/hclaude/claudew wrapper - remove any of
+  # ours a previous version wrote. Manual fallback is `headroom wrap claude`.
+  $wrapBinDir = Join-Path $env:USERPROFILE '.local\bin'
+  foreach ($old in @('clw', 'hclaude', 'claudew')) {
+    $op = Join-Path $wrapBinDir "$old.ps1"
+    if ((Test-Path $op) -and ((Get-Content -Raw $op) -match 'headroom wrap claude')) {
+      Remove-Item -Force $op, (Join-Path $wrapBinDir "$old.cmd") -ErrorAction SilentlyContinue
+      Say "  removed obsolete wrapper: $old (the shim replaces it)"
+    }
   }
   Install-HeadroomCheck
   # Deliberately not passing --code-graph (would build a second structure graph,
@@ -366,7 +578,9 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
   Invoke-InjectCondensedContract (Join-Path $ClaudeDir 'agents')
 
   if (-not (Have 'rust-analyzer')) { Warn "rust-analyzer not on PATH - Serena needs it for Rust (rustup component add rust-analyzer)" }
-  Write-Host ""; Say "Global install done. In each repo, run:  .\stack-init.ps1 init"
+  Write-Host ""; Say "Global install done. Open a NEW terminal so the claude shim takes effect."
+  Say "No per-repo step needed - the first session in any git repo autobuilds its"
+  Say "graph ('.\stack-init.ps1 init' still works for an eager build)."
 }
 
 function Init-Project {
@@ -409,14 +623,24 @@ function Invoke-Verify {
   if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" } else { Write-Host "  rtk:            NOT ON PATH" }
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
-  if (Have 'headroom') { Write-Host "  headroom:       OK (remember: launch via 'headroom wrap claude')" } else { Write-Host "  headroom:       NOT installed" }
+  if (Have 'headroom') { Write-Host "  headroom:       OK" } else { Write-Host "  headroom:       NOT installed" }
+  $shimDir = Join-Path $ClaudeDir 'stack-bin'
+  if (Test-Path (Join-Path $shimDir 'claude.ps1')) {
+    $first = Get-Command claude -All -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($first -and $first.Source -like "$shimDir*") { Write-Host "  claude shim:    OK (bare 'claude' auto-wraps through headroom)" }
+    else { Write-Host "  claude shim:    installed but NOT first on PATH (open a new terminal?)" }
+  } else { Write-Host "  claude shim:    NOT installed" }
+  $settingsPath = Join-Path $ClaudeDir 'settings.json'
+  if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $settingsPath) -and
+      (Select-String -Path $settingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
+  else { Write-Host "  graph autobuild: NOT registered" }
   $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
     [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
   if ($wtFound) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
   if (Have 'opensrc') { Write-Host "  opensrc:        OK (context tool - outside the contract)" } else { Write-Host "  opensrc:        NOT installed (optional)" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
-    if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - run: .\stack-init.ps1 init" }
+    if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
     if (Test-Path .git\hooks\post-commit) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
   }
 }

@@ -1,6 +1,6 @@
 # Claude Code Context Stack
 
-A pre-configured setup for Claude Code that cuts the token cost of working in a real codebase, using four tools and the routing rules that make Claude use each for the one thing it's best at: **graphify** (codebase knowledge graph — structure), **Serena** (LSP symbol tools via MCP — symbols), **RTK** (CLI output compression), **Headroom** (proxy-layer compression). Install the global layer once; initialize each repo with a single command. Every project then gets identical routing behavior — graph for architecture, LSP for symbols, compressed Bash for execution, compressed wire traffic for whatever's left.
+A pre-configured setup for Claude Code that cuts the token cost of working in a real codebase, using four tools and the routing rules that make Claude use each for the one thing it's best at: **graphify** (codebase knowledge graph — structure), **Serena** (LSP symbol tools via MCP — symbols), **RTK** (CLI output compression), **Headroom** (proxy-layer compression). Install the global layer once — that's the whole setup. A `claude` shim wraps every launch through Headroom, and the first session inside any git repo builds its graph in the background. Every project then gets identical routing behavior — graph for architecture, LSP for symbols, compressed Bash for execution, compressed wire traffic for whatever's left.
 
 No intent/docs layer: this stack is only the parts that move tokens, plus the global routing contract.
 
@@ -9,8 +9,8 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 | File | What it is | When to read/run |
 |---|---|---|
 | `claude-code-context-stack.md` | The spec-of-whys. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), decisions log (§8), verification (§9). | Read §1–3 first; the rest is reference. |
-| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the global layer; `init` builds a repo's graph + rebuild hook; also `verify` and `contract`. | `stack-init` once globally, `stack-init init` once per repo. |
-| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent (tool detection is platform-specific — e.g. worktrunk lookup probes winget paths on Windows). | `.\stack-init.ps1` global, then `init` per repo. |
+| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack (including the claude shim and the graph-autobuild SessionStart hook); `init` builds a repo's graph eagerly; also `verify` and `contract`. | `stack-init` once, ever. `init` only for eager builds. |
+| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent (tool detection is platform-specific — e.g. worktrunk lookup probes winget paths on Windows). | `.\stack-init.ps1` once, ever. |
 
 The scripts are self-contained — the document is the deep reasoning, but you can run the stack from the scripts alone.
 
@@ -18,26 +18,28 @@ The scripts are self-contained — the document is the deep reasoning, but you c
 
 ```bash
 # 1. Global layer — once, ever
-#    Installs RTK (Bash hook) + Serena (user scope) + graphify + Headroom, and
-#    writes the routing contract to ~/.claude/CLAUDE.md.
+#    Installs RTK (Bash hook) + Serena (user scope) + graphify + Headroom,
+#    writes the routing contract to ~/.claude/CLAUDE.md, shadows bare `claude`
+#    with a Headroom shim, and registers a SessionStart hook that autobuilds
+#    each repo's graph on first session.
 install -m 755 stack-init.sh ~/.local/bin/stack-init        # put it on PATH
 stack-init                                                  # = stack-init global
 #   Windows: copy stack-init.ps1 to a dir on $env:PATH, then  .\stack-init.ps1
 
-# 2. Per repo — once (builds the graph + post-commit rebuild hook)
-cd /path/to/project && stack-init init                      # Unix/macOS
-#   Windows (from repo root): .\stack-init.ps1 init
+# 2. Open a NEW shell (the shim's PATH entry has to load). That's it —
+#    every `claude` launch is wrapped, every repo self-initializes.
 
 # 3. Check the wiring any time
 stack-init verify
 
-# 4. Every session after that — launch via Headroom's wrapper, not bare `claude`
-headroom wrap claude
+# Optional: build a repo's graph eagerly instead of waiting for first session
+#   (also does the tracked-file extras autobuild won't: .gitignore, .claude/agents)
+cd /path/to/project && stack-init init
 ```
 
-On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.4 for path translations, the Git-for-Windows requirement, and the optional `.bat` wrapper.
+On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.4 for path translations and the Git-for-Windows requirement.
 
-First session in a freshly initialized repo: let Serena finish onboarding, then ask one architecture question and confirm the agent reads the graph instead of grepping. A repo where you haven't run `init` still works — the contract degrades gracefully.
+Escape hatches: `CLAUDE_NO_HEADROOM=1 claude` launches unwrapped once; `CLAUDE_STACK_NO_AUTOBUILD=1` or a `.graphify-skip` file in a repo root disables graph autobuild there. The first session in a repo with no graph gets a session-start note that a build is running; the contract degrades gracefully until it lands.
 
 ## The one-line model
 
@@ -46,7 +48,7 @@ First session in a freshly initialized repo: let Serena finish onboarding, then 
 | graphify | orientation, cross-module structure, blast radius | symbol lookup |
 | Serena | symbol definitions/references, diagnostics, symbol-level edits | running anything |
 | RTK | compressing Bash output (invisible) | prose/markdown compression |
-| Headroom | compressing whatever still reaches the API — file dumps, history (invisible, requires `headroom wrap claude`) | replacing RTK, or building a second structure graph (`--code-graph` is never passed) |
+| Headroom | compressing whatever still reaches the API — file dumps, history (invisible; the claude shim wraps every launch automatically) | replacing RTK, or building a second structure graph (`--code-graph` is never passed) |
 
 On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground truth; the graph is a derivation that can trail the working tree, so trust the LSP and rebuild the graph (doc §5).
 
@@ -60,7 +62,7 @@ The global installer also sets up two tools that are *not* part of the routing c
 
 Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. The installer writes a single user-global worktrunk `post-start` hook that re-runs the stack's per-checkout step (`graphify .` + rebuild hook) in every new worktree, only for repos whose primary checkout has `graphify-out/`. Un-inited repos are untouched; the contract degrades gracefully there exactly as it always did. RTK, Serena, and Headroom are global and need nothing per-worktree (Serena re-onboards per directory; that's inherent to worktrees).
 
-One gotcha: `wt switch -x claude` launches bare `claude`, bypassing Headroom — use `wt switch -x 'headroom wrap claude'` (or launch the session yourself) to keep wire compression.
+`wt switch -x claude` resolves `claude` on PATH like any shell, so it hits the shim and gets wrapped like every other launch. (Before the shim existed this was a bare-launch gotcha; it isn't anymore.)
 
 ## Prerequisites
 
@@ -68,4 +70,4 @@ Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and
 
 ## Versioning
 
-Doc is at **v2.1.1** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally equivalent — change behavior in the scripts, record the reasoning in the doc.
+Doc is at **v2.3** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally equivalent — change behavior in the scripts, record the reasoning in the doc.

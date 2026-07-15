@@ -32,23 +32,26 @@
 #
 #  WHAT IS GLOBAL vs PER-REPO
 #    Global (run once): RTK hook, Serena at user scope (auto-activates per repo
-#      from cwd), graphify install, Headroom install, and the routing contract
-#      in ~/.claude/CLAUDE.md.
-#    Per-repo (one command): the graph is a derivation of a specific codebase, so
-#      `stack-init init` builds it and installs a local post-commit rebuild hook.
-#      Repos without a graph still work — the contract degrades gracefully.
+#      from cwd), graphify install + graph-autobuild SessionStart hook, Headroom
+#      install + claude shim, and the routing contract in ~/.claude/CLAUDE.md.
+#    Per-repo: nothing required — the first session inside any git repo builds
+#      its graph in the background. `init` remains for building one eagerly (and
+#      for the tracked-file extras autobuild never touches: .gitignore,
+#      .claude/agents contract injection).
 #
 #  USAGE
 #    stack-init            # or: stack-init global    -> global install (once)
-#    stack-init init       # inside a repo            -> build graph + hooks
+#    stack-init init       # inside a repo   -> build graph + hooks eagerly
 #    stack-init verify     # check everything is wired
 #    stack-init contract   # print the routing contract it installs
 #    stack-init contract --condensed  # print the short form injected into agents
 #    stack-init stats      # append + print a usage snapshot (rtk/headroom)
 #
-#  AFTER GLOBAL INSTALL: start sessions with `headroom wrap claude`, not a bare
-#  `claude`, or Headroom's compression never engages (RTK/Serena/graphify wire
-#  into the session itself, so they're unaffected either way).
+#  AFTER GLOBAL INSTALL: open a NEW shell. Bare `claude` then launches through
+#  Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
+#  run), and the first session in any git repo autobuilds its graph in the
+#  background (opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file
+#  in the repo root).
 #
 #  PREREQS: cargo, pip, uv, claude (Claude Code CLI), git. A language server per
 #  language (rust-analyzer via `rustup component add rust-analyzer`, etc.).
@@ -70,7 +73,8 @@ cat <<'BLOCK'
 1. Architecture / cross-module / "what connects X to Y" / blast radius:
    IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
    `graphify query "..."` / `graphify path A B`. Never orient by reading files or grep.
-   IF absent -> orient normally, and suggest running the stack init in this repo.
+   IF absent -> orient normally (the stack autobuilds the graph in the background
+   at session start - it may simply not be ready yet).
 2. Specific symbols (definitions, references, implementations, file overviews)
    -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview).
    Never grep for symbol names.
@@ -165,21 +169,10 @@ install_uv() {
   have uv || warn "uv install failed — Serena will not be able to launch"
 }
 
-install_headroom_check() {
-  mkdir -p "$CLAUDE_DIR/hooks"
-  cat > "$CLAUDE_DIR/hooks/headroom-check.sh" <<'HOOK'
-#!/usr/bin/env bash
-# claude-context-stack: detect a bare (unwrapped) Claude Code launch
-url="${ANTHROPIC_BASE_URL:-}"
-case "$url" in
-  *127.0.0.1*|*localhost*) exit 0 ;;
-esac
-printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."}}'
-exit 0
-HOOK
-  chmod +x "$CLAUDE_DIR/hooks/headroom-check.sh"
-
-  local settings="$CLAUDE_DIR/settings.json" merge_py result
+register_sessionstart_hook() {
+  # Adds a SessionStart command hook to global settings.json (idempotent).
+  # Prints rtk-hook-present / rtk-hook-missing for callers that care.
+  local hook_cmd="$1" settings="$CLAUDE_DIR/settings.json" merge_py
   mkdir -p "$CLAUDE_DIR"; [ -f "$settings" ] || echo '{}' > "$settings"
   merge_py="$(mktemp)"
   cat > "$merge_py" <<'PYEOF'
@@ -199,13 +192,163 @@ with open(path, 'w') as f:
 rtk_present = any('rtk' in str(h) for h in hooks.get('PreToolUse', []))
 print('rtk-hook-present' if rtk_present else 'rtk-hook-missing')
 PYEOF
-  result="$(python3 "$merge_py" "$settings" "bash \"$CLAUDE_DIR/hooks/headroom-check.sh\"" 2>&1)"
+  python3 "$merge_py" "$settings" "$hook_cmd" 2>&1
   rm -f "$merge_py"
+}
+
+install_headroom_check() {
+  mkdir -p "$CLAUDE_DIR/hooks"
+  cat > "$CLAUDE_DIR/hooks/headroom-check.sh" <<'HOOK'
+#!/usr/bin/env bash
+# claude-context-stack: detect a bare (unwrapped) Claude Code launch
+url="${ANTHROPIC_BASE_URL:-}"
+case "$url" in
+  *127.0.0.1*|*localhost*) exit 0 ;;
+esac
+printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."}}'
+exit 0
+HOOK
+  chmod +x "$CLAUDE_DIR/hooks/headroom-check.sh"
+
+  local result
+  result="$(register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/headroom-check.sh\"")"
   if [ "$result" = "rtk-hook-present" ]; then
     say "  SessionStart headroom-check hook installed; RTK PreToolUse hook still present"
   else
-    warn "settings.json written but RTK's Bash hook wasn't found afterward ($result) — check $settings manually"
+    warn "settings.json written but RTK's Bash hook wasn't found afterward ($result) — check $CLAUDE_DIR/settings.json manually"
   fi
+}
+
+install_graph_autobuild() {
+  # Replaces per-repo `init` for the common case: a SessionStart hook that, in
+  # any git repo, builds a missing graph in the background and refreshes an
+  # existing one (incremental, content-hash cached). All side effects stay
+  # under .git/ (hooks, info/exclude, lock) — it never mutates tracked files,
+  # which is why it writes .git/info/exclude rather than .gitignore and does
+  # NOT inject the condensed contract into repo .claude/agents/. Run `init`
+  # for the eager/tracked-file variant.
+  mkdir -p "$CLAUDE_DIR/hooks"
+  cat > "$CLAUDE_DIR/hooks/graph-autobuild.sh" <<'HOOK'
+#!/bin/sh
+# claude-context-stack: per-repo graph autobuild/refresh at session start.
+# Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
+# root. Remove the SessionStart entry in settings.json to uninstall.
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$top" ] || exit 0
+cd "$top" || exit 0
+gd=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+cgd=$(git rev-parse --git-common-dir 2>/dev/null)
+[ -n "$cgd" ] || cgd=$gd
+lock="$gd/claude-stack-autobuild.lock"
+
+if [ "${1:-}" = "--build" ]; then
+  # Background worker: the actual first build. Everything it writes lives
+  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
+  trap 'rm -rf "$lock"' EXIT
+  graphify . >/dev/null 2>&1
+  graphify hook install >/dev/null 2>&1
+  hooks_dir="$cgd/hooks"
+  mkdir -p "$hooks_dir"
+  write_hook() {
+    p="$hooks_dir/$1"
+    if [ -f "$p" ] && grep -q 'claude-context-stack:' "$p" 2>/dev/null; then return 0; fi
+    if [ -f "$p" ]; then printf '\n%s\n' "$2" >> "$p"; else printf '#!/bin/sh\n%s\n' "$2" > "$p"; fi
+    chmod +x "$p"
+  }
+  write_hook post-checkout '# claude-context-stack: refresh graph on branch switch (not file checkout)
+if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
+  ( graphify update . >/dev/null 2>&1 & )
+fi'
+  write_hook post-merge '# claude-context-stack: refresh graph after merge/pull
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+  write_hook post-rewrite '# claude-context-stack: refresh graph after rebase
+command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+  mkdir -p "$cgd/info"
+  grep -q '^graphify-out/' "$cgd/info/exclude" 2>/dev/null || printf '\ngraphify-out/\n' >> "$cgd/info/exclude"
+  exit 0
+fi
+
+[ -n "${CLAUDE_STACK_NO_AUTOBUILD:-}" ] && exit 0
+[ -f .graphify-skip ] && exit 0
+command -v graphify >/dev/null 2>&1 || exit 0
+
+if [ -d graphify-out ]; then
+  ( graphify update . >/dev/null 2>&1 & )
+  exit 0
+fi
+
+if ! mkdir "$lock" 2>/dev/null; then
+  # a build is (or was) running; treat locks older than 60 min as stale
+  [ -n "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ] || exit 0
+  rm -rf "$lock"
+  mkdir "$lock" 2>/dev/null || exit 0
+fi
+( nohup sh "$0" --build >/dev/null 2>&1 & )
+printf '%s' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"graphify: no graph in this repo yet - the stack is building one in the background (first build can take a while on big repos). Orient normally until graphify-out/ appears; do not run graphify . yourself."}}'
+exit 0
+HOOK
+  chmod +x "$CLAUDE_DIR/hooks/graph-autobuild.sh"
+  register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/graph-autobuild.sh\"" >/dev/null
+  say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
+}
+
+install_claude_shim() {
+  # Shadows bare `claude` so it launches through Headroom automatically. The
+  # self-recursion hazard that made shadowing dangerous (headroom re-resolving
+  # 'claude' back to the shim - `headroom wrap` only accepts tool names, so
+  # re-resolution is unavoidable) is bounded by construction: the shim exports
+  # a re-entry guard (CLAUDE_STACK_SHIM) before delegating, so when headroom's
+  # PATH search lands back on the shim, that second entry execs the REAL
+  # binary (which the shim resolves itself, skipping its own directory) -
+  # exactly one bounce, never a loop. An already-wrapped session (localhost
+  # ANTHROPIC_BASE_URL) is never double-wrapped. Headroom missing or
+  # CLAUDE_NO_HEADROOM=1 falls through to the real binary - a broken shim
+  # never blocks a session.
+  # $1 carries ' --no-tokensave' when supported: newer headroom builds its own
+  # code graph by default, which the decisions log forbids (duplicate of
+  # graphify; see the --code-graph entry).
+  local headroom_flags="${1:-}" bin_dir="$CLAUDE_DIR/stack-bin" rc line
+  mkdir -p "$bin_dir"
+  cat > "$bin_dir/claude" <<'SHIM'
+#!/bin/sh
+# claude-context-stack: auto-wrap claude with Headroom (managed by stack-init).
+# CLAUDE_NO_HEADROOM=1 skips wrapping for one launch; delete this file (and
+# its PATH entry) to remove the shim entirely.
+self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
+real=
+old_ifs=$IFS
+IFS=:
+for d in $PATH; do
+  [ -n "$d" ] || continue
+  [ "$(CDPATH= cd -- "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
+  for n in claude claude.exe claude.cmd; do
+    if [ -f "$d/$n" ] && [ -x "$d/$n" ]; then real="$d/$n"; break 2; fi
+  done
+done
+IFS=$old_ifs
+if [ -z "$real" ]; then
+  echo "claude shim: real claude binary not found on PATH" >&2
+  exit 127
+fi
+wrapped=
+case "${ANTHROPIC_BASE_URL:-}" in *127.0.0.1*|*localhost*) wrapped=1 ;; esac
+if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "$wrapped" ] \
+   || ! command -v headroom >/dev/null 2>&1; then
+  exec "$real" "$@"
+fi
+CLAUDE_STACK_SHIM=1
+export CLAUDE_STACK_SHIM
+SHIM
+  printf 'exec headroom wrap claude%s "$@"\n' "$headroom_flags" >> "$bin_dir/claude"
+  chmod +x "$bin_dir/claude"
+  say "  shim written -> $bin_dir/claude"
+  line="export PATH=\"$bin_dir:\$PATH\"  # claude-context-stack shim"
+  for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
+    grep -q 'claude-context-stack shim' "$rc" 2>/dev/null && continue
+    printf '\n%s\n' "$line" >> "$rc"
+  done
+  say "  PATH prepend added to .profile/.bashrc/.zshrc (open a NEW shell to pick it up)"
+  case ":$PATH:" in *":$bin_dir:"*) ;; *) PATH="$bin_dir:$PATH" ;; esac
 }
 
 install_global() {
@@ -238,27 +381,32 @@ install_global() {
   # rule 1 below, which scopes graphify to architecture questions only. Wire
   # this into init_project instead if per-repo defense-in-depth is wanted.
 
+  say "graph autobuild — per-repo init, automated (SessionStart hook)"
+  install_graph_autobuild
+
   say "Headroom — proxy-layer compression (final pass before the API)"
   if have headroom; then say "  headroom present ($(headroom --version 2>/dev/null))"
   else
     say "  installing headroom (PyPI package: headroom-ai)"
     if have uv; then uv tool install 'headroom-ai[all]'; else pip install 'headroom-ai[all]'; fi
   fi
-  say "  installed — writing a launcher wrapper (never aliasing 'claude' itself,"
-  say "  which risks self-recursion when headroom resolves the target binary)"
-  WRAPPER_NAME=""
-  for candidate in clw hclaude claudew; do
-    if ! have "$candidate"; then WRAPPER_NAME="$candidate"; break; fi
+  # Newer headroom builds its own "tokensave" code graph by default - the
+  # renamed, default-on incarnation of --code-graph, which the decisions log
+  # forbids as a duplicate of graphify. Disable it when the flag exists;
+  # probing keeps older headroom versions (no such flag) launching cleanly.
+  HEADROOM_FLAGS=""
+  headroom wrap claude --help 2>/dev/null | grep -q -- '--no-tokensave' && HEADROOM_FLAGS=" --no-tokensave"
+  say "  shadowing bare 'claude' with a recursion-safe shim (see install_claude_shim"
+  say "  for how the old self-recursion hazard is closed)"
+  install_claude_shim "$HEADROOM_FLAGS"
+  # The shim supersedes the 2.2 clw/hclaude/claudew wrapper - remove any of
+  # ours a previous version wrote. Manual fallback is `headroom wrap claude`.
+  for old in clw hclaude claudew; do
+    if [ -f "$HOME/.local/bin/$old" ] && grep -q 'headroom wrap claude' "$HOME/.local/bin/$old" 2>/dev/null; then
+      rm -f "$HOME/.local/bin/$old"
+      say "  removed obsolete wrapper: $old (the shim replaces it)"
+    fi
   done
-  if [ -z "$WRAPPER_NAME" ]; then
-    warn "clw/hclaude/claudew all taken — skipping wrapper; launch via 'headroom wrap claude' manually"
-  else
-    mkdir -p "$HOME/.local/bin"
-    printf '#!/usr/bin/env bash\nexec headroom wrap claude "$@"\n' > "$HOME/.local/bin/$WRAPPER_NAME"
-    chmod +x "$HOME/.local/bin/$WRAPPER_NAME"
-    say "  wrapper installed: $WRAPPER_NAME (launch sessions with '$WRAPPER_NAME')"
-    case ":$PATH:" in *":$HOME/.local/bin:"*) ;; *) warn "$HOME/.local/bin not on PATH — add it to use '$WRAPPER_NAME'" ;; esac
-  fi
   install_headroom_check
   # Deliberately not passing --code-graph (would build a second structure graph,
   # duplicating graphify - rule 1 below already owns that question) or --memory
@@ -335,7 +483,9 @@ WTHOOK
   inject_condensed_contract "$CLAUDE_DIR/agents"
 
   have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
-  echo; say "Global install done. In each repo, run:  $(basename "$0") init"
+  echo; say "Global install done. Open a NEW shell so the claude shim takes effect."
+  say "No per-repo step needed — the first session in any git repo autobuilds its"
+  say "graph ('$(basename "$0") init' still works for an eager build)."
 }
 
 init_project() {
@@ -383,12 +533,20 @@ verify() {
   rtk gain >/dev/null 2>&1 && echo "  rtk hook:       active" || echo "  rtk hook:       no stats yet (run a few Bash cmds)"
   claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
   have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
-  have headroom && echo "  headroom:       OK (remember: launch via 'headroom wrap claude')" || echo "  headroom:       NOT installed"
+  have headroom && echo "  headroom:       OK" || echo "  headroom:       NOT installed"
+  if [ -x "$CLAUDE_DIR/stack-bin/claude" ]; then
+    first="$(command -v claude 2>/dev/null || true)"
+    if [ "$first" = "$CLAUDE_DIR/stack-bin/claude" ]; then echo "  claude shim:    OK (bare 'claude' auto-wraps through headroom)"
+    else echo "  claude shim:    installed but NOT first on PATH (open a new shell?)"; fi
+  else echo "  claude shim:    NOT installed"; fi
+  if [ -x "$CLAUDE_DIR/hooks/graph-autobuild.sh" ] && grep -q 'graph-autobuild' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    echo "  graph autobuild: OK (SessionStart)"
+  else echo "  graph autobuild: NOT registered"; fi
   { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
   have opensrc && echo "  opensrc:        OK (context tool — outside the contract)" || echo "  opensrc:        NOT installed (optional)"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
   if [ -d .git ]; then
-    [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — run: $(basename "$0") init"
+    [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
     [ -x .git/hooks/post-commit ]  && echo "  post-commit:    OK" || echo "  post-commit:    none"
   fi
 }
@@ -399,6 +557,6 @@ case "${1:-global}" in
   verify)     verify ;;
   contract)   [ "${2:-}" = "--condensed" ] && print_contract_condensed || print_contract ;;
   stats)      stats ;;
-  -h|--help|help) sed -n '2,53p' "$0" | sed 's/^# \{0,1\}//' ;;
+  -h|--help|help) sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//' ;;
   *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats]"; exit 1 ;;
 esac
