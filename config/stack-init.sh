@@ -366,6 +366,11 @@ install_global() {
     claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
     say "  serena registered at user scope (--context ide-assistant: no shell/read tools)"
   fi
+  # Serena dashboard settings are left at their defaults here on purpose: the
+  # ps1 installer switches to web_dashboard_interface=tray_manager (one global
+  # tray icon, no auto-opened tab per session), but tray_manager is tested on
+  # Windows only and Linux tray support is desktop-environment dependent, so
+  # Linux keeps the stock auto-opening per-session dashboard for now.
 
   say "graphify — codebase knowledge graph"
   if ! have graphify; then

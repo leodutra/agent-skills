@@ -414,6 +414,30 @@ export CLAUDE_STACK_SHIM
   if ((';' + $env:PATH + ';') -notlike "*;$binDir;*") { $env:PATH = "$binDir;$env:PATH" }
 }
 
+function Set-SerenaDashboardConfig {
+  # Dashboards stay enabled (one per session, own port each) but no longer
+  # auto-open a browser tab per Claude session; the global tray icon
+  # (tray_manager) lists every running instance instead. tray_manager is
+  # tested on Windows only, which is why the sh installer keeps Serena's
+  # stock dashboard behavior.
+  $cfg = Join-Path $env:USERPROFILE '.serena\serena_config.yml'
+  if (-not (Test-Path $cfg)) {
+    Say "  serena_config.yml not found (Serena writes it on first launch) - rerun global later to apply dashboard settings"
+    return
+  }
+  $text = Get-Content $cfg -Raw
+  # [^\r\n]* instead of .*$ — in .NET regex `.` matches \r, so .*$ would eat
+  # the CR of CRLF files and dirty the diff on every run
+  $new = $text -replace '(?m)^web_dashboard_open_on_launch:[^\r\n]*', 'web_dashboard_open_on_launch: false'
+  $new = $new -replace '(?m)^web_dashboard_interface:[^\r\n]*', 'web_dashboard_interface: tray_manager'
+  if ($new -ne $text) {
+    Set-Content -Path $cfg -Encoding utf8 -Value $new
+    Say "  serena dashboard: auto-open off; tray_manager icon lists all instances"
+  } else {
+    Say "  serena dashboard settings already applied"
+  }
+}
+
 function Install-Global {
   Check-Deps
   Say "RTK - output compression (global Bash hook)"
@@ -429,6 +453,7 @@ function Install-Global {
     claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
     Say "  serena registered at user scope (ide-assistant: no shell/read tools)"
   }
+  Set-SerenaDashboardConfig
 
   Say "graphify - codebase knowledge graph"
   if (-not (Have 'graphify')) {
