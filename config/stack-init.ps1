@@ -106,6 +106,35 @@ Precedence on conflict: code/LSP (Serena) > graph (graphify).
 # <<< claude-context-stack <<<
 '@
 
+# Skills for the extras (opensrc, worktrunk). graphify deploys its own via
+# `graphify install`; these two ship none, and without a SKILL.md in
+# $ClaudeDir\skills Claude has the binaries on PATH but nothing ever surfaces
+# them - the skill description is what makes the agent reach for the tool.
+# Canonical copies live in skills/<name>/ in the agent-skills repo (SKILL.md
+# plus any supporting files), where they work as ordinary standalone Claude
+# skills; this script only DEPLOYS them, verbatim (no stack-specific text
+# appended - the skills already carry their Context Stack interop notes).
+# Source: the repo checkout next to this script - the script ships inside the
+# repo, so run it from there (no network fallback by design). Non-fatal like
+# the extras themselves.
+function Install-ExtraSkill {
+  param([string]$Name)
+  $src = Join-Path $PSScriptRoot "..\skills\$Name"
+  if (-not (Test-Path (Join-Path $src 'SKILL.md'))) {
+    Warn "$Name skill not deployed - skills\$Name\SKILL.md not found next to this script; run stack-init from the agent-skills repo checkout"
+    return
+  }
+  $dst = Join-Path $ClaudeDir "skills\$Name"
+  # Mirror the whole skill directory, not just SKILL.md - skills may ship
+  # supporting files (references/, scripts/, ...). Delete-then-copy so files
+  # removed from the repo don't linger: the deployed copy is fully managed by
+  # this step, never hand-edited.
+  if (Test-Path $dst) { Remove-Item -Recurse -Force $dst }
+  New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+  Copy-Item -Recurse -Force $src $dst
+  Say "  $Name skill deployed (from repo skills\)"
+}
+
 function Invoke-InjectCondensedContract {
   param([string]$Dir)
   if (-not (Test-Path $Dir -PathType Container)) {
@@ -590,6 +619,14 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
     Warn "worktrunk unavailable - parallel-worktree support skipped (stack unaffected)"
   }
 
+  Say "Extras' skills -> $ClaudeDir\skills (opensrc, worktrunk)"
+  # Deployed unconditionally (even if a binary install above failed - both are
+  # global tools the user may add later, and the worktrunk skill itself covers
+  # offering the install) and idempotently: overwritten every run, like the
+  # contract. See Install-ExtraSkill for source resolution.
+  Install-ExtraSkill 'opensrc'
+  Install-ExtraSkill 'worktrunk'
+
   Say "Routing contract -> $ClaudeMd"
   New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
   $existing = if (Test-Path $ClaudeMd) { Get-Content -Raw $ClaudeMd } else { '' }
@@ -663,6 +700,8 @@ function Invoke-Verify {
     [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
   if ($wtFound) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
   if (Have 'opensrc') { Write-Host "  opensrc:        OK (context tool - outside the contract)" } else { Write-Host "  opensrc:        NOT installed (optional)" }
+  if (Test-Path (Join-Path $ClaudeDir 'skills\opensrc\SKILL.md'))   { Write-Host "  opensrc skill:    OK (global)" }   else { Write-Host "  opensrc skill:    NOT deployed - rerun global" }
+  if (Test-Path (Join-Path $ClaudeDir 'skills\worktrunk\SKILL.md')) { Write-Host "  worktrunk skill:  OK (global)" } else { Write-Host "  worktrunk skill:  NOT deployed - rerun global" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
   if (Test-Path .git -PathType Container) {
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }

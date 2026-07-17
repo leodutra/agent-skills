@@ -97,6 +97,42 @@ tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
 BLOCK
 }
 
+# Skills for the extras (opensrc, worktrunk). graphify deploys its own via
+# `graphify install`; these two ship none, and without a SKILL.md in
+# $CLAUDE_DIR/skills Claude has the binaries on PATH but nothing ever surfaces
+# them — the skill description is what makes the agent reach for the tool.
+# Canonical copies live in skills/<name>/ in the agent-skills repo (SKILL.md
+# plus any supporting files), where they work as ordinary standalone Claude
+# skills; this script only DEPLOYS them, verbatim (no stack-specific text
+# appended — the skills already carry their Context Stack interop notes).
+# Source: the repo checkout next to this script — the script ships inside the
+# repo, so run it from there (no network fallback by design). Non-fatal like
+# the extras themselves.
+script_dir() {
+  # Resolve symlinks so `ln -s .../config/stack-init.sh ~/.local/bin/stack-init`
+  # still finds the repo; readlink -f is GNU — fall back to the plain path.
+  local p; p="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+  cd "$(dirname "$p")" && pwd
+}
+
+install_extra_skill() {
+  local name="$1" src dst
+  src="$(script_dir)/../skills/$name"
+  dst="$CLAUDE_DIR/skills/$name"
+  if [ ! -f "$src/SKILL.md" ]; then
+    warn "$name skill not deployed — skills/$name/SKILL.md not found next to this script; run stack-init from the agent-skills repo checkout"
+    return 0
+  fi
+  # Mirror the whole skill directory, not just SKILL.md — skills may ship
+  # supporting files (references/, scripts/, ...). Delete-then-copy so files
+  # removed from the repo don't linger: the deployed copy is fully managed by
+  # this step, never hand-edited.
+  rm -rf "$dst"
+  mkdir -p "$(dirname "$dst")"
+  cp -R "$src" "$dst"
+  say "  $name skill deployed (from repo skills/)"
+}
+
 print_contract_condensed() {
 cat <<'BLOCK'
 # >>> claude-context-stack >>> (condensed, managed by stack-init — edits here are overwritten)
@@ -473,6 +509,14 @@ WTHOOK
     warn "worktrunk unavailable — parallel-worktree support skipped (stack unaffected)"
   fi
 
+  say "Extras' skills -> $CLAUDE_DIR/skills (opensrc, worktrunk)"
+  # Deployed unconditionally (even if a binary install above failed — both are
+  # global tools the user may add later, and the worktrunk skill itself covers
+  # offering the install) and idempotently: overwritten every run, like the
+  # contract. See install_extra_skill for source resolution.
+  install_extra_skill opensrc
+  install_extra_skill worktrunk
+
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
   if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD"; then
@@ -549,6 +593,8 @@ verify() {
   else echo "  graph autobuild: NOT registered"; fi
   { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
   have opensrc && echo "  opensrc:        OK (context tool — outside the contract)" || echo "  opensrc:        NOT installed (optional)"
+  [ -f "$CLAUDE_DIR/skills/opensrc/SKILL.md" ]   && echo "  opensrc skill:    OK (global)"   || echo "  opensrc skill:    NOT deployed — rerun global"
+  [ -f "$CLAUDE_DIR/skills/worktrunk/SKILL.md" ] && echo "  worktrunk skill:  OK (global)"   || echo "  worktrunk skill:  NOT deployed — rerun global"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
   if [ -d .git ]; then
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"

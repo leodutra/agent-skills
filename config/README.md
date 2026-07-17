@@ -10,9 +10,9 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 |---|---|---|
 | `claude-code-context-stack.md` | The spec-of-whys. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), decisions log (§8), verification (§9). | Read §1–3 first; the rest is reference. |
 | `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack (including the claude shim and the graph-autobuild SessionStart hook); `init` builds a repo's graph eagerly; also `verify` and `contract`. | `stack-init` once, ever. `init` only for eager builds. |
-| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent (tool detection is platform-specific — e.g. worktrunk lookup probes winget paths on Windows). | `.\stack-init.ps1` once, ever. |
+| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent. | `.\stack-init.ps1` once, ever. |
 
-The scripts are self-contained — the document is the deep reasoning, but you can run the stack from the scripts alone.
+Keep the scripts inside the repo (symlink onto PATH rather than copying) — they deploy the [`skills/`](../skills/) extras repo-relative.
 
 ## Quick start
 
@@ -22,9 +22,10 @@ The scripts are self-contained — the document is the deep reasoning, but you c
 #    writes the routing contract to ~/.claude/CLAUDE.md, shadows bare `claude`
 #    with a Headroom shim, and registers a SessionStart hook that autobuilds
 #    each repo's graph on first session.
-install -m 755 stack-init.sh ~/.local/bin/stack-init        # put it on PATH
+ln -s "$PWD/stack-init.sh" ~/.local/bin/stack-init          # symlink onto PATH
+#    (symlink, not copy — the script deploys skills/ from the repo next to it)
 stack-init                                                  # = stack-init global
-#   Windows: copy stack-init.ps1 to a dir on $env:PATH, then  .\stack-init.ps1
+#   Windows: run  .\stack-init.ps1  from the repo's config\ directory
 
 # 2. Open a NEW shell (the shim's PATH entry has to load). That's it —
 #    every `claude` launch is wrapped, every repo self-initializes.
@@ -55,6 +56,8 @@ On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground trut
 ## Extra tools (outside the contract)
 
 The global installer also sets up two tools that are *not* part of the routing contract and never appear in it — the "only the parts that move tokens" claim above applies to the contract, not to what the installer ships. Both install non-fatally: their failure never blocks the stack.
+
+For each, the installer also mirrors its whole skill directory from [`skills/<name>/`](../skills/) (SKILL.md plus any supporting files) to `~/.claude/skills/` — without that, Claude has the binary on PATH but nothing ever surfaces it. The repo copies are the canonical source and work as ordinary standalone skills in any setup; stack-init deploys them verbatim, repo-relative (which is why the script must run from — or be symlinked into — the checkout), and the deployed copies are fully managed: overwritten on every run, stale files removed. `verify` reports both skills.
 
 **opensrc** (`npm install -g opensrc`) — fetches the exact installed version of any dependency's source (npm/PyPI/crates.io/GitHub; version auto-detected from the lockfile) into a global cache at `~/.opensrc/` and prints its path (`opensrc path zod`). It answers the one question the four tools can't: "what does this dependency actually do." Zero per-repo state — nothing gitignored, nothing per-worktree; the cache is shared by every checkout. Usage guidance lives in the [`opensrc` skill](../skills/opensrc/SKILL.md), not the contract.
 
