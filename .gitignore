@@ -2,3 +2,6 @@
 # Claude context-stack knowledge graph
 graphify-out/
 .headroom_wrap_marker.json
+
+# Local Claude Code settings (machine-specific, not shared)
+.claude/settings.local.json
