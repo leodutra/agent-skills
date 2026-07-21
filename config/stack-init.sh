@@ -205,6 +205,24 @@ install_uv() {
   have uv || warn "uv install failed — Serena will not be able to launch"
 }
 
+set_serena_dashboard_config() {
+  # Dashboard stays enabled but no longer auto-opens a browser tab per
+  # session; it can still be reached manually (tool call or localhost:24282).
+  # No tray_manager here (unlike the ps1 installer) — Linux tray support is
+  # desktop-environment dependent and untested.
+  local cfg="$HOME/.serena/serena_config.yml"
+  if [ ! -f "$cfg" ]; then
+    say "  serena_config.yml not found (Serena writes it on first launch) — rerun global later to apply dashboard settings"
+    return
+  fi
+  if grep -q '^web_dashboard_open_on_launch: false' "$cfg"; then
+    say "  serena dashboard settings already applied"
+  else
+    sed -i 's/^web_dashboard_open_on_launch:.*/web_dashboard_open_on_launch: false/' "$cfg"
+    say "  serena dashboard: auto-open off (still reachable manually)"
+  fi
+}
+
 register_sessionstart_hook() {
   # Adds a SessionStart command hook to global settings.json (idempotent).
   # Prints rtk-hook-present / rtk-hook-missing for callers that care.
@@ -402,11 +420,7 @@ install_global() {
     claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
     say "  serena registered at user scope (--context ide-assistant: no shell/read tools)"
   fi
-  # Serena dashboard settings are left at their defaults here on purpose: the
-  # ps1 installer switches to web_dashboard_interface=tray_manager (one global
-  # tray icon, no auto-opened tab per session), but tray_manager is tested on
-  # Windows only and Linux tray support is desktop-environment dependent, so
-  # Linux keeps the stock auto-opening per-session dashboard for now.
+  set_serena_dashboard_config
 
   say "graphify — codebase knowledge graph"
   if ! have graphify; then
