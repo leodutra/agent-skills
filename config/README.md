@@ -10,7 +10,7 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 |---|---|---|
 | `claude-code-context-stack.md` | The spec-of-whys. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), decisions log (§8), verification (§9). | Read §1–3 first; the rest is reference. |
 | `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack (including the claude shim and the graph-autobuild SessionStart hook); `init` builds a repo's graph eagerly; also `verify` and `contract`. | `stack-init` once, ever. `init` only for eager builds. |
-| `stack-init.ps1` | The same installer for Windows (PowerShell). Same modes and behavior, equally idempotent. | `.\stack-init.ps1` once, ever. |
+| `stack-init.ps1` | The Windows installer (PowerShell). Same command surface and functional guarantees, equally idempotent; platform-native integrations differ where necessary. | `.\stack-init.ps1` once, ever. |
 
 Keep the scripts inside the repo (symlink onto PATH rather than copying) — they deploy the [`skills/`](../skills/) extras repo-relative.
 
@@ -73,4 +73,4 @@ Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and
 
 ## Versioning
 
-Doc is at **v2.3** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept behaviorally equivalent — change behavior in the scripts, record the reasoning in the doc.
+Doc is at **v2.3** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept functionally equivalent across their platform-native implementations — change behavior in the scripts, record the reasoning in the doc.

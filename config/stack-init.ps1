@@ -682,7 +682,14 @@ function Get-Stats {
 
 function Invoke-Verify {
   Say "verifying"
-  if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" } else { Write-Host "  rtk:            NOT ON PATH" }
+  $rtkHookActive = $false
+  if (Have 'rtk') {
+    Write-Host "  rtk:            OK ($(rtk --version 2>$null))"
+    rtk gain *> $null
+    $rtkHookActive = ($LASTEXITCODE -eq 0)
+    $global:LASTEXITCODE = 0
+  } else { Write-Host "  rtk:            NOT ON PATH" }
+  if ($rtkHookActive) { Write-Host "  rtk hook:       active" } else { Write-Host "  rtk hook:       no stats yet (run a few Bash cmds)" }
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
   if (Have 'headroom') { Write-Host "  headroom:       OK" } else { Write-Host "  headroom:       NOT installed" }
@@ -706,6 +713,15 @@ function Invoke-Verify {
   if (Test-Path .git -PathType Container) {
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
     if (Test-Path .git\hooks\post-commit) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
+    $refreshHooksActive = $true
+    foreach ($hook in 'post-checkout', 'post-merge', 'post-rewrite') {
+      $hookPath = Join-Path (Join-Path $PWD.Path '.git\hooks') $hook
+      if (-not ((Test-Path $hookPath) -and (Select-String -Path $hookPath -Pattern 'claude-context-stack:' -Quiet))) {
+        $refreshHooksActive = $false
+        break
+      }
+    }
+    if ($refreshHooksActive) { Write-Host "  graph refresh:  OK (checkout/merge/rewrite)" } else { Write-Host "  graph refresh:  MISSING (checkout/merge/rewrite)" }
   }
 }
 

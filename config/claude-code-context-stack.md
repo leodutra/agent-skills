@@ -138,7 +138,7 @@ This is the text the global installer writes into `~/.claude/CLAUDE.md` (between
 3. Compile / type / lint state -> Serena get_diagnostics_for_file.
    Do not run a full type-check just to read diagnostics Serena already provides.
 4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
-   insert_after_symbol), not string/regex replacement.
+   insert_after_symbol, rename_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
    Do NOT route execution through any MCP shell tool - that bypasses RTK.
 6. The graph reflects the last REBUILD (normally the last commit).
@@ -168,7 +168,7 @@ Two sources can disagree. Tiered by how they acquire truth:
 **Rules:**
 
 1. Tier 2 vs tier 1 conflict → the graph is stale; trust the LSP and rebuild (`graphify update .`).
-2. For uncommitted work, the graph is silent or wrong by definition — use Serena.
+2. For uncommitted symbol-level questions, the graph is silent or wrong by definition — use Serena. For uncommitted architectural questions, refresh with `graphify update .` first, then query the graph.
 3. The graph is for *shape* (what connects to what); the LSP is for *fact* (what a symbol is and where it's used). A graph edge is a hypothesis about a relationship; confirm specifics at tier 1 before acting on them.
 
 **Why precedence is explicit:** compression and cheap retrieval make every source easier to trust, including the stale one. Marking the trust order is the mitigation.
@@ -216,11 +216,11 @@ Since 2.3 this is automatic. A global `SessionStart` hook (`~/.claude/hooks/grap
 
 ### 6.3 Other subcommands
 
-`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, graph-autobuild hook registered, Headroom installed, claude shim first on PATH, contract present, and — in a repo — graph built and hooks landed). It cannot check that a given session was actually launched wrapped — that's a per-launch choice, not an install-time state; the `SessionStart` headroom-check hook (§7) covers that gap at runtime instead. `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init stats` appends a dated usage snapshot for comparing stack versions (§9).
+`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, graph-autobuild hook registered, Headroom installed, claude shim first on PATH, contract present, and — in a repo — graph built plus the post-commit and stack-owned refresh hooks installed). It cannot check that a given session was actually launched wrapped — that's a per-launch choice, not an install-time state; the `SessionStart` headroom-check hook (§7) covers that gap at runtime instead. `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init stats` appends a dated usage snapshot for comparing stack versions (§9).
 
 ### 6.4 Windows
 
-`stack-init.ps1` is the Windows installer — same `global` / `init` / `verify` / `contract` modes, step-for-step parity, equally idempotent. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
+`stack-init.ps1` is the Windows installer — the same `global` / `init` / `verify` / `contract` command surface and functional guarantees, equally idempotent. Platform-native integrations differ where necessary. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
 
 | Concept | Unix | Windows (PowerShell) |
 |---|---|---|
@@ -228,7 +228,7 @@ Since 2.3 this is automatic. A global `SessionStart` hook (`~/.claude/hooks/grap
 | Routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
 | Run the installer | `stack-init` | `.\stack-init.ps1` |
 
-Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell.
+Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell. Windows configures Serena's dashboard with `tray_manager`; the Unix installer leaves it manually reachable because desktop tray support is environment-dependent and untested.
 
 ### 6.x Subagents
 

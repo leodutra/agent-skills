@@ -155,9 +155,22 @@ inject_condensed_contract() {
     [ -e "$f" ] || continue
     found=1
     if grep -q '>>> claude-context-stack >>>' "$f"; then
-      local tmp; tmp="$(mktemp)"
-      awk '/>>> claude-context-stack >>>/{s=1} !s{print} /<<< claude-context-stack <<</{s=0}' \
-        "$f" > "$tmp" && mv "$tmp" "$f"
+      local tmp
+      if ! tmp="$(mktemp)"; then
+        warn "$f: could not create a temporary file; skipping contract update"
+        continue
+      fi
+      if ! awk '/>>> claude-context-stack >>>/{s=1} !s{print} /<<< claude-context-stack <<</{s=0}' \
+        "$f" > "$tmp"; then
+        rm -f "$tmp"
+        warn "$f: could not replace the existing managed block; skipping contract update"
+        continue
+      fi
+      if ! mv "$tmp" "$f"; then
+        rm -f "$tmp"
+        warn "$f: could not write the updated managed block; skipping contract update"
+        continue
+      fi
     fi
     print_contract_condensed >> "$f"
   done
@@ -613,6 +626,11 @@ verify() {
   if [ -d .git ]; then
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
     [ -x .git/hooks/post-commit ]  && echo "  post-commit:    OK" || echo "  post-commit:    none"
+    local refresh_hook refresh_hooks_ok=1
+    for refresh_hook in post-checkout post-merge post-rewrite; do
+      grep -q 'claude-context-stack:' ".git/hooks/$refresh_hook" 2>/dev/null || { refresh_hooks_ok=0; break; }
+    done
+    [ "$refresh_hooks_ok" = 1 ] && echo "  graph refresh:  OK (checkout/merge/rewrite)" || echo "  graph refresh:  MISSING (checkout/merge/rewrite)"
   fi
 }
 
