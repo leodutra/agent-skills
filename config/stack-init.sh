@@ -500,7 +500,11 @@ install_global() {
   # the global post-start hook below re-runs the stack's per-checkout init
   # (graphify graph + rebuild hook) in every new worktree, but only for repos
   # whose primary checkout opted in (graphify-out/ exists). Every step here is
-  # non-fatal: a worktrunk failure must never block the token stack.
+  # non-fatal: a worktrunk failure must never block the token stack. Bare `wt`
+  # is fine here (unlike stack-init.ps1's Windows detection): brew and cargo
+  # both install the binary as plain `wt` on this platform, and there's no
+  # Windows-Terminal-style collision to dodge — `git-wt` is only a defensive
+  # fallback, not the primary name.
   if have wt || have git-wt; then say "  worktrunk present"
   else
     say "  installing worktrunk"

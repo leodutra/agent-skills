@@ -5,7 +5,7 @@ description: Manage Git worktrees with Worktrunk (`wt`) for parallel/isolated wo
 
 # Worktrunk
 
-CLI wrapper around `git worktree` (binary: `wt`; **`git-wt` on Windows** — winget installs it under that name to avoid the Windows Terminal `wt` collision). Model: **one worktree per branch, addressed by branch name; paths are computed from a template, never typed.**
+CLI wrapper around `git worktree` (binary: `wt`; **`git-wt` on Windows** — winget installs it under that name to avoid the Windows Terminal `wt` collision). `git-wt` also runs as `git wt ...` — git auto-discovers any `git-<name>` executable on PATH as a `git <name>` subcommand, so the binary name and the git-subcommand spelling are the same tool, not two things to reconcile. Model: **one worktree per branch, addressed by branch name; paths are computed from a template, never typed.**
 
 Prefer `wt` over raw `git worktree add/remove` whenever it is installed — it also runs the repo's configured hooks (dependency install, env files), which raw git skips.
 
@@ -20,7 +20,7 @@ Not for subagents spawned via the Agent tool — those already get isolation via
 ## Verify install (before first use in a session)
 
 ```bash
-wt --version || git-wt --version
+wt --version || git-wt --version || git wt --version
 ```
 
 If missing, offer install (do not install unasked):
@@ -69,6 +69,6 @@ If a fresh worktree "doesn't build" or lacks env files, the fix is usually a `po
 
 ## Failure modes
 
-- `wt` not found on Windows → try `git-wt`; if the user wants the short name, an alias/shim is their call.
+- `wt` not found on Windows → try `git-wt` (equivalently `git wt`, same binary via git's subcommand discovery); if the user wants the short name, an alias/shim is their call. Don't suggest bare `wt` as a fix — on stock Win11 that resolves to Windows Terminal's own `wt.exe`, not worktrunk.
 - `wt switch` doesn't change directory → shell integration not installed; run `wt config shell install`, or (as an agent) use the printed path directly.
 - Merge blocked → a `pre-merge` hook failed; show its output and fix the underlying failure rather than bypassing the hook.
