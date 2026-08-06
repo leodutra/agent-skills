@@ -98,3 +98,44 @@ session, i.e. the first session started after the batch's `~/.claude` changes.
 - [v] 5.6 `config/stack-init.sh` mirror re-checked against the `.ps1`: `uv tool install … serena-agent`, `uvx` migration, `--context claude-code`, `set_global_env_var MCP_TIMEOUT 120000`, stray-`headroom` removal all present; `bash -n` clean
 - [-] 5.7 Execute `stack-init install_global` end-to-end to lift 1.4/1.5/2.2/2.3 from `[x]` to `[v]` — not done; it rewrites global `~/.claude` state, which is beyond a verification pass. The code paths are parse-checked only, so those four lines stay `[x]`.
 - [ ] 5.8 `graphifyy[all]` (double-y) confirmed as the intended PyPI name, not a typo — pre-existing, documented in `claude-code-context-stack.md` §installer step 3. Noted only, no action.
+
+---
+
+## 2026-08-05 — coverage audit: is RTK actually compressing, is Headroom actually running
+
+Answers the two standing questions, and fixes the one real defect the audit turned up.
+
+### 6. RTK coverage
+
+- [v] 6.1 RTK **is** applied to every Bash command it handles. `rtk discover -a` claims the opposite ("Already using RTK: 38 of 2591 commands, 1.5%", ~238.1K tokens "missed"), but that is a **false positive by construction**: the PreToolUse hook rewrites the command *after* the transcript records it, so discover reads pre-hook text. Proof — `rtk gain` total went 1112 → 1113 on a bare `git status`, whose output came back in RTK's compact form. Corroborating: discover's `tail -c` count (144) is exactly `rtk gain`'s `rtk read` count (144), and `grep -n` (183) ≈ `rtk grep` (185).
+- [x] 6.2 Lifetime measured savings: 1113 commands, 527.0K tokens saved, 60.1% — dominated by `cargo test` (97.5%) and `git diff` (92.8%). `rtk read` saves only 3.5%, so the built-in Read tool bypassing RTK costs nearly nothing.
+- [-] 6.3 Real RTK gaps, none actionable here: the `PowerShell` tool (item 3, instructional mitigation only); MCP exec tools (none exposed — Serena's `claude-code` context excludes shell); and commands RTK has no handler for — `node` (95 calls), `git-wt`/`wt` (~100), `cargo add` (17). The last group is an upstream feature request, not config.
+- [-] 6.4 `rtk discover` with no flags scans **the current project only**, so it reports 0 sessions in a fresh worktree. Use `-a`. Not a bug.
+
+### 7. Headroom
+
+- [v] 7.1 Headroom **is** running and doing work: `headroom doctor` → proxy up 5d 9h at 127.0.0.1:8787, v0.32.1 matching the installed version, "last request just now". This session is routed (`ANTHROPIC_BASE_URL=http://127.0.0.1:8787`, `CLAUDE_STACK_SHIM=1`).
+- [x] 7.2 Measured: 2,629,187 tokens / $7.89 saved lifetime. Over 30 days that is 2.63M of 84.9M tokens = **3.1% compression** — an order of magnitude smaller than RTK's 60%, and worth knowing before tuning it. The separately reported 204.9M cache-read tokens / $614.68 is prompt-cache accounting the proxy observes, not compression Headroom performs.
+- [-] 7.3 `doctor` warns `claude: not routed (no ANTHROPIC_BASE_URL in settings env)` — routing depends entirely on the PATH shim. Left as is deliberately: the shim falls through to the real binary when the proxy is down, whereas a hardcoded `settings.json` base URL would break every session if the proxy stops. The warning is doctor's, not a defect.
+- [-] 7.4 `doctor` also flags no spend budget, and that `ANTHROPIC_BASE_URL` disables Claude Code's `/remote-control` (`/rc`). Both are accepted costs of running the proxy; recorded so they are not rediscovered as bugs.
+
+### 8. Defect found: session-start hook never backfilled repo git hooks
+
+The SessionStart autobuild returns early when `graphify-out/` already exists, and the
+refresh-hook installation lived **only** in the first-build branch. So any repo whose
+graph predates that logic never got post-checkout/post-merge/post-rewrite, and never
+re-ran `graphify hook install` — the root cause of 4.2. This repo's `post-commit` was
+pinned to `…\Python311\python.exe`, an interpreter that no longer exists, so **every
+commit failed to rebuild the graph**, printing `[graphify hook] could not locate a
+Python with graphify installed`. Observed live during the 465473e commit.
+
+- [v] 8.1 Hoisted the hook setup into `Ensure-RepoHooks` / `ensure_repo_hooks`, called from **both** the first-build branch and the graph-exists fast path, in `stack-init.ps1` and `stack-init.sh`
+- [v] 8.2 Established by experiment that a plain `graphify hook install` is **not** a repair for a stale pin: on a real hook with a dead `_PINNED`, it reports "already installed" and leaves the pin untouched
+- [v] 8.3 `graphify hook uninstall` + `install` does re-pin correctly — but uninstall deletes `.gitattributes` when the merge driver is its only entry, and `.gitattributes` is tracked here (7989aea). Rejected as too destructive to run unattended at session start.
+- [v] 8.4 Repair instead via graphify's documented second detection path, `graphify-out/.graphify_python`: additive, inside the already-ignored output dir. Forward slashes are mandatory — the hook allowlists that file against `[a-zA-Z0-9/_.@:-]`, so a backslashed Windows path is silently discarded.
+- [v] 8.5 `uv tool dir` colourises even when redirected; the raw `ESC[36m` prefix turned the drive letter into a bogus PowerShell drive. Both variants now strip SGR sequences (`.sh` also sets `NO_COLOR=1`). Caught by the test, not by review.
+- [v] 8.6 End-to-end proof on a scratch repo with a real graphify hook: commit with dead pin → `could not locate a Python`; after repair → `launching background rebuild`
+- [v] 8.7 Unit suite (11 assertions, all passing): absent post-commit installs; live pin untouched and no override written; dead pin repairs without reinstalling; override is executable and backslash-free; second run idempotent; a pre-existing user hook is appended to, not clobbered
+- [v] 8.8 Local half applied: `~/.claude/hooks/graph-autobuild.ps1` reinstalled from the updated here-string; `C:\workspaces\agent-skills` override written and the three refresh hooks installed (closes 4.2 for this repo)
+- [ ] 8.9 Other repos on this machine still carry the stale pin. They self-heal at their next session start now that the global hook is updated; no per-repo action needed.
+- [ ] 8.10 Known limitation, observed on the fd59b9a commit itself: worktrees share `.git/hooks` with the primary checkout but have no `graphify-out/` of their own, so the override is invisible to them and a commit made **inside a worktree** still prints the "could not locate a Python" warning. Harmless — the graph belongs to the primary checkout and worktrees are already expected to defer to it (see the worktrunk `claude-context-stack` env line, which reads `{{ primary_worktree_path }}/graphify-out`) — but the warning is noise. Fixing it properly means teaching the hook to fall back to the primary worktree's override, which is graphify's code, not this repo's.

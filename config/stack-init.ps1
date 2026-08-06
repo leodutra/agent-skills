@@ -299,30 +299,83 @@ if (-not $cgd) { $cgd = $gd }
 elseif (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
 $lock = Join-Path $gd 'claude-stack-autobuild.lock'
 
+# Points graphify's post-commit hook at an interpreter that can actually import
+# graphify, by writing the override file the hook reads when its baked-in pin is
+# dead. Forward slashes are required, not cosmetic: the hook allowlists the file
+# contents against [a-zA-Z0-9/_.@:-], so a backslashed Windows path is discarded.
+function Repair-GraphifyPython {
+  $pin = Join-Path $top 'graphify-out\.graphify_python'
+  if (Test-Path $pin) {
+    $raw = Get-Content -Raw $pin -ErrorAction SilentlyContinue
+    if ($raw) {
+      $cur = $raw.Trim()
+      if ($cur -and (Test-Path $cur)) { return }
+    }
+  }
+  # uv colourises even when redirected, and an ESC[36m prefix turns the drive
+  # letter into a bogus PowerShell drive - strip SGR sequences before use.
+  $ud = (uv tool dir 2>$null | Out-String) -replace "$([char]27)\[[0-9;]*m", ''
+  $ud = $ud.Trim()
+  if (-not $ud) { return }
+  foreach ($rel in @('graphifyy\Scripts\python.exe', 'graphifyy\bin\python')) {
+    $cand = Join-Path $ud $rel
+    if (-not (Test-Path $cand)) { continue }
+    & $cand -c 'import graphify' *> $null
+    if ($LASTEXITCODE -ne 0) { continue }
+    New-Item -ItemType Directory -Force -Path (Split-Path $pin) | Out-Null
+    Set-Content -Path $pin -Value ($cand -replace '\\','/') -Encoding ascii -NoNewline
+    return
+  }
+}
+
+# Repo-local git hooks that keep the graph fresh. Idempotent, and deliberately
+# NOT confined to the first build: a repo whose graph predates this logic hits
+# the fast path below and returns early, so it would never acquire the refresh
+# hooks and would keep a stale post-commit pin forever.
+function Ensure-RepoHooks ($cgd) {
+  $hooksDir = Join-Path $cgd 'hooks'
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $nl = "`n"
+  # post-commit is graphify's own hook. Install it when absent. When it exists
+  # but the interpreter it pinned at install time has gone away (interpreter
+  # uninstalled, pip -> uv tool migration), a plain re-install is NOT a repair:
+  # graphify matches its own marker, reports "already installed" and leaves the
+  # dead pin, so every commit silently fails to rebuild the graph. `hook
+  # uninstall` + `hook install` does re-pin, but uninstall deletes .gitattributes
+  # when the merge driver is its only entry - too destructive to run unattended
+  # at session start. Repair through graphify's documented second detection
+  # path instead: graphify-out/.graphify_python, additive and inside the
+  # already-ignored output dir.
+  $pc = Join-Path $hooksDir 'post-commit'
+  if (-not (Test-Path $pc)) { graphify hook install *> $null }
+  else {
+    $txt = Get-Content -Raw $pc
+    if ($txt -notmatch 'graphify-hook-start') { graphify hook install *> $null }
+    elseif (($txt -match "_PINNED='([^']+)'") -and -not (Test-Path $matches[1])) { Repair-GraphifyPython }
+  }
+  $bodies = @{
+    'post-checkout' = ('# claude-context-stack: refresh graph on branch switch (not file checkout)' + $nl +
+      'if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then' + $nl +
+      '  ( graphify update . >/dev/null 2>&1 & )' + $nl + 'fi')
+    'post-merge'    = ('# claude-context-stack: refresh graph after merge/pull' + $nl +
+      'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+    'post-rewrite'  = ('# claude-context-stack: refresh graph after rebase' + $nl +
+      'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+  }
+  foreach ($name in @($bodies.Keys)) {
+    $p = Join-Path $hooksDir $name
+    if ((Test-Path $p) -and (Select-String -Path $p -Pattern 'claude-context-stack:' -Quiet)) { continue }
+    if (Test-Path $p) { [IO.File]::AppendAllText($p, $nl + $bodies[$name] + $nl) }
+    else { [IO.File]::WriteAllText($p, '#!/bin/sh' + $nl + $bodies[$name] + $nl) }
+  }
+}
+
 if ($Build) {
   # Background worker: the actual first build. Everything it writes lives
   # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
   try {
     graphify . *> $null
-    graphify hook install *> $null
-    $hooksDir = Join-Path $cgd 'hooks'
-    New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
-    $nl = "`n"
-    $bodies = @{
-      'post-checkout' = ('# claude-context-stack: refresh graph on branch switch (not file checkout)' + $nl +
-        'if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then' + $nl +
-        '  ( graphify update . >/dev/null 2>&1 & )' + $nl + 'fi')
-      'post-merge'    = ('# claude-context-stack: refresh graph after merge/pull' + $nl +
-        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
-      'post-rewrite'  = ('# claude-context-stack: refresh graph after rebase' + $nl +
-        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
-    }
-    foreach ($name in @($bodies.Keys)) {
-      $p = Join-Path $hooksDir $name
-      if ((Test-Path $p) -and (Select-String -Path $p -Pattern 'claude-context-stack:' -Quiet)) { continue }
-      if (Test-Path $p) { [IO.File]::AppendAllText($p, $nl + $bodies[$name] + $nl) }
-      else { [IO.File]::WriteAllText($p, '#!/bin/sh' + $nl + $bodies[$name] + $nl) }
-    }
+    Ensure-RepoHooks $cgd
     $info = Join-Path $cgd 'info'
     New-Item -ItemType Directory -Force -Path $info | Out-Null
     $excl = Join-Path $info 'exclude'
@@ -337,6 +390,9 @@ if (Test-Path (Join-Path $top '.graphify-skip')) { exit 0 }
 if (-not (Get-Command graphify -ErrorAction SilentlyContinue)) { exit 0 }
 
 if (Test-Path (Join-Path $top 'graphify-out')) {
+  # Backfill for repos whose graph predates this hook logic, and self-heal for a
+  # dead post-commit pin. Both checks are file tests that no-op once satisfied.
+  Ensure-RepoHooks $cgd
   Start-Process -WindowStyle Hidden -FilePath graphify -ArgumentList 'update','.' -WorkingDirectory $top | Out-Null
   exit 0
 }

@@ -337,14 +337,57 @@ cgd=$(git rev-parse --git-common-dir 2>/dev/null)
 [ -n "$cgd" ] || cgd=$gd
 lock="$gd/claude-stack-autobuild.lock"
 
-if [ "${1:-}" = "--build" ]; then
-  # Background worker: the actual first build. Everything it writes lives
-  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
-  trap 'rm -rf "$lock"' EXIT
-  graphify . >/dev/null 2>&1
-  graphify hook install >/dev/null 2>&1
+# Points graphify's post-commit hook at an interpreter that can actually import
+# graphify, by writing the override file the hook reads when its baked-in pin is
+# dead. NO_COLOR plus the SGR strip are load-bearing: uv colourises even when
+# redirected, and the hook allowlists this file's contents against
+# [a-zA-Z0-9/_.@:-], so one stray escape byte makes it discard the override.
+repair_graphify_python() {
+  _pin="$top/graphify-out/.graphify_python"
+  if [ -f "$_pin" ]; then
+    _cur=$(tr -d ' \t\r\n' < "$_pin" 2>/dev/null)
+    if [ -n "$_cur" ] && [ -x "$_cur" ]; then return 0; fi
+  fi
+  _esc=$(printf '\033')
+  _ud=$(NO_COLOR=1 uv tool dir 2>/dev/null | tr -d '\r' | head -1 | sed "s/${_esc}\[[0-9;]*m//g")
+  [ -n "$_ud" ] || return 0
+  for _rel in graphifyy/bin/python graphifyy/Scripts/python.exe; do
+    _cand="$_ud/$_rel"
+    [ -x "$_cand" ] || continue
+    "$_cand" -c 'import graphify' >/dev/null 2>&1 || continue
+    mkdir -p "$(dirname "$_pin")"
+    printf '%s' "$_cand" > "$_pin"
+    return 0
+  done
+  return 0
+}
+
+# Repo-local git hooks that keep the graph fresh. Idempotent, and deliberately
+# NOT confined to the first build: a repo whose graph predates this logic hits
+# the fast path below and returns early, so it would never acquire the refresh
+# hooks and would keep a stale post-commit pin forever.
+ensure_repo_hooks() {
   hooks_dir="$cgd/hooks"
   mkdir -p "$hooks_dir"
+  # post-commit is graphify's own hook. Install it when absent. When it exists
+  # but the interpreter it pinned at install time has gone away (interpreter
+  # uninstalled, pip -> uv tool migration), a plain re-install is NOT a repair:
+  # graphify matches its own marker, reports "already installed" and leaves the
+  # dead pin, so every commit silently fails to rebuild the graph. `hook
+  # uninstall` + `hook install` does re-pin, but uninstall deletes .gitattributes
+  # when the merge driver is its only entry - too destructive to run unattended
+  # at session start. Repair via graphify's documented second detection path
+  # instead. Only POSIX pins are probed here; a Windows pin is the .ps1
+  # variant's business.
+  _pc="$hooks_dir/post-commit"
+  if [ ! -f "$_pc" ] || ! grep -q 'graphify-hook-start' "$_pc" 2>/dev/null; then
+    graphify hook install >/dev/null 2>&1
+  else
+    _pin=$(sed -n "s/^_PINNED='\(.*\)'\$/\1/p" "$_pc" 2>/dev/null | head -1)
+    case "$_pin" in
+      /*) [ -x "$_pin" ] || repair_graphify_python ;;
+    esac
+  fi
   write_hook() {
     p="$hooks_dir/$1"
     if [ -f "$p" ] && grep -q 'claude-context-stack:' "$p" 2>/dev/null; then return 0; fi
@@ -359,6 +402,15 @@ fi'
 command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
   write_hook post-rewrite '# claude-context-stack: refresh graph after rebase
 command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+  return 0
+}
+
+if [ "${1:-}" = "--build" ]; then
+  # Background worker: the actual first build. Everything it writes lives
+  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
+  trap 'rm -rf "$lock"' EXIT
+  graphify . >/dev/null 2>&1
+  ensure_repo_hooks
   mkdir -p "$cgd/info"
   grep -q '^graphify-out/' "$cgd/info/exclude" 2>/dev/null || printf '\ngraphify-out/\n' >> "$cgd/info/exclude"
   exit 0
@@ -369,6 +421,9 @@ fi
 command -v graphify >/dev/null 2>&1 || exit 0
 
 if [ -d graphify-out ]; then
+  # Backfill for repos whose graph predates this hook logic, and self-heal for a
+  # dead post-commit pin. Both checks are file tests that no-op once satisfied.
+  ensure_repo_hooks
   ( graphify update . >/dev/null 2>&1 & )
   exit 0
 fi
