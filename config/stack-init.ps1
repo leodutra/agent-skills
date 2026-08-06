@@ -30,7 +30,9 @@
   PRECEDENCE on conflict: LSP (Serena, live) > graph (can be stale).
 
   GLOBAL vs PER-REPO
-    Global (once): RTK hook, Serena at user scope (auto-activates per repo),
+    Global (once): RTK hook, Serena at user scope + serena-autoinit SessionStart
+      hook (Serena does NOT activate from cwd on its own - it needs a
+      .serena\project.yml, which that hook writes per checkout),
       graphify install + graph-autobuild SessionStart hook, Headroom install +
       claude shim, routing contract in $env:USERPROFILE\.claude\CLAUDE.md.
     Per-repo: nothing required - the first session inside any git repo builds
@@ -299,30 +301,83 @@ if (-not $cgd) { $cgd = $gd }
 elseif (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
 $lock = Join-Path $gd 'claude-stack-autobuild.lock'
 
+# Points graphify's post-commit hook at an interpreter that can actually import
+# graphify, by writing the override file the hook reads when its baked-in pin is
+# dead. Forward slashes are required, not cosmetic: the hook allowlists the file
+# contents against [a-zA-Z0-9/_.@:-], so a backslashed Windows path is discarded.
+function Repair-GraphifyPython {
+  $pin = Join-Path $top 'graphify-out\.graphify_python'
+  if (Test-Path $pin) {
+    $raw = Get-Content -Raw $pin -ErrorAction SilentlyContinue
+    if ($raw) {
+      $cur = $raw.Trim()
+      if ($cur -and (Test-Path $cur)) { return }
+    }
+  }
+  # uv colourises even when redirected, and an ESC[36m prefix turns the drive
+  # letter into a bogus PowerShell drive - strip SGR sequences before use.
+  $ud = (uv tool dir 2>$null | Out-String) -replace "$([char]27)\[[0-9;]*m", ''
+  $ud = $ud.Trim()
+  if (-not $ud) { return }
+  foreach ($rel in @('graphifyy\Scripts\python.exe', 'graphifyy\bin\python')) {
+    $cand = Join-Path $ud $rel
+    if (-not (Test-Path $cand)) { continue }
+    & $cand -c 'import graphify' *> $null
+    if ($LASTEXITCODE -ne 0) { continue }
+    New-Item -ItemType Directory -Force -Path (Split-Path $pin) | Out-Null
+    Set-Content -Path $pin -Value ($cand -replace '\\','/') -Encoding ascii -NoNewline
+    return
+  }
+}
+
+# Repo-local git hooks that keep the graph fresh. Idempotent, and deliberately
+# NOT confined to the first build: a repo whose graph predates this logic hits
+# the fast path below and returns early, so it would never acquire the refresh
+# hooks and would keep a stale post-commit pin forever.
+function Ensure-RepoHooks ($cgd) {
+  $hooksDir = Join-Path $cgd 'hooks'
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $nl = "`n"
+  # post-commit is graphify's own hook. Install it when absent. When it exists
+  # but the interpreter it pinned at install time has gone away (interpreter
+  # uninstalled, pip -> uv tool migration), a plain re-install is NOT a repair:
+  # graphify matches its own marker, reports "already installed" and leaves the
+  # dead pin, so every commit silently fails to rebuild the graph. `hook
+  # uninstall` + `hook install` does re-pin, but uninstall deletes .gitattributes
+  # when the merge driver is its only entry - too destructive to run unattended
+  # at session start. Repair through graphify's documented second detection
+  # path instead: graphify-out/.graphify_python, additive and inside the
+  # already-ignored output dir.
+  $pc = Join-Path $hooksDir 'post-commit'
+  if (-not (Test-Path $pc)) { graphify hook install *> $null }
+  else {
+    $txt = Get-Content -Raw $pc
+    if ($txt -notmatch 'graphify-hook-start') { graphify hook install *> $null }
+    elseif (($txt -match "_PINNED='([^']+)'") -and -not (Test-Path $matches[1])) { Repair-GraphifyPython }
+  }
+  $bodies = @{
+    'post-checkout' = ('# claude-context-stack: refresh graph on branch switch (not file checkout)' + $nl +
+      'if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then' + $nl +
+      '  ( graphify update . >/dev/null 2>&1 & )' + $nl + 'fi')
+    'post-merge'    = ('# claude-context-stack: refresh graph after merge/pull' + $nl +
+      'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+    'post-rewrite'  = ('# claude-context-stack: refresh graph after rebase' + $nl +
+      'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
+  }
+  foreach ($name in @($bodies.Keys)) {
+    $p = Join-Path $hooksDir $name
+    if ((Test-Path $p) -and (Select-String -Path $p -Pattern 'claude-context-stack:' -Quiet)) { continue }
+    if (Test-Path $p) { [IO.File]::AppendAllText($p, $nl + $bodies[$name] + $nl) }
+    else { [IO.File]::WriteAllText($p, '#!/bin/sh' + $nl + $bodies[$name] + $nl) }
+  }
+}
+
 if ($Build) {
   # Background worker: the actual first build. Everything it writes lives
   # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
   try {
     graphify . *> $null
-    graphify hook install *> $null
-    $hooksDir = Join-Path $cgd 'hooks'
-    New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
-    $nl = "`n"
-    $bodies = @{
-      'post-checkout' = ('# claude-context-stack: refresh graph on branch switch (not file checkout)' + $nl +
-        'if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then' + $nl +
-        '  ( graphify update . >/dev/null 2>&1 & )' + $nl + 'fi')
-      'post-merge'    = ('# claude-context-stack: refresh graph after merge/pull' + $nl +
-        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
-      'post-rewrite'  = ('# claude-context-stack: refresh graph after rebase' + $nl +
-        'command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true')
-    }
-    foreach ($name in @($bodies.Keys)) {
-      $p = Join-Path $hooksDir $name
-      if ((Test-Path $p) -and (Select-String -Path $p -Pattern 'claude-context-stack:' -Quiet)) { continue }
-      if (Test-Path $p) { [IO.File]::AppendAllText($p, $nl + $bodies[$name] + $nl) }
-      else { [IO.File]::WriteAllText($p, '#!/bin/sh' + $nl + $bodies[$name] + $nl) }
-    }
+    Ensure-RepoHooks $cgd
     $info = Join-Path $cgd 'info'
     New-Item -ItemType Directory -Force -Path $info | Out-Null
     $excl = Join-Path $info 'exclude'
@@ -337,6 +392,9 @@ if (Test-Path (Join-Path $top '.graphify-skip')) { exit 0 }
 if (-not (Get-Command graphify -ErrorAction SilentlyContinue)) { exit 0 }
 
 if (Test-Path (Join-Path $top 'graphify-out')) {
+  # Backfill for repos whose graph predates this hook logic, and self-heal for a
+  # dead post-commit pin. Both checks are file tests that no-op once satisfied.
+  Ensure-RepoHooks $cgd
   Start-Process -WindowStyle Hidden -FilePath graphify -ArgumentList 'update','.' -WorkingDirectory $top | Out-Null
   exit 0
 }
@@ -357,6 +415,131 @@ exit 0
 
   Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$autoPath`"" | Out-Null
   Say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
+}
+
+function Install-SerenaAutoInit {
+  # Serena does NOT auto-activate from cwd - the claim this installer shipped
+  # with was wrong. With no .serena\project.yml it starts with NO active
+  # project and every symbol tool fails with "No active project", which is
+  # silent: the model just falls back to grep, breaking contract rule 2 with
+  # nothing in the UI to say so (the same failure mode as a timed-out MCP
+  # launch). Serena's own detection is also too weak to rely on - on a repo of
+  # 21 markdown + 1 shell + 1 powershell file it selected powershell alone, so
+  # every other file answered "path is ignored". Languages are derived from
+  # tracked files here instead.
+  $hooksDir = Join-Path $ClaudeDir 'hooks'
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $serenaPath = Join-Path $hooksDir 'serena-autoinit.ps1'
+  Set-Content -Path $serenaPath -Encoding utf8 -Value @'
+# claude-context-stack: per-checkout Serena project init at session start.
+# Opt out: CLAUDE_STACK_NO_SERENA_INIT=1, or a .serena-skip file in the root.
+# Uninstall: remove the SessionStart entry in settings.json.
+$ErrorActionPreference = 'SilentlyContinue'
+
+if ($env:CLAUDE_STACK_NO_SERENA_INIT) { exit 0 }
+if (-not (Get-Command serena -ErrorAction SilentlyContinue)) { exit 0 }
+$top = git rev-parse --show-toplevel 2>$null
+if (-not $top -or -not (Test-Path $top)) { exit 0 }
+Set-Location $top
+if (Test-Path '.serena-skip') { exit 0 }
+if (Test-Path (Join-Path $top '.serena/project.yml')) { exit 0 }
+
+$gd = git rev-parse --git-dir 2>$null
+if (-not $gd) { exit 0 }
+if (-not [IO.Path]::IsPathRooted($gd)) { $gd = Join-Path $top $gd }
+$cgd = git rev-parse --git-common-dir 2>$null
+if (-not $cgd) { $cgd = $gd }
+elseif (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
+# GetFullPath, not Resolve-Path: normalises without touching the filesystem, so
+# a worktree whose git dir has been pruned still compares cleanly.
+$isMain = ([IO.Path]::GetFullPath($gd) -eq [IO.Path]::GetFullPath($cgd))
+
+# Worktrunk: a linked worktree is a separate checkout at its own path, and
+# project_serena_folder_location is "$projectDir/.serena", so each worktree
+# needs its own project rather than inheriting the main one. serena_config.yml
+# keys the registry by path, but names are what activation and the dashboard
+# show, so linked worktrees are suffixed with their branch to stay distinct.
+$name = Split-Path $top -Leaf
+if (-not $isMain) {
+  $br = git rev-parse --abbrev-ref HEAD 2>$null
+  if ($br -and $br -ne 'HEAD') { $name = "$name@$br" }
+}
+
+$exts = @(git ls-files 2>$null |
+  ForEach-Object { [IO.Path]::GetExtension($_) } |
+  Where-Object { $_ } |
+  ForEach-Object { $_.TrimStart('.').ToLower() } |
+  Sort-Object -Unique)
+if (-not $exts) { exit 0 }
+
+$servers = [System.Collections.Generic.List[string]]::new()
+function Add-Srv($s) { if (-not $servers.Contains($s)) { $servers.Add($s) } }
+function Test-Ext($list) { foreach ($e in $list) { if ($exts -contains $e) { return $true } } return $false }
+# Compiled/checked languages first: the FIRST entry is Serena's default and
+# fallback server, so a real language should outrank markdown/yaml here.
+if (Test-Ext @('rs'))    { Add-Srv 'rust' }
+if (Test-Ext @('py'))    { Add-Srv 'python' }
+if (Test-Ext @('ts','tsx','js','jsx','mjs','cjs')) { Add-Srv 'typescript' }
+if (Test-Ext @('go'))    { Add-Srv 'go' }
+if (Test-Ext @('java'))  { Add-Srv 'java' }
+if (Test-Ext @('kt'))    { Add-Srv 'kotlin' }
+if (Test-Ext @('cs'))    { Add-Srv 'csharp' }
+if (Test-Ext @('c','h','cpp','hpp','cc','hh')) { Add-Srv 'cpp' }
+if (Test-Ext @('rb'))    { Add-Srv 'ruby' }
+if (Test-Ext @('php'))   { Add-Srv 'php' }
+if (Test-Ext @('swift')) { Add-Srv 'swift' }
+if (Test-Ext @('scala')) { Add-Srv 'scala' }
+if (Test-Ext @('lua'))   { Add-Srv 'lua' }
+if (Test-Ext @('zig'))   { Add-Srv 'zig' }
+if (Test-Ext @('ex','exs')) { Add-Srv 'elixir' }
+if (Test-Ext @('tf'))    { Add-Srv 'terraform' }
+if (Test-Ext @('sh','bash')) { Add-Srv 'bash' }
+if (Test-Ext @('ps1','psm1','psd1')) { Add-Srv 'powershell' }
+if (Test-Ext @('md'))    { Add-Srv 'markdown' }
+if (Test-Ext @('yml','yaml')) { Add-Srv 'yaml' }
+if (Test-Ext @('toml'))  { Add-Srv 'toml' }
+if ($servers.Count -eq 0) { exit 0 }
+
+$lines = [System.Collections.Generic.List[string]]::new()
+$lines.Add('# Generated by claude-context-stack (serena-autoinit). Safe to edit or')
+$lines.Add('# delete: it is only written when absent, never overwritten. Machine-local')
+$lines.Add('# overrides belong in project.local.yml, which Serena ignores by default.')
+$lines.Add('project_name: "' + $name + '"')
+$lines.Add('language_servers:')
+foreach ($s in $servers) { $lines.Add("- $s") }
+$lines.Add('ignore_all_files_in_gitignore: true')
+if ($isMain) {
+  # Worktrunk nests linked worktrees at .claude\worktrees\ INSIDE the main
+  # checkout, so without this the main project indexes every worktree as well
+  # and one symbol lookup returns a near-duplicate hit per branch. Emitted
+  # unconditionally: worktrees usually appear after this file is generated,
+  # and it is inert when the directory does not exist.
+  $lines.Add('ignored_paths:')
+  $lines.Add('- ".claude/worktrees"')
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $top '.serena') | Out-Null
+# WriteAllText with an explicit no-BOM encoder rather than Set-Content: this
+# hook is registered as `powershell -NoProfile ...`, i.e. Windows PowerShell
+# 5.1, whose `-Encoding utf8` prepends a BOM. PyYAML and ruamel both strip a
+# leading BOM, so it parses either way - but this keeps the file byte-identical
+# to the POSIX variant's output instead of depending on that tolerance.
+[IO.File]::WriteAllText((Join-Path $top '.serena/project.yml'),
+  (($lines -join "`n") + "`n"), (New-Object System.Text.UTF8Encoding $false))
+
+# Keep the generated folder out of git without touching a tracked .gitignore -
+# same rule the graph autobuild hook follows. Written to the COMMON git dir so
+# one entry covers the main checkout and every worktree hanging off it.
+$infoDir = Join-Path $cgd 'info'
+New-Item -ItemType Directory -Force -Path $infoDir | Out-Null
+$excl = Join-Path $infoDir 'exclude'
+if (-not ((Test-Path $excl) -and (Select-String -Path $excl -Pattern '^\.serena/$' -Quiet))) {
+  Add-Content -Path $excl -Value "`n.serena/"
+}
+exit 0
+'@
+
+  Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$serenaPath`"" | Out-Null
+  Say "  SessionStart serena-autoinit hook installed (opt out: CLAUDE_STACK_NO_SERENA_INIT=1 or .serena-skip)"
 }
 
 function Install-ClaudeShim {
@@ -499,7 +682,7 @@ function Install-Global {
   # calling it twice doubles the slowest step in this function.
   $mcpList = (claude mcp list 2>$null | Out-String)
 
-  Say "Serena - LSP symbols over MCP (user scope, auto-activates per repo)"
+  Say "Serena - LSP symbols over MCP (user scope, one project per checkout)"
   Install-Uv
   # Serena runs from a uv-installed binary, NOT `uvx --from git+...`: uvx
   # re-resolves the git ref and REBUILDS the package whenever uv's cache is
@@ -533,6 +716,9 @@ function Install-Global {
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   Set-GlobalEnvVar 'MCP_TIMEOUT' '120000'
   Set-SerenaDashboardConfig
+
+  Say "serena autoinit - per-checkout project, automated (SessionStart hook)"
+  Install-SerenaAutoInit
 
   Say "graphify - codebase knowledge graph"
   if (-not (Have 'graphify')) {
@@ -761,6 +947,9 @@ function Invoke-Verify {
   $settingsPath = Join-Path $ClaudeDir 'settings.json'
   if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $settingsPath) -and
       (Select-String -Path $settingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
+  if ((Test-Path (Join-Path $ClaudeDir 'hooks\serena-autoinit.ps1')) -and (Test-Path $settingsPath) -and
+      (Select-String -Path $settingsPath -Pattern 'serena-autoinit' -Quiet)) { Write-Host "  serena autoinit: OK (SessionStart)" }
+  else { Write-Host "  serena autoinit: NOT registered" }
   else { Write-Host "  graph autobuild: NOT registered" }
   $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
     [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)

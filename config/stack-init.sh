@@ -31,8 +31,10 @@
 #  PRECEDENCE on conflict: LSP (Serena, live ground truth) > graph (can be stale).
 #
 #  WHAT IS GLOBAL vs PER-REPO
-#    Global (run once): RTK hook, Serena at user scope (auto-activates per repo
-#      from cwd), graphify install + graph-autobuild SessionStart hook, Headroom
+#    Global (run once): RTK hook, Serena at user scope + serena-autoinit
+#      SessionStart hook (Serena does NOT activate from cwd on its own — it
+#      needs a .serena/project.yml, which that hook writes per checkout),
+#      graphify install + graph-autobuild SessionStart hook, Headroom
 #      install + claude shim, and the routing contract in ~/.claude/CLAUDE.md.
 #    Per-repo: nothing required — the first session inside any git repo builds
 #      its graph in the background. `init` remains for building one eagerly (and
@@ -337,14 +339,57 @@ cgd=$(git rev-parse --git-common-dir 2>/dev/null)
 [ -n "$cgd" ] || cgd=$gd
 lock="$gd/claude-stack-autobuild.lock"
 
-if [ "${1:-}" = "--build" ]; then
-  # Background worker: the actual first build. Everything it writes lives
-  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
-  trap 'rm -rf "$lock"' EXIT
-  graphify . >/dev/null 2>&1
-  graphify hook install >/dev/null 2>&1
+# Points graphify's post-commit hook at an interpreter that can actually import
+# graphify, by writing the override file the hook reads when its baked-in pin is
+# dead. NO_COLOR plus the SGR strip are load-bearing: uv colourises even when
+# redirected, and the hook allowlists this file's contents against
+# [a-zA-Z0-9/_.@:-], so one stray escape byte makes it discard the override.
+repair_graphify_python() {
+  _pin="$top/graphify-out/.graphify_python"
+  if [ -f "$_pin" ]; then
+    _cur=$(tr -d ' \t\r\n' < "$_pin" 2>/dev/null)
+    if [ -n "$_cur" ] && [ -x "$_cur" ]; then return 0; fi
+  fi
+  _esc=$(printf '\033')
+  _ud=$(NO_COLOR=1 uv tool dir 2>/dev/null | tr -d '\r' | head -1 | sed "s/${_esc}\[[0-9;]*m//g")
+  [ -n "$_ud" ] || return 0
+  for _rel in graphifyy/bin/python graphifyy/Scripts/python.exe; do
+    _cand="$_ud/$_rel"
+    [ -x "$_cand" ] || continue
+    "$_cand" -c 'import graphify' >/dev/null 2>&1 || continue
+    mkdir -p "$(dirname "$_pin")"
+    printf '%s' "$_cand" > "$_pin"
+    return 0
+  done
+  return 0
+}
+
+# Repo-local git hooks that keep the graph fresh. Idempotent, and deliberately
+# NOT confined to the first build: a repo whose graph predates this logic hits
+# the fast path below and returns early, so it would never acquire the refresh
+# hooks and would keep a stale post-commit pin forever.
+ensure_repo_hooks() {
   hooks_dir="$cgd/hooks"
   mkdir -p "$hooks_dir"
+  # post-commit is graphify's own hook. Install it when absent. When it exists
+  # but the interpreter it pinned at install time has gone away (interpreter
+  # uninstalled, pip -> uv tool migration), a plain re-install is NOT a repair:
+  # graphify matches its own marker, reports "already installed" and leaves the
+  # dead pin, so every commit silently fails to rebuild the graph. `hook
+  # uninstall` + `hook install` does re-pin, but uninstall deletes .gitattributes
+  # when the merge driver is its only entry - too destructive to run unattended
+  # at session start. Repair via graphify's documented second detection path
+  # instead. Only POSIX pins are probed here; a Windows pin is the .ps1
+  # variant's business.
+  _pc="$hooks_dir/post-commit"
+  if [ ! -f "$_pc" ] || ! grep -q 'graphify-hook-start' "$_pc" 2>/dev/null; then
+    graphify hook install >/dev/null 2>&1
+  else
+    _pin=$(sed -n "s/^_PINNED='\(.*\)'\$/\1/p" "$_pc" 2>/dev/null | head -1)
+    case "$_pin" in
+      /*) [ -x "$_pin" ] || repair_graphify_python ;;
+    esac
+  fi
   write_hook() {
     p="$hooks_dir/$1"
     if [ -f "$p" ] && grep -q 'claude-context-stack:' "$p" 2>/dev/null; then return 0; fi
@@ -359,6 +404,15 @@ fi'
 command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
   write_hook post-rewrite '# claude-context-stack: refresh graph after rebase
 command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
+  return 0
+}
+
+if [ "${1:-}" = "--build" ]; then
+  # Background worker: the actual first build. Everything it writes lives
+  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
+  trap 'rm -rf "$lock"' EXIT
+  graphify . >/dev/null 2>&1
+  ensure_repo_hooks
   mkdir -p "$cgd/info"
   grep -q '^graphify-out/' "$cgd/info/exclude" 2>/dev/null || printf '\ngraphify-out/\n' >> "$cgd/info/exclude"
   exit 0
@@ -369,6 +423,9 @@ fi
 command -v graphify >/dev/null 2>&1 || exit 0
 
 if [ -d graphify-out ]; then
+  # Backfill for repos whose graph predates this hook logic, and self-heal for a
+  # dead post-commit pin. Both checks are file tests that no-op once satisfied.
+  ensure_repo_hooks
   ( graphify update . >/dev/null 2>&1 & )
   exit 0
 fi
@@ -386,6 +443,107 @@ HOOK
   chmod +x "$CLAUDE_DIR/hooks/graph-autobuild.sh"
   register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/graph-autobuild.sh\"" >/dev/null
   say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
+}
+
+install_serena_autoinit() {
+  # Serena does NOT auto-activate from cwd — the claim this installer shipped
+  # with was wrong. With no .serena/project.yml it starts with NO active
+  # project and every symbol tool fails with "No active project", which is
+  # silent: the model just falls back to grep, breaking contract rule 2 with
+  # nothing in the UI to say so (the same failure mode as a timed-out MCP
+  # launch). Serena's own detection is also too weak to rely on — on a repo of
+  # 21 markdown + 1 shell + 1 powershell file it selected powershell alone, so
+  # every other file answered "path is ignored". Languages are derived from
+  # tracked files here instead.
+  mkdir -p "$CLAUDE_DIR/hooks"
+  cat > "$CLAUDE_DIR/hooks/serena-autoinit.sh" <<'HOOK'
+#!/bin/sh
+# claude-context-stack: per-checkout Serena project init at session start.
+# Opt out: CLAUDE_STACK_NO_SERENA_INIT=1, or a .serena-skip file in the root.
+# Uninstall: remove the SessionStart entry in settings.json.
+[ -n "${CLAUDE_STACK_NO_SERENA_INIT:-}" ] && exit 0
+command -v serena >/dev/null 2>&1 || exit 0
+top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+[ -n "$top" ] || exit 0
+cd "$top" || exit 0
+[ -f .serena-skip ] && exit 0
+[ -f .serena/project.yml ] && exit 0
+
+gd=$(git rev-parse --git-dir 2>/dev/null) || exit 0
+cgd=$(git rev-parse --git-common-dir 2>/dev/null)
+[ -n "$cgd" ] || cgd=$gd
+
+# Worktrunk: a linked worktree is a separate checkout at its own path, and
+# project_serena_folder_location is "$projectDir/.serena", so each worktree
+# needs its own project rather than inheriting the main one. serena_config.yml
+# keys the registry by path, but names are what activation and the dashboard
+# show, so linked worktrees are suffixed with their branch to stay distinct.
+name=$(basename "$top")
+if [ "$gd" != "$cgd" ]; then
+  br=$(git rev-parse --abbrev-ref HEAD 2>/dev/null)
+  [ -n "$br" ] && [ "$br" != "HEAD" ] && name="$name@$br"
+fi
+
+exts=$(git ls-files 2>/dev/null | sed -n 's/.*\.\([A-Za-z0-9_]*\)$/\1/p' | tr 'A-Z' 'a-z' | sort -u)
+[ -n "$exts" ] || exit 0
+has() { printf '%s\n' "$exts" | grep -qx "$1"; }
+servers=""
+add() { case " $servers " in *" $1 "*) ;; *) servers="$servers $1" ;; esac; }
+# Compiled/checked languages first: the FIRST entry is Serena's default and
+# fallback server, so a real language should outrank markdown/yaml here.
+has rs && add rust
+has py && add python
+for e in ts tsx js jsx mjs cjs; do has "$e" && add typescript; done
+has go && add go
+has java && add java
+has kt && add kotlin
+has cs && add csharp
+for e in c h cpp hpp cc hh; do has "$e" && add cpp; done
+has rb && add ruby
+has php && add php
+has swift && add swift
+has scala && add scala
+has lua && add lua
+has zig && add zig
+for e in ex exs; do has "$e" && add elixir; done
+has tf && add terraform
+for e in sh bash; do has "$e" && add bash; done
+for e in ps1 psm1 psd1; do has "$e" && add powershell; done
+has md && add markdown
+for e in yml yaml; do has "$e" && add yaml; done
+has toml && add toml
+[ -n "$servers" ] || exit 0
+
+mkdir -p .serena
+{
+  echo "# Generated by claude-context-stack (serena-autoinit). Safe to edit or"
+  echo "# delete: it is only written when absent, never overwritten. Machine-local"
+  echo "# overrides belong in project.local.yml, which Serena ignores by default."
+  printf 'project_name: "%s"\n' "$name"
+  echo 'language_servers:'
+  for s in $servers; do echo "- $s"; done
+  echo 'ignore_all_files_in_gitignore: true'
+  if [ "$gd" = "$cgd" ]; then
+    # Worktrunk nests linked worktrees at .claude/worktrees/ INSIDE the main
+    # checkout, so without this the main project indexes every worktree as well
+    # and one symbol lookup returns a near-duplicate hit per branch. Emitted
+    # unconditionally: worktrees usually appear after this file is generated,
+    # and it is inert when the directory does not exist.
+    echo 'ignored_paths:'
+    echo '- ".claude/worktrees"'
+  fi
+} > .serena/project.yml
+
+# Keep the generated folder out of git without touching a tracked .gitignore —
+# same rule the graph autobuild hook follows. Written to the COMMON git dir so
+# one entry covers the main checkout and every worktree hanging off it.
+mkdir -p "$cgd/info"
+grep -q '^\.serena/$' "$cgd/info/exclude" 2>/dev/null || printf '\n.serena/\n' >> "$cgd/info/exclude"
+exit 0
+HOOK
+  chmod +x "$CLAUDE_DIR/hooks/serena-autoinit.sh"
+  register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/serena-autoinit.sh\"" >/dev/null
+  say "  SessionStart serena-autoinit hook installed (opt out: CLAUDE_STACK_NO_SERENA_INIT=1 or .serena-skip)"
 }
 
 install_claude_shim() {
@@ -460,7 +618,7 @@ install_global() {
   local mcp_list serena_line
   mcp_list="$(claude mcp list 2>/dev/null)"
 
-  say "Serena — LSP symbols over MCP (user scope, auto-activates per repo)"
+  say "Serena — LSP symbols over MCP (user scope, one project per checkout)"
   install_uv
   # Serena runs from a uv-installed binary, NOT `uvx --from git+...`: uvx
   # re-resolves the git ref and REBUILDS the package whenever uv's cache is
@@ -497,6 +655,9 @@ install_global() {
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   set_global_env_var MCP_TIMEOUT 120000
   set_serena_dashboard_config
+
+  say "serena autoinit — per-checkout project, automated (SessionStart hook)"
+  install_serena_autoinit
 
   say "graphify — codebase knowledge graph"
   if ! have graphify; then
@@ -694,6 +855,9 @@ verify() {
   if [ -x "$CLAUDE_DIR/hooks/graph-autobuild.sh" ] && grep -q 'graph-autobuild' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
     echo "  graph autobuild: OK (SessionStart)"
   else echo "  graph autobuild: NOT registered"; fi
+  if [ -x "$CLAUDE_DIR/hooks/serena-autoinit.sh" ] && grep -q 'serena-autoinit' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    echo "  serena autoinit: OK (SessionStart)"
+  else echo "  serena autoinit: NOT registered"; fi
   { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
   have opensrc && echo "  opensrc:        OK (context tool — outside the contract)" || echo "  opensrc:        NOT installed (optional)"
   [ -f "$CLAUDE_DIR/skills/opensrc/SKILL.md" ]   && echo "  opensrc skill:    OK (global)"   || echo "  opensrc skill:    NOT deployed — rerun global"
