@@ -49,6 +49,10 @@
     .\stack-init.ps1 stats      # append + print a usage snapshot (rtk/headroom)
     .\stack-init.ps1 help       # or -h / --help - print this command list
 
+  The contract text itself is NOT in this script: it lives in contract.md and
+  contract-condensed.md next to it, which stack-init.sh reads too, so the two
+  installers cannot drift on the one artifact they both write.
+
   AFTER GLOBAL INSTALL: open a NEW terminal. Bare `claude` then launches through
   Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
   run), and the first session in any git repo autobuilds its graph in the
@@ -70,6 +74,11 @@ $ErrorActionPreference = 'Stop'
 
 $ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
 $ClaudeMd  = Join-Path $ClaudeDir 'CLAUDE.md'
+# The generated SessionStart hook is also the ONE implementation of "give this
+# checkout its git hooks": `init` runs it with -Hooks rather than carrying a
+# second copy of the same three hook bodies (which is what it used to do, minus
+# the post-commit pin repair the copy never learned about).
+$GraphAutobuildHook = Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1'
 function Say ($m){ Write-Host "==> "   -ForegroundColor Green  -NoNewline; Write-Host $m }
 function Warn($m){ Write-Host "warn: " -ForegroundColor Yellow -NoNewline; Write-Host $m }
 function Err ($m){ Write-Host "error: "-ForegroundColor Red    -NoNewline; Write-Host $m }
@@ -115,50 +124,23 @@ function Write-ManagedBlock ($Path, $Block) {
   Write-Utf8 $Path (($stripped.TrimEnd() + "`r`n`r`n" + $Block).TrimStart())
 }
 
-$Contract = @'
-# >>> claude-context-stack >>> (managed by stack-init - edits here are overwritten)
-## Context routing (non-negotiable)
-1. Architecture / cross-module / "what connects X to Y" / blast radius:
-   IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
-   `graphify query "..."` / `graphify path A B`. Never orient by reading files or grep.
-   IF absent -> orient normally (the stack autobuilds the graph in the background
-   at session start - it may simply not be ready yet).
-2. Specific symbols (definitions, references, implementations, file overviews)
-   -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview).
-   Never grep for symbol names.
-   Serena starts each session with NO ACTIVE PROJECT - writing .serena/project.yml
-   configures it but does not activate it. If a Serena tool answers "No active
-   project", call activate_project on this checkout's root (the SessionStart hook
-   prints its path and name) and retry. Never take that error as a reason to grep.
-3. Compile / type / lint state -> Serena get_diagnostics_for_file.
-   Do not run a full type-check just to read diagnostics Serena already provides.
-4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
-   insert_after_symbol, rename_symbol), not string/regex replacement.
-5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
-   Do NOT route execution through an MCP shell tool or the PowerShell tool -
-   RTK's hook matches Bash only, so both hand back uncompressed output.
-   PowerShell is for genuinely Windows-only work (registry, COM, cmdlets).
-6. The graph reflects the last REBUILD (normally the last commit).
-   - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
-   - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
-     first (incremental, content-hash cached, cheap), then query the graph as normal.
-
-## Source-of-truth precedence (on conflict)
-code/LSP (Serena)  >  graph (graphify)
-The LSP is live ground truth; the graph is a derivation that can trail the working
-tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
-# <<< claude-context-stack <<<
-'@
-
-$ContractCondensed = @'
-# >>> claude-context-stack >>> (condensed, managed by stack-init - edits here are overwritten)
-1. Architecture/cross-module -> graphify (graphify-out/GRAPH_REPORT.md, `graphify query`/`path`). Never grep/read-many for this.
-2. Specific symbols -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview). Never grep for symbol names. On "No active project", call activate_project on this checkout's root, then retry - never fall back to grep.
-5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool, and on Windows never the PowerShell tool either (RTK's hook is Bash-only) except for Windows-only work.
-6. Graph = last REBUILD. Uncommitted+symbol -> Serena. Uncommitted+architectural -> `graphify update .` first, then query.
-Precedence on conflict: code/LSP (Serena) > graph (graphify).
-# <<< claude-context-stack <<<
-'@
+# The contract text is NOT duplicated in this script. Both installers read the
+# same two files next to them, so the Windows and POSIX variants cannot drift -
+# they already had (hyphens here, em dashes there) while claiming to write the
+# same managed block into the same ~\.claude\CLAUDE.md. Those files are
+# ASCII-only on purpose: Read-Text goes through Get-Content, and Windows
+# PowerShell 5.1 decodes a BOM-less file as ANSI, which would turn any non-ASCII
+# byte into mojibake in the contract it writes.
+function Get-Contract {
+  param([string]$File)
+  $p = Join-Path $PSScriptRoot $File
+  if (-not (Test-Path $p)) {
+    Err "contract source missing: $p"
+    Err "run stack-init from the agent-skills repo checkout (config\ ships these)"
+    exit 1
+  }
+  return (Read-Text $p).TrimEnd()
+}
 
 # Skills for the extras (opensrc, worktrunk). graphify deploys its own via
 # `graphify install`; these two ship none, and without a SKILL.md in
@@ -198,7 +180,8 @@ function Invoke-InjectCondensedContract {
     Say "  no agent files at $Dir - skipping condensed contract injection"
     return
   }
-  foreach ($f in $files) { Write-ManagedBlock $f.FullName $ContractCondensed }
+  $block = Get-Contract 'contract-condensed.md'
+  foreach ($f in $files) { Write-ManagedBlock $f.FullName $block }
   Say "  condensed contract injected into $Dir\*.md"
 }
 
@@ -239,39 +222,27 @@ function Test-InGitRepo {
   return $ok
 }
 
-function Write-GitHook {
-  # Merge-not-clobber: skip if our marker is already there, append under the
-  # marker if some other tool owns the file, otherwise create it fresh. Hook
-  # bodies are POSIX sh - Git for Windows runs hooks via its bundled bash
-  # regardless of host OS, same as the existing post-commit hook.
-  param([string]$Name, [string]$Body)
-  $hooksDir = Get-GitHooksDir
-  if (-not $hooksDir) { return }
-  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
-  $path = Join-Path $hooksDir $Name
-  if ((Test-Path $path) -and (Select-String -Path $path -Pattern 'claude-context-stack:' -Quiet)) { return }
-  if (Test-Path $path) {
-    [IO.File]::AppendAllText($path, "`n$Body`n")
-  } else {
-    [IO.File]::WriteAllText($path, "#!/bin/sh`n$Body`n")
+function Find-WtBin {
+  # Winget installs the binary as git-wt (avoids the Windows Terminal wt.exe
+  # collision). NEVER detect via bare 'wt' here - that matches Windows Terminal's
+  # launcher on stock Win11. Accept only git-wt or cargo's own wt.exe by path.
+  # Winget puts portable exes in a package dir it adds to the USER PATH in the
+  # registry - a shell started before that install (including the one running
+  # this script right after installing) never sees it, so probe the package dir
+  # directly instead of trusting Get-Command alone.
+  # Shared with Invoke-Verify, which used to inline a LOOSER copy of this: it
+  # accepted the winget package DIRECTORY without checking git-wt.exe inside it,
+  # so a leftover dir from an uninstall reported worktrunk as present.
+  if (Have 'git-wt') { return 'git-wt' }
+  $cargoWt = Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'
+  if (Test-Path $cargoWt) { return $cargoWt }
+  $pkg = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') `
+    -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue | Select-Object -First 1
+  if ($pkg) {
+    $exe = Join-Path $pkg.FullName 'git-wt.exe'
+    if (Test-Path $exe) { return $exe }
   }
-}
-
-function Install-RefreshHooks {
-  Write-GitHook 'post-checkout' @'
-# claude-context-stack: refresh graph on branch switch (not file checkout)
-if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
-  ( graphify update . >/dev/null 2>&1 & )
-fi
-'@
-  Write-GitHook 'post-merge' @'
-# claude-context-stack: refresh graph after merge/pull
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true
-'@
-  Write-GitHook 'post-rewrite' @'
-# claude-context-stack: refresh graph after rebase
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true
-'@
+  return $null
 }
 
 function Install-Uv {
@@ -359,7 +330,7 @@ exit 0
   else { Warn "settings.json written but RTK's Bash hook wasn't found afterward - check settings.json manually" }
 }
 
-function Install-GraphAutobuild {
+function Write-GraphAutobuildHook {
   # Replaces per-repo `init` for the common case: a SessionStart hook that, in
   # any git repo, builds a missing graph in the background and refreshes an
   # existing one (incremental, content-hash cached). All side effects stay
@@ -367,14 +338,14 @@ function Install-GraphAutobuild {
   # which is why it writes .git/info/exclude rather than .gitignore and does
   # NOT inject the condensed contract into repo .claude\agents\. Run `init`
   # for the eager/tracked-file variant.
-  $hooksDir = Join-Path $ClaudeDir 'hooks'
-  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
-  $autoPath = Join-Path $hooksDir 'graph-autobuild.ps1'
-  Write-Utf8 $autoPath @'
-param([switch]$Build)
+  New-Item -ItemType Directory -Force -Path (Split-Path $GraphAutobuildHook) | Out-Null
+  Write-Utf8 $GraphAutobuildHook @'
+param([switch]$Build, [switch]$Hooks)
 # claude-context-stack: per-repo graph autobuild/refresh at session start.
 # Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
 # root. Remove the SessionStart entry in settings.json to uninstall.
+# Modes: (none) session start, -Build background first build, -Hooks install
+# this checkout's git hooks and exit (what `stack-init.ps1 init` calls).
 $ErrorActionPreference = 'SilentlyContinue'
 # Script scope on purpose. Ensure-RepoHooks and the -Build branch below both
 # append with it, and a function-local copy is NOT visible to the caller: the
@@ -464,6 +435,12 @@ function Ensure-RepoHooks ($cgd) {
   }
 }
 
+if ($Hooks) {
+  # `stack-init.ps1 init` delegating here is what keeps ONE copy of the hook bodies.
+  Ensure-RepoHooks $cgd
+  exit 0
+}
+
 if ($Build) {
   # Background worker: the actual first build. Everything it writes lives
   # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
@@ -504,8 +481,11 @@ Start-Process -WindowStyle Hidden -FilePath powershell -ArgumentList @(
   'graphify: no graph in this repo yet - the stack is building one in the background (first build can take a while on big repos). Orient normally until graphify-out/ appears; do not run graphify . yourself.' } } | ConvertTo-Json -Compress
 exit 0
 '@
+}
 
-  Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$autoPath`"" | Out-Null
+function Install-GraphAutobuild {
+  Write-GraphAutobuildHook
+  Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$GraphAutobuildHook`"" | Out-Null
   Say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
 }
 
@@ -992,25 +972,6 @@ function Install-Global {
   # (graphify graph + rebuild hook) in every new worktree, but only for repos
   # whose primary checkout opted in (graphify-out/ exists). Every step here is
   # non-fatal: a worktrunk failure must never block the token stack.
-  # Winget installs the binary as git-wt (avoids the Windows Terminal wt.exe
-  # collision). NEVER detect via bare 'wt' here - that matches Windows Terminal's
-  # launcher on stock Win11. Accept only git-wt or cargo's own wt.exe by path.
-  # Winget puts portable exes in a package dir it adds to the USER PATH in the
-  # registry - a shell started before that install (including the one running
-  # this script right after installing) never sees it, so probe the package dir
-  # directly instead of trusting Get-Command alone.
-  function Find-WtBin {
-    if (Have 'git-wt') { return 'git-wt' }
-    $cargoWt = Join-Path $env:USERPROFILE '.cargo\bin\wt.exe'
-    if (Test-Path $cargoWt) { return $cargoWt }
-    $pkg = Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') `
-      -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($pkg) {
-      $exe = Join-Path $pkg.FullName 'git-wt.exe'
-      if (Test-Path $exe) { return $exe }
-    }
-    return $null
-  }
   $WtBin = Find-WtBin
   if ($WtBin) { Say "  worktrunk present ($WtBin)" }
   else {
@@ -1068,7 +1029,7 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
   Install-ExtraSkill 'worktrunk'
 
   Say "Routing contract -> $ClaudeMd"
-  Write-ManagedBlock $ClaudeMd $Contract
+  Write-ManagedBlock $ClaudeMd (Get-Contract 'contract.md')
   Say "  contract written (idempotent - re-running replaces the managed block)"
 
   Say "Condensed contract -> subagent files ($env:USERPROFILE\.claude\agents\)"
@@ -1090,8 +1051,12 @@ function Init-Project {
   $top = git rev-parse --show-toplevel 2>$null
   if ($top) { Set-Location $top; Say "repo root: $top" }
   Say "building knowledge graph (graphify .)"; graphify .
-  Say "installing local post-commit hook (incremental rebuild)"; graphify hook install
-  Say "installing post-checkout/post-merge/post-rewrite refresh hooks"; Install-RefreshHooks
+  # Delegated, not reimplemented: the SessionStart hook owns the only copy of
+  # this repo's hook bodies, so `init` picks up the post-commit pin repair too.
+  Say "installing git hooks (post-commit + checkout/merge/rewrite refresh)"
+  Write-GraphAutobuildHook
+  & powershell -NoProfile -ExecutionPolicy Bypass -File $GraphAutobuildHook -Hooks
+  $global:LASTEXITCODE = 0
   # Read-then-write rather than Add-Content: on 5.1 Add-Content -Encoding utf8
   # stamps a BOM when it CREATES the file, and git treats a BOM as part of the
   # first pattern - a .gitignore whose first line is BOM+'graphify-out/' would
@@ -1153,10 +1118,35 @@ function Get-Stats {
   }
 }
 
+# One aligned formatter for every verify line. The hand-spaced Write-Host pairs
+# these replace spelled each label twice (once per branch) and had drifted to
+# three different column widths, so adding a longer label silently misaligned a
+# row. Same shape and widths as stack-init.sh's row helpers.
+function Write-Row {
+  param([string]$Label, [string]$Value)
+  Write-Host ("  {0,-17} {1}" -f "${Label}:", $Value)
+}
+function Write-RowHave {
+  param([string]$Cmd, [string]$Label, [string]$Ok, [string]$Missing)
+  if (Have $Cmd) { Write-Row $Label $Ok } else { Write-Row $Label $Missing }
+}
+function Write-RowSkill {
+  param([string]$Name)
+  if (Test-Path (Join-Path $ClaudeDir "skills\$Name\SKILL.md")) { Write-Row "$Name skill" 'OK (global)' }
+  else { Write-Row "$Name skill" 'NOT deployed - rerun global' }
+}
+function Write-RowHook {
+  param([string]$Name, [string]$Label)
+  # A SessionStart hook counts as wired only when BOTH the script exists and
+  # settings.json references it - either half alone is a half-install.
+  if ((Test-Path (Join-Path $ClaudeDir "hooks\$Name.ps1")) -and (Test-Path $SettingsPath) -and
+      (Select-String -Path $SettingsPath -Pattern $Name -Quiet)) { Write-Row $Label 'OK (SessionStart)' }
+  else { Write-Row $Label 'NOT registered' }
+}
+
 function Invoke-Verify {
   Say "verifying"
-  if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" }
-  else { Write-Host "  rtk:            NOT ON PATH" }
+  if (Have 'rtk') { Write-Row 'rtk' "OK ($(rtk --version 2>$null))" } else { Write-Row 'rtk' 'NOT ON PATH' }
   # Read the registered hook, do NOT shell out to `rtk gain`. Two reasons: its
   # exit code is 0 whether or not a hook exists (it just prints a warning), so
   # it never actually detected anything; and under $ErrorActionPreference='Stop'
@@ -1172,30 +1162,27 @@ function Invoke-Verify {
       }
     } catch {}
   }
-  if ($rtkHookActive) { Write-Host "  rtk hook:       OK (PreToolUse Bash)" }
-  else { Write-Host "  rtk hook:       NOT registered - run: rtk init -g" }
-  if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
-  if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
-  if (Have 'headroom') { Write-Host "  headroom:       OK" } else { Write-Host "  headroom:       NOT installed" }
+  if ($rtkHookActive) { Write-Row 'rtk hook' 'OK (PreToolUse Bash)' }
+  else { Write-Row 'rtk hook' 'NOT registered - run: rtk init -g' }
+  if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Row 'serena (mcp)' 'OK (user scope)' }
+  else { Write-Row 'serena (mcp)' 'NOT registered' }
+  Write-RowHave 'graphify' 'graphify' 'OK' 'NOT installed'
+  Write-RowHave 'headroom' 'headroom' 'OK' 'NOT installed'
   $shimDir = Join-Path $ClaudeDir 'stack-bin'
   if (Test-Path (Join-Path $shimDir 'claude.ps1')) {
     $first = Get-Command claude -All -ErrorAction SilentlyContinue | Select-Object -First 1
-    if ($first -and $first.Source -like "$shimDir*") { Write-Host "  claude shim:    OK (bare 'claude' auto-wraps through headroom)" }
-    else { Write-Host "  claude shim:    installed but NOT first on PATH (open a new terminal?)" }
-  } else { Write-Host "  claude shim:    NOT installed" }
-  if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $SettingsPath) -and
-      (Select-String -Path $SettingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
-  else { Write-Host "  graph autobuild: NOT registered" }
-  if ((Test-Path (Join-Path $ClaudeDir 'hooks\serena-autoinit.ps1')) -and (Test-Path $SettingsPath) -and
-      (Select-String -Path $SettingsPath -Pattern 'serena-autoinit' -Quiet)) { Write-Host "  serena autoinit: OK (SessionStart)" }
-  else { Write-Host "  serena autoinit: NOT registered" }
-  $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
-    [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
-  if ($wtFound) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
-  if (Have 'opensrc') { Write-Host "  opensrc:        OK (context tool - outside the contract)" } else { Write-Host "  opensrc:        NOT installed (optional)" }
-  if (Test-Path (Join-Path $ClaudeDir 'skills\opensrc\SKILL.md'))   { Write-Host "  opensrc skill:    OK (global)" }   else { Write-Host "  opensrc skill:    NOT deployed - rerun global" }
-  if (Test-Path (Join-Path $ClaudeDir 'skills\worktrunk\SKILL.md')) { Write-Host "  worktrunk skill:  OK (global)" } else { Write-Host "  worktrunk skill:  NOT deployed - rerun global" }
-  if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
+    if ($first -and $first.Source -like "$shimDir*") { Write-Row 'claude shim' "OK (bare 'claude' auto-wraps through headroom)" }
+    else { Write-Row 'claude shim' 'installed but NOT first on PATH (open a new terminal?)' }
+  } else { Write-Row 'claude shim' 'NOT installed' }
+  Write-RowHook 'graph-autobuild' 'graph autobuild'
+  Write-RowHook 'serena-autoinit' 'serena autoinit'
+  if (Find-WtBin) { Write-Row 'worktrunk' 'OK (workflow tool - outside the contract)' }
+  else { Write-Row 'worktrunk' 'NOT installed (optional)' }
+  Write-RowHave 'opensrc' 'opensrc' 'OK (context tool - outside the contract)' 'NOT installed (optional)'
+  Write-RowSkill 'opensrc'
+  Write-RowSkill 'worktrunk'
+  if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Row 'contract' "OK ($ClaudeMd)" }
+  else { Write-Row 'contract' 'MISSING' }
   if (Test-InGitRepo) {
     # Everything below is PER CHECKOUT, and a linked worktree is a checkout like
     # any other: it gets its own graph and its own Serena project, because both
@@ -1213,8 +1200,8 @@ function Invoke-Verify {
     }
     if ($isLinked) {
       $br = git rev-parse --abbrev-ref HEAD 2>$null
-      Write-Host "  checkout:       linked worktree ($br) - own graph + Serena project, shared hooks"
-    } else { Write-Host "  checkout:       primary" }
+      Write-Row 'checkout' "linked worktree ($br) - own graph + Serena project, shared hooks"
+    } else { Write-Row 'checkout' 'primary' }
     # Anchor on the repo ROOT, never cwd. graphify-out/ and .serena/ are written
     # at the top level by the SessionStart hooks (which `cd $top` first), so
     # cwd-relative tests reported "not built" / "none" for a fully wired repo
@@ -1225,11 +1212,13 @@ function Invoke-Verify {
     if (-not $top) { $top = (Get-Location).Path }
     $graphJson = Join-Path $top 'graphify-out/graph.json'
     $serenaYml = Join-Path $top '.serena/project.yml'
-    if (Test-Path $graphJson) { $kb = "{0:N0} KB" -f ((Get-Item $graphJson).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
-    if (Test-Path $serenaYml) { Write-Host "  serena project: OK (.serena\project.yml)" } else { Write-Host "  serena project: none - autoinits next session" }
+    if (Test-Path $graphJson) { $kb = "{0:N0} KB" -f ((Get-Item $graphJson).Length/1KB); Write-Row 'graph (here)' "OK ($kb)" }
+    else { Write-Row 'graph (here)' 'not built - autobuilds next session (or run: .\stack-init.ps1 init)' }
+    if (Test-Path $serenaYml) { Write-Row 'serena project' 'OK (.serena\project.yml)' }
+    else { Write-Row 'serena project' 'none - autoinits next session' }
     $hooksDir = Get-GitHooksDir
     if (-not $hooksDir) { $hooksDir = Join-Path $PWD.Path '.git\hooks' }
-    if (Test-Path (Join-Path $hooksDir 'post-commit')) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
+    if (Test-Path (Join-Path $hooksDir 'post-commit')) { Write-Row 'post-commit' 'OK' } else { Write-Row 'post-commit' 'none' }
     $refreshHooksActive = $true
     foreach ($hook in 'post-checkout', 'post-merge', 'post-rewrite') {
       $hookPath = Join-Path $hooksDir $hook
@@ -1238,7 +1227,8 @@ function Invoke-Verify {
         break
       }
     }
-    if ($refreshHooksActive) { Write-Host "  graph refresh:  OK (checkout/merge/rewrite)" } else { Write-Host "  graph refresh:  MISSING (checkout/merge/rewrite)" }
+    if ($refreshHooksActive) { Write-Row 'graph refresh' 'OK (checkout/merge/rewrite)' }
+    else { Write-Row 'graph refresh' 'MISSING (checkout/merge/rewrite)' }
   }
 }
 
@@ -1269,7 +1259,10 @@ switch ($Command.ToLower()) {
   }
   'init'     { Init-Project }
   'verify'   { Invoke-Verify }
-  'contract' { if (($Rest -contains '--condensed') -or ($Rest -contains '-condensed')) { Write-Output $ContractCondensed } else { Write-Output $Contract } }
+  'contract' {
+    $file = if (($Rest -contains '--condensed') -or ($Rest -contains '-condensed')) { 'contract-condensed.md' } else { 'contract.md' }
+    Write-Output (Get-Contract $file)
+  }
   'stats'    { Get-Stats }
   default    { Err "unknown command: $Command"; Write-Host $Usage; exit 1 }
 }

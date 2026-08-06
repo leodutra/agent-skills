@@ -48,6 +48,11 @@
 #    stack-init contract   # print the routing contract it installs
 #    stack-init contract --condensed  # print the short form injected into agents
 #    stack-init stats      # append + print a usage snapshot (rtk/headroom)
+#    stack-init help       # or -h / --help -> print this banner
+#
+#  The contract text itself is NOT in this script: it lives in contract.md and
+#  contract-condensed.md next to it, which stack-init.ps1 reads too, so the two
+#  installers cannot drift on the one artifact they both write.
 #
 #  AFTER GLOBAL INSTALL: open a NEW shell. Bare `claude` then launches through
 #  Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
@@ -63,48 +68,41 @@ set -euo pipefail
 
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
 CLAUDE_MD="$CLAUDE_DIR/CLAUDE.md"
+# The generated SessionStart hook is also the ONE implementation of "give this
+# checkout its git hooks": `init` runs it with --hooks rather than carrying a
+# second copy of the same three hook bodies (which is what it used to do, minus
+# the post-commit pin repair the copy never learned about).
+GRAPH_AUTOBUILD_HOOK="$CLAUDE_DIR/hooks/graph-autobuild.sh"
 B='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; N='\033[0m'
 say()  { printf "${B}==>${N} %s\n" "$*"; }
 warn() { printf "${Y}warn:${N} %s\n" "$*"; }
 err()  { printf "${R}error:${N} %s\n" "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 
-print_contract() {
-cat <<'BLOCK'
-# >>> claude-context-stack >>> (managed by stack-init — edits here are overwritten)
-## Context routing (non-negotiable)
-1. Architecture / cross-module / "what connects X to Y" / blast radius:
-   IF graphify-out/ exists -> read graphify-out/GRAPH_REPORT.md or run
-   `graphify query "..."` / `graphify path A B`. Never orient by reading files or grep.
-   IF absent -> orient normally (the stack autobuilds the graph in the background
-   at session start - it may simply not be ready yet).
-2. Specific symbols (definitions, references, implementations, file overviews)
-   -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview).
-   Never grep for symbol names.
-   Serena starts each session with NO ACTIVE PROJECT — writing .serena/project.yml
-   configures it but does not activate it. If a Serena tool answers "No active
-   project", call activate_project on this checkout's root (the SessionStart hook
-   prints its path and name) and retry. Never take that error as a reason to grep.
-3. Compile / type / lint state -> Serena get_diagnostics_for_file.
-   Do not run a full type-check just to read diagnostics Serena already provides.
-4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
-   insert_after_symbol, rename_symbol), not string/regex replacement.
-5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
-   Do NOT route execution through an MCP shell tool or the PowerShell tool —
-   RTK's hook matches Bash only, so both hand back uncompressed output.
-   PowerShell is for genuinely Windows-only work (registry, COM, cmdlets).
-6. The graph reflects the last REBUILD (normally the last commit).
-   - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
-   - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
-     first (incremental, content-hash cached, cheap), then query the graph as normal.
-
-## Source-of-truth precedence (on conflict)
-code/LSP (Serena)  >  graph (graphify)
-The LSP is live ground truth; the graph is a derivation that can trail the working
-tree. On conflict, trust the LSP and rebuild the graph (`graphify update .`).
-# <<< claude-context-stack <<<
-BLOCK
+script_dir() {
+  # Resolve symlinks so `ln -s .../config/stack-init.sh ~/.local/bin/stack-init`
+  # still finds the repo; readlink -f is GNU — fall back to the plain path.
+  local p; p="$(readlink -f "$0" 2>/dev/null || echo "$0")"
+  cd "$(dirname "$p")" && pwd
 }
+
+# The contract text is NOT duplicated in this script. Both installers read the
+# same two files next to them, so the POSIX and Windows variants cannot drift —
+# they already had (em dashes here, hyphens there) while claiming to write the
+# same managed block into the same ~/.claude/CLAUDE.md. Kept ASCII-only on
+# purpose: stack-init.ps1 reads these too, and Windows PowerShell 5.1 decodes a
+# BOM-less file as ANSI, which turns any non-ASCII byte into mojibake.
+print_contract_file() {
+  local f; f="$(script_dir)/$1"
+  if [ ! -f "$f" ]; then
+    err "contract source missing: $f"
+    err "run stack-init from the agent-skills repo checkout (config/ ships these)"
+    exit 1
+  fi
+  cat "$f"
+}
+print_contract()           { print_contract_file contract.md; }
+print_contract_condensed() { print_contract_file contract-condensed.md; }
 
 # Skills for the extras (opensrc, worktrunk). graphify deploys its own via
 # `graphify install`; these two ship none, and without a SKILL.md in
@@ -117,13 +115,6 @@ BLOCK
 # Source: the repo checkout next to this script — the script ships inside the
 # repo, so run it from there (no network fallback by design). Non-fatal like
 # the extras themselves.
-script_dir() {
-  # Resolve symlinks so `ln -s .../config/stack-init.sh ~/.local/bin/stack-init`
-  # still finds the repo; readlink -f is GNU — fall back to the plain path.
-  local p; p="$(readlink -f "$0" 2>/dev/null || echo "$0")"
-  cd "$(dirname "$p")" && pwd
-}
-
 install_extra_skill() {
   local name="$1" src dst
   src="$(script_dir)/../skills/$name"
@@ -142,18 +133,6 @@ install_extra_skill() {
   say "  $name skill deployed (from repo skills/)"
 }
 
-print_contract_condensed() {
-cat <<'BLOCK'
-# >>> claude-context-stack >>> (condensed, managed by stack-init — edits here are overwritten)
-1. Architecture/cross-module -> graphify (graphify-out/GRAPH_REPORT.md, `graphify query`/`path`). Never grep/read-many for this.
-2. Specific symbols -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview). Never grep for symbol names. On "No active project", call activate_project on this checkout's root, then retry — never fall back to grep.
-5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool, and on Windows never the PowerShell tool either (RTK's hook is Bash-only) except for Windows-only work.
-6. Graph = last REBUILD. Uncommitted+symbol -> Serena. Uncommitted+architectural -> `graphify update .` first, then query.
-Precedence on conflict: code/LSP (Serena) > graph (graphify).
-# <<< claude-context-stack <<<
-BLOCK
-}
-
 # Appending straight onto a file that does not end in a newline glues the first
 # line of the block onto the host document's last line - the marker stops being
 # at the start of a line, so the next run's strip pass no longer matches it and
@@ -170,11 +149,9 @@ end_with_blank_line() {
 }
 
 inject_condensed_contract() {
+  # One guard, not two: a missing directory simply yields no matches below, so
+  # the found=0 branch already covers it.
   local dir="$1" f found=0
-  if [ ! -d "$dir" ]; then
-    say "  no agent files at $dir — skipping condensed contract injection"
-    return
-  fi
   for f in "$dir"/*.md; do
     [ -e "$f" ] || continue
     found=1
@@ -234,38 +211,11 @@ in_git_repo() {
   git rev-parse --git-dir >/dev/null 2>&1
 }
 
-write_git_hook() {
-  # Merge-not-clobber: skip if our marker is already there, append under the
-  # marker if some other tool owns the file, otherwise create it fresh.
-  local name="$1" body="$2" dir
-  dir="$(get_git_hooks_dir)" || return 0
-  [ -n "$dir" ] || return 0
-  mkdir -p "$dir"
-  local path="$dir/$name"
-  if [ -f "$path" ] && grep -q 'claude-context-stack:' "$path" 2>/dev/null; then
-    return
-  fi
-  if [ -f "$path" ]; then printf '\n%s\n' "$body" >> "$path"
-  else printf '#!/bin/sh\n%s\n' "$body" > "$path"; fi
-  chmod +x "$path"
-}
-
-install_refresh_hooks() {
-  write_git_hook post-checkout '# claude-context-stack: refresh graph on branch switch (not file checkout)
-if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
-  ( graphify update . >/dev/null 2>&1 & )
-fi'
-  write_git_hook post-merge '# claude-context-stack: refresh graph after merge/pull
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
-  write_git_hook post-rewrite '# claude-context-stack: refresh graph after rebase
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
-}
-
 install_uv() {
   have uv && return
   say "  installing uv (needed to run Serena)"
-  if have pacman; then sudo pacman -S --noconfirm uv
-  else curl -LsSf https://astral.sh/uv/install.sh | sh; fi
+  if have pacman; then sudo pacman -S --noconfirm uv || true
+  else curl -LsSf https://astral.sh/uv/install.sh | sh || true; fi
   have uv || warn "uv install failed — Serena will not be able to launch"
 }
 
@@ -393,7 +343,7 @@ HOOK
   fi
 }
 
-install_graph_autobuild() {
+write_graph_autobuild_hook() {
   # Replaces per-repo `init` for the common case: a SessionStart hook that, in
   # any git repo, builds a missing graph in the background and refreshes an
   # existing one (incremental, content-hash cached). All side effects stay
@@ -402,11 +352,13 @@ install_graph_autobuild() {
   # NOT inject the condensed contract into repo .claude/agents/. Run `init`
   # for the eager/tracked-file variant.
   mkdir -p "$CLAUDE_DIR/hooks"
-  cat > "$CLAUDE_DIR/hooks/graph-autobuild.sh" <<'HOOK'
+  cat > "$GRAPH_AUTOBUILD_HOOK" <<'HOOK'
 #!/bin/sh
 # claude-context-stack: per-repo graph autobuild/refresh at session start.
 # Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
 # root. Remove the SessionStart entry in settings.json to uninstall.
+# Modes: (none) session start, --build background first build, --hooks install
+# this checkout's git hooks and exit (what `stack-init init` calls).
 top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 [ -n "$top" ] || exit 0
 cd "$top" || exit 0
@@ -483,6 +435,12 @@ command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . 
   return 0
 }
 
+if [ "${1:-}" = "--hooks" ]; then
+  # `stack-init init` delegating here is what keeps ONE copy of the hook bodies.
+  ensure_repo_hooks
+  exit 0
+fi
+
 if [ "${1:-}" = "--build" ]; then
   # Background worker: the actual first build. Everything it writes lives
   # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
@@ -516,8 +474,12 @@ fi
 printf '%s' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"graphify: no graph in this repo yet - the stack is building one in the background (first build can take a while on big repos). Orient normally until graphify-out/ appears; do not run graphify . yourself."}}'
 exit 0
 HOOK
-  chmod +x "$CLAUDE_DIR/hooks/graph-autobuild.sh"
-  register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/graph-autobuild.sh\"" >/dev/null
+  chmod +x "$GRAPH_AUTOBUILD_HOOK"
+}
+
+install_graph_autobuild() {
+  write_graph_autobuild_hook
+  register_sessionstart_hook "bash \"$GRAPH_AUTOBUILD_HOOK\"" >/dev/null
   say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
 }
 
@@ -763,10 +725,21 @@ SHIM
 
 install_global() {
   check_deps
+  # Every optional install below is non-fatal on purpose. `set -e` turns both a
+  # failed install AND a missing installer (exit 127) into an abort, which used
+  # to take out everything after it — including the routing contract written at
+  # the very end, the one step that is the whole point of the script. check_deps
+  # only WARNS about cargo/pip, so "warn, then die anyway" was the old behavior.
   say "RTK — output compression (global Bash hook)"
   if have rtk; then say "  rtk present ($(rtk --version 2>/dev/null))"
-  else say "  installing rtk"; cargo install --git https://github.com/rtk-ai/rtk; fi
-  rtk init -g && say "  rtk init -g (PreToolUse Bash hook registered)"
+  elif have cargo; then
+    say "  installing rtk"
+    cargo install --git https://github.com/rtk-ai/rtk || warn "cargo install rtk failed"
+  fi
+  if have rtk; then
+    rtk init -g && say "  rtk init -g (PreToolUse Bash hook registered)" \
+      || warn "rtk init -g failed — output compression off"
+  else warn "rtk not on PATH — output compression off (install cargo, then re-run)"; fi
 
   # One health-check pass, reused by the Serena and Headroom steps below:
   # `claude mcp list` spawns every registered server and waits on it, so
@@ -783,10 +756,11 @@ install_global() {
   # falls back to grep, breaking contract rule 2 with nothing in the UI to
   # say so. `uv tool install` pins a built binary, so launch is import-only.
   if have serena; then say "  serena present ($(serena --version 2>/dev/null))"
-  else
+  elif have uv; then
     say "  installing serena (uv tool; PyPI/dist name is serena-agent, command is serena)"
-    uv tool install --from git+https://github.com/oraios/serena serena-agent
-  fi
+    uv tool install --from git+https://github.com/oraios/serena serena-agent \
+      || warn "serena install failed — symbol routing (contract rule 2) stays unavailable"
+  else warn "uv missing — cannot install serena; symbol routing (contract rule 2) stays unavailable"; fi
   # Migrate an earlier uvx-based registration — a bare "already registered"
   # check would leave the slow, timeout-prone form in place forever.
   serena_line="$(printf '%s\n' "$mcp_list" | grep -i '^serena[: ]' || true)"
@@ -818,9 +792,14 @@ install_global() {
   say "graphify — codebase knowledge graph"
   if ! have graphify; then
     say "  installing graphify (PyPI package: graphifyy, double-y)"
-    if have uv; then uv tool install 'graphifyy[all]'; else pip install 'graphifyy[all]'; fi
+    if have uv;    then uv tool install 'graphifyy[all]' || warn "graphify install failed"
+    elif have pip; then pip install 'graphifyy[all]'     || warn "graphify install failed"
+    else warn "neither uv nor pip found — skipping graphify install"; fi
   fi
-  graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)"
+  if have graphify; then
+    graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)" \
+      || warn "graphify install (skill deploy) failed"
+  else warn "graphify not on PATH — the graph layer stays off; contract rule 1 degrades to normal orientation"; fi
   # Deliberately NOT running `graphify claude install` here: it targets the
   # CLAUDE.md / .claude/settings.json in the CURRENT DIRECTORY, not this
   # script's global $CLAUDE_MD - wrong layer for a global install step. Its
@@ -836,7 +815,9 @@ install_global() {
   if have headroom; then say "  headroom present ($(headroom --version 2>/dev/null))"
   else
     say "  installing headroom (PyPI package: headroom-ai)"
-    if have uv; then uv tool install 'headroom-ai[all]'; else pip install 'headroom-ai[all]'; fi
+    if have uv;    then uv tool install 'headroom-ai[all]' || warn "headroom install failed"
+    elif have pip; then pip install 'headroom-ai[all]'     || warn "headroom install failed"
+    else warn "neither uv nor pip found — skipping headroom install"; fi
   fi
   # Headroom integrates at the WIRE (the shim below), never as an MCP server.
   # A `headroom mcp serve` registration is not part of this stack and current
@@ -973,8 +954,11 @@ init_project() {
   top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
   [ -n "$top" ] && { cd "$top" && say "repo root: $top"; }
   say "building knowledge graph (graphify .)"; graphify .
-  say "installing local post-commit hook (incremental rebuild)"; graphify hook install
-  say "installing post-checkout/post-merge/post-rewrite refresh hooks"; install_refresh_hooks
+  # Delegated, not reimplemented: the SessionStart hook owns the only copy of
+  # this repo's hook bodies, so `init` picks up the post-commit pin repair too.
+  say "installing git hooks (post-commit + checkout/merge/rewrite refresh)"
+  write_graph_autobuild_hook
+  sh "$GRAPH_AUTOBUILD_HOOK" --hooks
   if ! { [ -f .gitignore ] && grep -q '^graphify-out/' .gitignore; }; then
     printf '\n# Claude context-stack knowledge graph\ngraphify-out/\n' >> .gitignore
     say "gitignored graphify-out/"
@@ -1012,35 +996,50 @@ PYEOF
   done
 }
 
+# One aligned printf for every verify line. The hand-spaced echo pairs it
+# replaces spelled each label twice (once per branch) and had drifted to three
+# different column widths, so adding a longer label silently misaligned a row.
+row()      { printf '  %-17s %s\n' "$1:" "$2"; }
+row_have() { if have "$1"; then row "$2" "$3"; else row "$2" "$4"; fi; }
+row_skill() {
+  if [ -f "$CLAUDE_DIR/skills/$1/SKILL.md" ]; then row "$1 skill" "OK (global)"
+  else row "$1 skill" "NOT deployed — rerun global"; fi
+}
+row_hook() {
+  # A SessionStart hook counts as wired only when BOTH the script exists and
+  # settings.json references it — either half alone is a half-install.
+  if [ -x "$CLAUDE_DIR/hooks/$1.sh" ] && grep -q "$1" "$CLAUDE_DIR/settings.json" 2>/dev/null
+  then row "$2" "OK (SessionStart)"; else row "$2" "NOT registered"; fi
+}
+
 verify() {
   say "verifying"
-  have rtk && echo "  rtk:            OK ($(rtk --version 2>/dev/null))" || echo "  rtk:            NOT ON PATH"
+  if have rtk; then row rtk "OK ($(rtk --version 2>/dev/null))"; else row rtk "NOT ON PATH"; fi
   # Read the registered hook, do NOT shell out to `rtk gain`: it exits 0 whether
   # or not a hook exists (it merely prints a warning), so the old check reported
   # "active" for an uninstalled hook. settings.json is the source of truth.
   if grep -q '"PreToolUse"' "$CLAUDE_DIR/settings.json" 2>/dev/null &&
      grep -q 'rtk' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
-    echo "  rtk hook:       OK (PreToolUse Bash)"
-  else echo "  rtk hook:       NOT registered — run: rtk init -g"; fi
-  claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
-  have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
-  have headroom && echo "  headroom:       OK" || echo "  headroom:       NOT installed"
+    row "rtk hook" "OK (PreToolUse Bash)"
+  else row "rtk hook" "NOT registered — run: rtk init -g"; fi
+  if claude mcp list 2>/dev/null | grep -qi serena; then row "serena (mcp)" "OK (user scope)"
+  else row "serena (mcp)" "NOT registered"; fi
+  row_have graphify "graphify" "OK" "NOT installed"
+  row_have headroom "headroom" "OK" "NOT installed"
   if [ -x "$CLAUDE_DIR/stack-bin/claude" ]; then
-    first="$(command -v claude 2>/dev/null || true)"
-    if [ "$first" = "$CLAUDE_DIR/stack-bin/claude" ]; then echo "  claude shim:    OK (bare 'claude' auto-wraps through headroom)"
-    else echo "  claude shim:    installed but NOT first on PATH (open a new shell?)"; fi
-  else echo "  claude shim:    NOT installed"; fi
-  if [ -x "$CLAUDE_DIR/hooks/graph-autobuild.sh" ] && grep -q 'graph-autobuild' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
-    echo "  graph autobuild: OK (SessionStart)"
-  else echo "  graph autobuild: NOT registered"; fi
-  if [ -x "$CLAUDE_DIR/hooks/serena-autoinit.sh" ] && grep -q 'serena-autoinit' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
-    echo "  serena autoinit: OK (SessionStart)"
-  else echo "  serena autoinit: NOT registered"; fi
-  { have wt || have git-wt; } && echo "  worktrunk:      OK (workflow tool — outside the contract)" || echo "  worktrunk:      NOT installed (optional)"
-  have opensrc && echo "  opensrc:        OK (context tool — outside the contract)" || echo "  opensrc:        NOT installed (optional)"
-  [ -f "$CLAUDE_DIR/skills/opensrc/SKILL.md" ]   && echo "  opensrc skill:    OK (global)"   || echo "  opensrc skill:    NOT deployed — rerun global"
-  [ -f "$CLAUDE_DIR/skills/worktrunk/SKILL.md" ] && echo "  worktrunk skill:  OK (global)"   || echo "  worktrunk skill:  NOT deployed — rerun global"
-  grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
+    if [ "$(command -v claude 2>/dev/null || true)" = "$CLAUDE_DIR/stack-bin/claude" ]
+    then row "claude shim" "OK (bare 'claude' auto-wraps through headroom)"
+    else row "claude shim" "installed but NOT first on PATH (open a new shell?)"; fi
+  else row "claude shim" "NOT installed"; fi
+  row_hook graph-autobuild "graph autobuild"
+  row_hook serena-autoinit "serena autoinit"
+  if have wt || have git-wt; then row worktrunk "OK (workflow tool — outside the contract)"
+  else row worktrunk "NOT installed (optional)"; fi
+  row_have opensrc "opensrc" "OK (context tool — outside the contract)" "NOT installed (optional)"
+  row_skill opensrc
+  row_skill worktrunk
+  if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null
+  then row contract "OK ($CLAUDE_MD)"; else row contract "MISSING"; fi
   if in_git_repo; then
     # Everything below is PER CHECKOUT, and a linked worktree is a checkout like
     # any other: it gets its own graph and its own Serena project, because both
@@ -1059,8 +1058,8 @@ verify() {
     [ -n "$cgd" ] || cgd="$gd"
     if [ -n "$gd" ] && [ "$gd" != "$cgd" ]; then
       br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-      echo "  checkout:       linked worktree ($br) — own graph + Serena project, shared hooks"
-    else echo "  checkout:       primary"; fi
+      row checkout "linked worktree ($br) — own graph + Serena project, shared hooks"
+    else row checkout "primary"; fi
     # Anchor on the repo ROOT, never cwd: graphify-out/ and .serena/ are written
     # at the top level by the SessionStart hooks (which `cd "$top"` first), so
     # cwd-relative tests reported "not built" / "none" for a fully wired repo
@@ -1068,15 +1067,20 @@ verify() {
     local top
     top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
     [ -n "$top" ] || top="$PWD"
-    [ -f "$top/graphify-out/graph.json" ] && echo "  graph (here):   OK ($(du -h "$top/graphify-out/graph.json" | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
-    [ -f "$top/.serena/project.yml" ] && echo "  serena project: OK (.serena/project.yml)" || echo "  serena project: none — autoinits next session"
+    if [ -f "$top/graphify-out/graph.json" ]
+    then row "graph (here)" "OK ($(du -h "$top/graphify-out/graph.json" | cut -f1))"
+    else row "graph (here)" "not built — autobuilds next session (or run: $(basename "$0") init)"; fi
+    if [ -f "$top/.serena/project.yml" ]
+    then row "serena project" "OK (.serena/project.yml)"
+    else row "serena project" "none — autoinits next session"; fi
     hooks_dir="$(get_git_hooks_dir)"
     [ -n "$hooks_dir" ] || hooks_dir=".git/hooks"
-    [ -f "$hooks_dir/post-commit" ] && echo "  post-commit:    OK" || echo "  post-commit:    none"
+    if [ -f "$hooks_dir/post-commit" ]; then row post-commit "OK"; else row post-commit "none"; fi
     for refresh_hook in post-checkout post-merge post-rewrite; do
       grep -q 'claude-context-stack:' "$hooks_dir/$refresh_hook" 2>/dev/null || { refresh_hooks_ok=0; break; }
     done
-    [ "$refresh_hooks_ok" = 1 ] && echo "  graph refresh:  OK (checkout/merge/rewrite)" || echo "  graph refresh:  MISSING (checkout/merge/rewrite)"
+    if [ "$refresh_hooks_ok" = 1 ]; then row "graph refresh" "OK (checkout/merge/rewrite)"
+    else row "graph refresh" "MISSING (checkout/merge/rewrite)"; fi
   fi
 }
 
@@ -1090,5 +1094,5 @@ case "${1:-global}" in
   # '2,57p' range silently truncated it mid-sentence once the header moved -
   # by the time this was noticed it was cutting the PREREQS line off.
   -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats|help]"; exit 1 ;;
 esac
