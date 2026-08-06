@@ -83,7 +83,9 @@ cat <<'BLOCK'
 4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
    insert_after_symbol, rename_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
-   Do NOT route execution through any MCP shell tool — that bypasses RTK.
+   Do NOT route execution through an MCP shell tool or the PowerShell tool —
+   RTK's hook matches Bash only, so both hand back uncompressed output.
+   PowerShell is for genuinely Windows-only work (registry, COM, cmdlets).
 6. The graph reflects the last REBUILD (normally the last commit).
    - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
    - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
@@ -138,7 +140,7 @@ cat <<'BLOCK'
 # >>> claude-context-stack >>> (condensed, managed by stack-init — edits here are overwritten)
 1. Architecture/cross-module -> graphify (graphify-out/GRAPH_REPORT.md, `graphify query`/`path`). Never grep/read-many for this.
 2. Specific symbols -> Serena (find_symbol, find_referencing_symbols, get_symbols_overview). Never grep for symbol names.
-5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool.
+5. Anything that executes -> Bash (RTK compresses it). Never an MCP shell tool, and on Windows never the PowerShell tool either (RTK's hook is Bash-only) except for Windows-only work.
 6. Graph = last REBUILD. Uncommitted+symbol -> Serena. Uncommitted+architectural -> `graphify update .` first, then query.
 Precedence on conflict: code/LSP (Serena) > graph (graphify).
 # <<< claude-context-stack <<<
@@ -260,6 +262,33 @@ rtk_present = any('rtk' in str(h) for h in hooks.get('PreToolUse', []))
 print('rtk-hook-present' if rtk_present else 'rtk-hook-missing')
 PYEOF
   python3 "$merge_py" "$settings" "$hook_cmd" 2>&1
+  rm -f "$merge_py"
+}
+
+set_global_env_var() {
+  # Writes settings.json env.<name> unless the user already set it (their
+  # value wins - this is a floor, not a policy).
+  local name="$1" value="$2" settings="$CLAUDE_DIR/settings.json" merge_py
+  mkdir -p "$CLAUDE_DIR"; [ -f "$settings" ] || echo '{}' > "$settings"
+  merge_py="$(mktemp)"
+  cat > "$merge_py" <<'PYEOF'
+import json, sys
+path, name, value = sys.argv[1], sys.argv[2], sys.argv[3]
+try:
+    with open(path) as f:
+        data = json.load(f)
+except (FileNotFoundError, json.JSONDecodeError):
+    data = {}
+env = data.setdefault('env', {})
+if name in env:
+    print('  settings.json env.%s already set (%s) - left alone' % (name, env[name]))
+else:
+    env[name] = value
+    with open(path, 'w') as f:
+        json.dump(data, f, indent=2)
+    print('  settings.json env.%s = %s' % (name, value))
+PYEOF
+  python3 "$merge_py" "$settings" "$name" "$value" 2>&1
   rm -f "$merge_py"
 }
 
@@ -425,14 +454,48 @@ install_global() {
   else say "  installing rtk"; cargo install --git https://github.com/rtk-ai/rtk; fi
   rtk init -g && say "  rtk init -g (PreToolUse Bash hook registered)"
 
+  # One health-check pass, reused by the Serena and Headroom steps below:
+  # `claude mcp list` spawns every registered server and waits on it, so
+  # calling it twice doubles the slowest step in this function.
+  local mcp_list serena_line
+  mcp_list="$(claude mcp list 2>/dev/null)"
+
   say "Serena — LSP symbols over MCP (user scope, auto-activates per repo)"
-  if claude mcp list 2>/dev/null | grep -qi '^serena\|serena '; then
+  install_uv
+  # Serena runs from a uv-installed binary, NOT `uvx --from git+...`: uvx
+  # re-resolves the git ref and REBUILDS the package whenever uv's cache is
+  # cold, which overruns Claude Code's 30s MCP startup limit and leaves the
+  # session with no Serena at all. That failure is silent — the model just
+  # falls back to grep, breaking contract rule 2 with nothing in the UI to
+  # say so. `uv tool install` pins a built binary, so launch is import-only.
+  if have serena; then say "  serena present ($(serena --version 2>/dev/null))"
+  else
+    say "  installing serena (uv tool; PyPI/dist name is serena-agent, command is serena)"
+    uv tool install --from git+https://github.com/oraios/serena serena-agent
+  fi
+  # Migrate an earlier uvx-based registration — a bare "already registered"
+  # check would leave the slow, timeout-prone form in place forever.
+  serena_line="$(printf '%s\n' "$mcp_list" | grep -i '^serena[: ]' || true)"
+  case "$serena_line" in
+    *uvx*)
+      claude mcp remove --scope user serena >/dev/null 2>&1
+      say "  removed uvx-based serena registration (rebuilt from git on every launch)"
+      serena_line=""
+      ;;
+  esac
+  if [ -n "$serena_line" ]; then
     say "  serena already registered — skipped"
   else
-    install_uv
-    claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant
-    say "  serena registered at user scope (--context ide-assistant: no shell/read tools)"
+    # --context claude-code is the current name of the old 'ide-assistant'
+    # context (Serena logs a deprecation warning for the latter); same
+    # toolset, shell/read/file-search tools excluded so it can't shadow
+    # Bash+RTK or the built-in file tools.
+    claude mcp add --scope user serena -- serena start-mcp-server --context claude-code
+    say "  serena registered at user scope (--context claude-code: no shell/read tools)"
   fi
+  # Safety net for a genuinely cold first launch (uv tool run, LSP download):
+  # Claude Code's default MCP startup timeout is 30s, which is not much.
+  set_global_env_var MCP_TIMEOUT 120000
   set_serena_dashboard_config
 
   say "graphify — codebase knowledge graph"
@@ -457,6 +520,15 @@ install_global() {
   else
     say "  installing headroom (PyPI package: headroom-ai)"
     if have uv; then uv tool install 'headroom-ai[all]'; else pip install 'headroom-ai[all]'; fi
+  fi
+  # Headroom integrates at the WIRE (the shim below), never as an MCP server.
+  # A `headroom mcp serve` registration is not part of this stack and current
+  # headroom-ai builds crash on its startup (AttributeError: 'Server' object
+  # has no attribute 'list_tools'), so each session pays ~3s for a connection
+  # that always fails, in every workspace. Drop a stray one.
+  if printf '%s\n' "$mcp_list" | grep -qi '^headroom[: ]'; then
+    claude mcp remove --scope user headroom >/dev/null 2>&1
+    say "  removed stray headroom MCP registration (wire proxy is the integration, not MCP)"
   fi
   # Newer headroom builds its own "tokensave" code graph by default - the
   # renamed, default-on incarnation of --code-graph, which the decisions log
