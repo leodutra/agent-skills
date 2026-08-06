@@ -55,8 +55,9 @@
 #  background (opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file
 #  in the repo root).
 #
-#  PREREQS: cargo, pip, uv, claude (Claude Code CLI), git. A language server per
-#  language (rust-analyzer via `rustup component add rust-analyzer`, etc.).
+#  PREREQS: git, claude (Claude Code CLI), python3 (settings.json merges), plus
+#  cargo/pip/uv for the tool installs. A language server per language
+#  (rust-analyzer via `rustup component add rust-analyzer`, etc.).
 # =============================================================================
 set -euo pipefail
 
@@ -153,6 +154,21 @@ Precedence on conflict: code/LSP (Serena) > graph (graphify).
 BLOCK
 }
 
+# Appending straight onto a file that does not end in a newline glues the first
+# line of the block onto the host document's last line - the marker stops being
+# at the start of a line, so the next run's strip pass no longer matches it and
+# the block is appended AGAIN. Normalise the tail to exactly one blank line
+# instead of just adding one: strip-then-reappend runs in a loop over the same
+# file, and an unconditional blank line grows the gap by one every run. `$( )`
+# strips every trailing newline, which is what makes this converge - the same
+# thing stack-init.ps1's Write-ManagedBlock does with .TrimEnd().
+end_with_blank_line() {
+  local f="$1" body
+  [ -s "$f" ] || return 0
+  body="$(cat "$f")"
+  printf '%s\n\n' "$body" > "$f"
+}
+
 inject_condensed_contract() {
   local dir="$1" f found=0
   if [ ! -d "$dir" ]; then
@@ -180,6 +196,7 @@ inject_condensed_contract() {
         continue
       fi
     fi
+    end_with_blank_line "$f"
     print_contract_condensed >> "$f"
   done
   if [ "$found" = 1 ]; then say "  condensed contract injected into $dir/*.md"
@@ -188,7 +205,11 @@ inject_condensed_contract() {
 
 check_deps() {
   local miss=0
-  for d in git claude; do have "$d" || { err "missing required: $d"; miss=1; }; done
+  # python3 is required, not optional: every settings.json mutation (the two
+  # SessionStart hooks, MCP_TIMEOUT) and `stats` go through it. It used to be
+  # undeclared, so a box without it failed deep inside install_global instead
+  # of here.
+  for d in git claude python3; do have "$d" || { err "missing required: $d"; miss=1; }; done
   have cargo || warn "cargo not found — needed to install RTK (Arch: pacman -S rust / rustup)"
   have pip   || warn "pip not found — needed to install graphify"
   [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
@@ -266,58 +287,87 @@ set_serena_dashboard_config() {
   fi
 }
 
+# Both settings.json mutations below run through one helper: same load rules,
+# same refusal to clobber, one place to fix. $1 is the python body, the rest are
+# argv[2:]; argv[1] is always the settings path.
+edit_settings() {
+  local body="$1" settings="$CLAUDE_DIR/settings.json" merge_py rc
+  shift
+  have python3 || { err "python3 not found - cannot edit $settings"; return 1; }
+  mkdir -p "$CLAUDE_DIR"
+  merge_py="$(mktemp)"
+  # The preamble is shared; `body` sees `data` loaded and must call save().
+  {
+    cat <<'PYEOF'
+import json, sys
+path = sys.argv[1]
+def _load():
+    try:
+        # utf-8-sig, not utf-8: stack-init.ps1 writes this same file, and
+        # Windows PowerShell 5.1 used to stamp a UTF-8 BOM on it. A plain
+        # utf-8 read raises JSONDecodeError on that byte order mark.
+        with open(path, encoding='utf-8-sig') as f:
+            text = f.read()
+    except FileNotFoundError:
+        return {}
+    if not text.strip():
+        return {}
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError as e:
+        # HARD STOP. The old `except: data = {}` meant one malformed byte
+        # silently replaced the user's ENTIRE config on the next write -
+        # RTK's PreToolUse hook, every permission, every env var. Failing to
+        # install a hook is recoverable; losing that file is not.
+        sys.stderr.write(
+            'error: %s is not valid JSON (%s)\n'
+            'refusing to overwrite it - fix or move it, then re-run\n' % (path, e))
+        sys.exit(1)
+data = _load()
+def save():
+    with open(path, 'w', encoding='utf-8') as f:
+        json.dump(data, f, indent=2)
+        f.write('\n')
+PYEOF
+    printf '%s\n' "$body"
+  } > "$merge_py"
+  # `|| rc=$?` and not a bare call: under `set -e` a failing simple command
+  # exits the shell before $? can be read, so the temp file would leak and the
+  # caller would never see the status.
+  rc=0
+  python3 "$merge_py" "$settings" "$@" || rc=$?
+  rm -f "$merge_py"
+  return $rc
+}
+
 register_sessionstart_hook() {
   # Adds a SessionStart command hook to global settings.json (idempotent).
   # Prints rtk-hook-present / rtk-hook-missing for callers that care.
-  local hook_cmd="$1" settings="$CLAUDE_DIR/settings.json" merge_py
-  mkdir -p "$CLAUDE_DIR"; [ -f "$settings" ] || echo '{}' > "$settings"
-  merge_py="$(mktemp)"
-  cat > "$merge_py" <<'PYEOF'
-import json, sys
-path, hook_cmd = sys.argv[1], sys.argv[2]
-try:
-    with open(path) as f:
-        data = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    data = {}
-hooks = data.setdefault('hooks', {})
-starts = hooks.setdefault('SessionStart', [])
-if not any(h.get('command') == hook_cmd for entry in starts for h in entry.get('hooks', [])):
-    starts.append({'hooks': [{'type': 'command', 'command': hook_cmd}]})
-with open(path, 'w') as f:
-    json.dump(data, f, indent=2)
-rtk_present = any('rtk' in str(h) for h in hooks.get('PreToolUse', []))
-print('rtk-hook-present' if rtk_present else 'rtk-hook-missing')
-PYEOF
-  python3 "$merge_py" "$settings" "$hook_cmd" 2>&1
-  rm -f "$merge_py"
+  edit_settings '
+hook_cmd = sys.argv[2]
+hooks = data.setdefault("hooks", {})
+starts = hooks.setdefault("SessionStart", [])
+if not any(h.get("command") == hook_cmd for entry in starts for h in entry.get("hooks", [])):
+    starts.append({"hooks": [{"type": "command", "command": hook_cmd}]})
+save()
+rtk_present = any("rtk" in str(h) for h in hooks.get("PreToolUse", []))
+print("rtk-hook-present" if rtk_present else "rtk-hook-missing")
+' "$1"
 }
 
 set_global_env_var() {
   # Writes settings.json env.<name> unless the user already set it (their
   # value wins - this is a floor, not a policy).
-  local name="$1" value="$2" settings="$CLAUDE_DIR/settings.json" merge_py
-  mkdir -p "$CLAUDE_DIR"; [ -f "$settings" ] || echo '{}' > "$settings"
-  merge_py="$(mktemp)"
-  cat > "$merge_py" <<'PYEOF'
-import json, sys
-path, name, value = sys.argv[1], sys.argv[2], sys.argv[3]
-try:
-    with open(path) as f:
-        data = json.load(f)
-except (FileNotFoundError, json.JSONDecodeError):
-    data = {}
-env = data.setdefault('env', {})
+  edit_settings '
+name, value = sys.argv[2], sys.argv[3]
+env = data.setdefault("env", {})
 if name in env:
-    print('  settings.json env.%s already set (%s) - left alone' % (name, env[name]))
+    print("  settings.json env.%s already set (%s) - left alone" % (name, env[name]))
 else:
     env[name] = value
-    with open(path, 'w') as f:
-        json.dump(data, f, indent=2)
-    print('  settings.json env.%s = %s' % (name, value))
-PYEOF
-  python3 "$merge_py" "$settings" "$name" "$value" 2>&1
-  rm -f "$merge_py"
+    save()
+    print("  settings.json env.%s = %s" % (name, value))
+' "$1" "$2"
 }
 
 install_headroom_check() {
@@ -899,6 +949,7 @@ WTHOOK
       "$CLAUDE_MD" > "$tmp" && mv "$tmp" "$CLAUDE_MD"
     say "  refreshed existing managed block"
   fi
+  end_with_blank_line "$CLAUDE_MD"
   print_contract >> "$CLAUDE_MD"
   say "  contract written (idempotent — re-running replaces the managed block)"
 
@@ -914,6 +965,13 @@ WTHOOK
 init_project() {
   in_git_repo || { err "run from a git repo (no git repo here)"; exit 1; }
   have graphify || { err "graphify not installed — run '$(basename "$0") global' first"; exit 1; }
+  # Everything below is repo-ROOT state: `graphify .` from a subdirectory would
+  # build a graph of that subdirectory alone and drop .gitignore there, while
+  # the autobuild hook (which cd's to the top level) builds the real one — two
+  # graphs, one repo. Match the hook and move to the top first.
+  local top
+  top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+  [ -n "$top" ] && { cd "$top" && say "repo root: $top"; }
   say "building knowledge graph (graphify .)"; graphify .
   say "installing local post-commit hook (incremental rebuild)"; graphify hook install
   say "installing post-checkout/post-merge/post-rewrite refresh hooks"; install_refresh_hooks
@@ -932,8 +990,12 @@ stats() {
   mkdir -p "$dir"
   ts="$(date -u +%Y%m%dT%H%M%SZ)"
   snap="$dir/$ts.json"
+  # `headroom savings`, not `headroom stats` - the latter has never been a
+  # headroom subcommand, so every snapshot ever taken recorded a usage error
+  # instead of the numbers. (`headroom memory stats` exists and is a different
+  # thing: memory-store counts, not compression savings.)
   if have rtk; then rtk_out="$(rtk gain 2>&1 || true)"; else rtk_out="rtk not on PATH"; fi
-  if have headroom; then headroom_out="$(headroom stats 2>&1 || true)"; else headroom_out="headroom not installed"; fi
+  if have headroom; then headroom_out="$(headroom savings 2>&1 || true)"; else headroom_out="headroom not installed"; fi
   python3 - "$snap" "$ts" "$rtk_out" "$headroom_out" <<'PYEOF'
 import json, sys
 path, ts, rtk_out, headroom_out = sys.argv[1:5]
@@ -999,8 +1061,15 @@ verify() {
       br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
       echo "  checkout:       linked worktree ($br) — own graph + Serena project, shared hooks"
     else echo "  checkout:       primary"; fi
-    [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
-    [ -f .serena/project.yml ] && echo "  serena project: OK (.serena/project.yml)" || echo "  serena project: none — autoinits next session"
+    # Anchor on the repo ROOT, never cwd: graphify-out/ and .serena/ are written
+    # at the top level by the SessionStart hooks (which `cd "$top"` first), so
+    # cwd-relative tests reported "not built" / "none" for a fully wired repo
+    # whenever verify ran from a subdirectory.
+    local top
+    top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
+    [ -n "$top" ] || top="$PWD"
+    [ -f "$top/graphify-out/graph.json" ] && echo "  graph (here):   OK ($(du -h "$top/graphify-out/graph.json" | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
+    [ -f "$top/.serena/project.yml" ] && echo "  serena project: OK (.serena/project.yml)" || echo "  serena project: none — autoinits next session"
     hooks_dir="$(get_git_hooks_dir)"
     [ -n "$hooks_dir" ] || hooks_dir=".git/hooks"
     [ -f "$hooks_dir/post-commit" ] && echo "  post-commit:    OK" || echo "  post-commit:    none"
@@ -1017,6 +1086,9 @@ case "${1:-global}" in
   verify)     verify ;;
   contract)   [ "${2:-}" = "--condensed" ] && print_contract_condensed || print_contract ;;
   stats)      stats ;;
-  -h|--help|help) sed -n '2,57p' "$0" | sed 's/^# \{0,1\}//' ;;
+  # Print the whole comment banner, however long it grows. The old fixed
+  # '2,57p' range silently truncated it mid-sentence once the header moved -
+  # by the time this was noticed it was cutting the PREREQS line off.
+  -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
   *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats]"; exit 1 ;;
 esac

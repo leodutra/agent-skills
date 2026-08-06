@@ -69,8 +69,8 @@ Worktrees stay indistinguishable from any other checkout via one rule — *a wor
 
 ## Prerequisites
 
-Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and a language server per language used (rust-analyzer / typescript-language-server / pyright). On Windows: PowerShell 5.1+ and Git for Windows (its bundled bash runs the post-commit hook).
+Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and a language server per language used (rust-analyzer / typescript-language-server / pyright). On Linux/macOS also `python3` — every `settings.json` merge goes through it. On Windows: PowerShell 5.1+ and Git for Windows (its bundled bash runs the post-commit hook).
 
 ## Versioning
 
-Doc is at **v2.3** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept functionally equivalent across their platform-native implementations — change behavior in the scripts, record the reasoning in the doc.
+Doc is at **v2.3.1** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept functionally equivalent across their platform-native implementations — change behavior in the scripts, record the reasoning in the doc.

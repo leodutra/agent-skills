@@ -47,6 +47,7 @@
     .\stack-init.ps1 contract   # print the routing contract
     .\stack-init.ps1 contract --condensed  # print the short form injected into agents
     .\stack-init.ps1 stats      # append + print a usage snapshot (rtk/headroom)
+    .\stack-init.ps1 help       # or -h / --help - print this command list
 
   AFTER GLOBAL INSTALL: open a NEW terminal. Bare `claude` then launches through
   Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
@@ -73,6 +74,46 @@ function Say ($m){ Write-Host "==> "   -ForegroundColor Green  -NoNewline; Write
 function Warn($m){ Write-Host "warn: " -ForegroundColor Yellow -NoNewline; Write-Host $m }
 function Err ($m){ Write-Host "error: "-ForegroundColor Red    -NoNewline; Write-Host $m }
 function Have($c){ [bool](Get-Command $c -ErrorAction SilentlyContinue) }
+
+# Windows PowerShell 5.1's `Set-Content -Encoding utf8` stamps a UTF-8 BOM, and
+# this script runs under 5.1 as often as under 7. In JSON a BOM is a spec
+# violation: Python's json.load() rejects it, which is exactly how the POSIX
+# installer's merge helper reads the SAME settings.json - so a file written here
+# used to be unreadable there. Write BOM-less UTF-8 from one place instead; it
+# matches both PowerShell 7 and stack-init.sh byte for byte.
+$Utf8NoBom = New-Object System.Text.UTF8Encoding $false
+function Write-Utf8 ($Path, $Text) {
+  $dir = Split-Path $Path
+  if ($dir) { New-Item -ItemType Directory -Force -Path $dir | Out-Null }
+  # Always end with exactly one newline. Here-strings and ConvertTo-Json both
+  # end WITHOUT one, and WriteAllText adds nothing - a file with no final
+  # newline is precisely what makes a later append glue onto its last line.
+  [IO.File]::WriteAllText($Path, (($Text -replace '[\r\n]+$', '') + "`r`n"), $Utf8NoBom)
+}
+
+function Read-Text ($Path) {
+  # `Get-Content -Raw` returns $null - not '' - for an EMPTY file, and every
+  # caller here feeds the result to [regex]::Replace or .Contains, both of which
+  # throw on null. Under $ErrorActionPreference='Stop' that aborted the whole
+  # global install on something as ordinary as an empty ~/.claude/CLAUDE.md.
+  # A leading BOM is stripped too, so callers matching '^...' see the real text.
+  # Spelled [char]0xFEFF, never as a literal: this script has no BOM of its own,
+  # and Windows PowerShell 5.1 decodes a BOM-less .ps1 as ANSI, which would turn
+  # an embedded U+FEFF into three junk characters that match nothing.
+  if (-not (Test-Path $Path)) { return '' }
+  $t = Get-Content -Raw $Path -ErrorAction SilentlyContinue
+  if ($null -eq $t) { return '' }
+  return ($t -replace "^$([char]0xFEFF)", '')
+}
+
+function Write-ManagedBlock ($Path, $Block) {
+  # Replace our delimited block, leaving everything else in the file alone.
+  # TrimEnd/TrimStart normalise to exactly one blank line before the block no
+  # matter how the host document was left, so re-running never drifts.
+  $stripped = [regex]::Replace((Read-Text $Path),
+    '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<\r?\n?', '')
+  Write-Utf8 $Path (($stripped.TrimEnd() + "`r`n`r`n" + $Block).TrimStart())
+}
 
 $Contract = @'
 # >>> claude-context-stack >>> (managed by stack-init - edits here are overwritten)
@@ -150,22 +191,14 @@ function Install-ExtraSkill {
 
 function Invoke-InjectCondensedContract {
   param([string]$Dir)
-  if (-not (Test-Path $Dir -PathType Container)) {
-    Say "  no agent files at $Dir - skipping condensed contract injection"
-    return
-  }
+  # One guard, not two: Get-ChildItem on a missing directory returns nothing
+  # under -ErrorAction SilentlyContinue, so the container test was redundant.
   $files = Get-ChildItem -Path $Dir -Filter '*.md' -File -ErrorAction SilentlyContinue
   if (-not $files) {
     Say "  no agent files at $Dir - skipping condensed contract injection"
     return
   }
-  foreach ($f in $files) {
-    $existing = Get-Content -Raw $f.FullName
-    $stripped = [regex]::Replace($existing,
-      '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<\r?\n?', '')
-    $out = ($stripped.TrimEnd() + "`r`n`r`n" + $ContractCondensed).TrimStart()
-    Set-Content -Path $f.FullName -Value $out -Encoding utf8
-  }
+  foreach ($f in $files) { Write-ManagedBlock $f.FullName $ContractCondensed }
   Say "  condensed contract injected into $Dir\*.md"
 }
 
@@ -249,13 +282,34 @@ function Install-Uv {
   if (-not (Have 'uv')) { Warn "uv install failed - Serena will not be able to launch" }
 }
 
+$SettingsPath = Join-Path $ClaudeDir 'settings.json'
+
+function Read-Settings {
+  # A settings.json that exists but does not parse is a HARD STOP, never an
+  # empty object. The old `catch { $data = @{} }` meant one malformed byte -
+  # a stray comma, a half-finished hand edit - silently discarded the user's
+  # ENTIRE config on the next write: RTK's PreToolUse hook, every permission,
+  # every env var. Failing to install a hook is recoverable; that is not.
+  $raw = Read-Text $SettingsPath
+  if (-not $raw.Trim()) { return [PSCustomObject]@{} }
+  try { return ($raw | ConvertFrom-Json) }
+  catch {
+    Err "$SettingsPath is not valid JSON - fix or move it, then re-run"
+    Err "(refusing to overwrite it: that would drop RTK's hook and your permissions)"
+    exit 1
+  }
+}
+
+function Save-Settings {
+  param($Data)
+  Write-Utf8 $SettingsPath ($Data | ConvertTo-Json -Depth 20)
+}
+
 function Register-SessionStartHook {
   # Adds a SessionStart command hook to global settings.json (idempotent) and
   # returns the parsed settings object so callers can inspect other hooks.
   param([string]$Cmd)
-  $settingsPath = Join-Path $ClaudeDir 'settings.json'
-  $json = if (Test-Path $settingsPath) { Get-Content -Raw $settingsPath } else { '{}' }
-  try { $data = $json | ConvertFrom-Json } catch { $data = [PSCustomObject]@{} }
+  $data = Read-Settings
   if (-not $data.PSObject.Properties['hooks']) { $data | Add-Member -NotePropertyName hooks -NotePropertyValue ([PSCustomObject]@{}) }
   if (-not $data.hooks.PSObject.Properties['SessionStart']) { $data.hooks | Add-Member -NotePropertyName SessionStart -NotePropertyValue @() }
   $starts = @($data.hooks.SessionStart)
@@ -264,8 +318,7 @@ function Register-SessionStartHook {
     $starts += [PSCustomObject]@{ hooks = @([PSCustomObject]@{ type = 'command'; command = $Cmd }) }
     $data.hooks.SessionStart = $starts
   }
-  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
-  $data | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding utf8
+  Save-Settings $data
   return $data
 }
 
@@ -273,17 +326,14 @@ function Set-GlobalEnvVar {
   # Writes settings.json env.<Name> unless the user already set it (their value
   # wins - this is a floor, not a policy).
   param([string]$Name, [string]$Value)
-  $settingsPath = Join-Path $ClaudeDir 'settings.json'
-  $json = if (Test-Path $settingsPath) { Get-Content -Raw $settingsPath } else { '{}' }
-  try { $data = $json | ConvertFrom-Json } catch { $data = [PSCustomObject]@{} }
+  $data = Read-Settings
   if (-not $data.PSObject.Properties['env']) { $data | Add-Member -NotePropertyName env -NotePropertyValue ([PSCustomObject]@{}) }
   if ($data.env.PSObject.Properties[$Name]) {
     Say "  settings.json env.$Name already set ($($data.env.$Name)) - left alone"
     return
   }
   $data.env | Add-Member -NotePropertyName $Name -NotePropertyValue $Value
-  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
-  $data | ConvertTo-Json -Depth 20 | Set-Content -Path $settingsPath -Encoding utf8
+  Save-Settings $data
   Say "  settings.json env.$Name = $Value"
 }
 
@@ -291,7 +341,7 @@ function Install-HeadroomCheck {
   $hooksDir = Join-Path $ClaudeDir 'hooks'
   New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
   $checkPath = Join-Path $hooksDir 'headroom-check.ps1'
-  Set-Content -Path $checkPath -Encoding utf8 -Value @'
+  Write-Utf8 $checkPath @'
 $url = $env:ANTHROPIC_BASE_URL
 if ($url -match "127\.0\.0\.1|localhost") { exit 0 }
 $note = "NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."
@@ -320,7 +370,7 @@ function Install-GraphAutobuild {
   $hooksDir = Join-Path $ClaudeDir 'hooks'
   New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
   $autoPath = Join-Path $hooksDir 'graph-autobuild.ps1'
-  Set-Content -Path $autoPath -Encoding utf8 -Value @'
+  Write-Utf8 $autoPath @'
 param([switch]$Build)
 # claude-context-stack: per-repo graph autobuild/refresh at session start.
 # Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
@@ -472,7 +522,7 @@ function Install-SerenaAutoInit {
   $hooksDir = Join-Path $ClaudeDir 'hooks'
   New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
   $serenaPath = Join-Path $hooksDir 'serena-autoinit.ps1'
-  Set-Content -Path $serenaPath -Encoding utf8 -Value @'
+  Write-Utf8 $serenaPath @'
 # claude-context-stack: per-checkout Serena project init at session start.
 # Opt out: CLAUDE_STACK_NO_SERENA_INIT=1, or a .serena-skip file in the root.
 # Uninstall: remove the SessionStart entry in settings.json.
@@ -705,7 +755,7 @@ if ($bypass) { & $real.Source @args; exit $LASTEXITCODE }
 $env:CLAUDE_STACK_SHIM = '1'
 '@
   $shimPs1 += "`nheadroom wrap claude$HeadroomFlags @args`nexit `$LASTEXITCODE`n"
-  Set-Content -Path (Join-Path $binDir 'claude.ps1') -Encoding utf8 -Value $shimPs1
+  Write-Utf8 (Join-Path $binDir 'claude.ps1') $shimPs1
 
   Set-Content -Path (Join-Path $binDir 'claude.cmd') -Encoding ascii -Value @'
 @echo off
@@ -782,13 +832,15 @@ function Set-SerenaDashboardConfig {
     Say "  serena_config.yml not found (Serena writes it on first launch) - rerun global later to apply dashboard settings"
     return
   }
-  $text = Get-Content $cfg -Raw
-  # [^\r\n]* instead of .*$ — in .NET regex `.` matches \r, so .*$ would eat
-  # the CR of CRLF files and dirty the diff on every run
+  $text = Read-Text $cfg
+  # [^\r\n]* instead of .*$ - in .NET regex `.` matches \r, so .*$ would eat
+  # the CR of CRLF files and dirty the diff on every run. (Plain ASCII hyphen:
+  # the file carries no BOM, so 5.1 decodes it as ANSI and any non-ASCII byte
+  # here would come back as mojibake.)
   $new = $text -replace '(?m)^web_dashboard_open_on_launch:[^\r\n]*', 'web_dashboard_open_on_launch: false'
   $new = $new -replace '(?m)^web_dashboard_interface:[^\r\n]*', 'web_dashboard_interface: tray_manager'
   if ($new -ne $text) {
-    Set-Content -Path $cfg -Encoding utf8 -Value $new
+    Write-Utf8 $cfg $new
     Say "  serena dashboard: auto-open off; tray_manager icon lists all instances"
   } else {
     Say "  serena dashboard settings already applied"
@@ -799,8 +851,15 @@ function Install-Global {
   Check-Deps
   Say "RTK - output compression (global Bash hook)"
   if (Have 'rtk') { Say "  rtk present ($(rtk --version 2>$null))" }
-  else { Say "  installing rtk"; cargo install --git https://github.com/rtk-ai/rtk }
-  rtk init -g; Say "  rtk init -g (PreToolUse Bash hook registered)"
+  elseif (Have 'cargo') { Say "  installing rtk"; cargo install --git https://github.com/rtk-ai/rtk }
+  # Every native call below is Have-guarded. Under $ErrorActionPreference='Stop'
+  # an absent executable raises a TERMINATING CommandNotFoundException, so one
+  # failed optional install used to abort the rest of the run - including the
+  # routing contract at the very end, which is the whole point of the script.
+  # stack-init.sh has never had this problem: there a missing command is just
+  # exit 127 inside an && list, which `set -e` ignores.
+  if (Have 'rtk') { rtk init -g; Say "  rtk init -g (PreToolUse Bash hook registered)" }
+  else { Warn "rtk not on PATH - output compression off (install cargo, then re-run)" }
 
   # One health-check pass, reused by the Serena and Headroom steps below:
   # `claude mcp list` spawns every registered server and waits on it, so
@@ -816,10 +875,11 @@ function Install-Global {
   # falls back to grep, breaking contract rule 2 with nothing in the UI to
   # say so. `uv tool install` pins a built binary, so launch is import-only.
   if (Have 'serena') { Say "  serena present ($(serena --version 2>$null))" }
-  else {
+  elseif (Have 'uv') {
     Say "  installing serena (uv tool; PyPI/dist name is serena-agent, command is serena)"
     uv tool install --from git+https://github.com/oraios/serena serena-agent
   }
+  else { Warn "uv missing - cannot install serena; symbol routing (contract rule 2) stays unavailable" }
   # Migrate an earlier uvx-based registration - a bare "already registered"
   # check would leave the slow, timeout-prone form in place forever.
   $serenaLine = (($mcpList -split "`r?`n") | Where-Object { $_ -match '^serena[: ]' }) -join ''
@@ -848,9 +908,12 @@ function Install-Global {
   Say "graphify - codebase knowledge graph"
   if (-not (Have 'graphify')) {
     Say "  installing graphify (PyPI package: graphifyy, double-y)"
-    if (Have 'uv') { uv tool install 'graphifyy[all]' } else { pip install 'graphifyy[all]' }
+    if (Have 'uv') { uv tool install 'graphifyy[all]' }
+    elseif (Have 'pip') { pip install 'graphifyy[all]' }
+    else { Warn "neither uv nor pip found - skipping graphify install" }
   }
-  graphify install 2>$null | Out-Null; Say "  /graphify skill installed (global)"
+  if (Have 'graphify') { graphify install 2>$null | Out-Null; Say "  /graphify skill installed (global)" }
+  else { Warn "graphify not on PATH - the graph layer stays off; contract rule 1 degrades to normal orientation" }
   # Deliberately NOT running `graphify claude install` here: it targets the
   # CLAUDE.md / .claude/settings.json in the CURRENT DIRECTORY, not this
   # script's global $ClaudeMd - wrong layer for a global install step. Its
@@ -866,7 +929,9 @@ function Install-Global {
   if (Have 'headroom') { Say "  headroom present ($(headroom --version 2>$null))" }
   else {
     Say "  installing headroom (PyPI package: headroom-ai)"
-    if (Have 'uv') { uv tool install 'headroom-ai[all]' } else { pip install 'headroom-ai[all]' }
+    if (Have 'uv') { uv tool install 'headroom-ai[all]' }
+    elseif (Have 'pip') { pip install 'headroom-ai[all]' }
+    else { Warn "neither uv nor pip found - skipping headroom install" }
   }
   # Headroom integrates at the WIRE (the shim below), never as an MCP server.
   # A `headroom mcp serve` registration is not part of this stack and current
@@ -882,7 +947,8 @@ function Install-Global {
   # forbids as a duplicate of graphify. Disable it when the flag exists;
   # probing keeps older headroom versions (no such flag) launching cleanly.
   $HeadroomFlags = ''
-  if ((headroom wrap claude --help 2>$null | Out-String) -match '--no-tokensave') { $HeadroomFlags = ' --no-tokensave' }
+  if ((Have 'headroom') -and
+      ((headroom wrap claude --help 2>$null | Out-String) -match '--no-tokensave')) { $HeadroomFlags = ' --no-tokensave' }
   $global:LASTEXITCODE = 0
   Say "  shadowing bare 'claude' with a recursion-safe shim (see Install-ClaudeShim"
   Say "  for how the old self-recursion hazard is closed)"
@@ -1002,12 +1068,7 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
   Install-ExtraSkill 'worktrunk'
 
   Say "Routing contract -> $ClaudeMd"
-  New-Item -ItemType Directory -Force -Path $ClaudeDir | Out-Null
-  $existing = if (Test-Path $ClaudeMd) { Get-Content -Raw $ClaudeMd } else { '' }
-  $stripped = [regex]::Replace($existing,
-    '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<\r?\n?', '')
-  $out = ($stripped.TrimEnd() + "`r`n`r`n" + $Contract).TrimStart()
-  Set-Content -Path $ClaudeMd -Value $out -Encoding utf8
+  Write-ManagedBlock $ClaudeMd $Contract
   Say "  contract written (idempotent - re-running replaces the managed block)"
 
   Say "Condensed contract -> subagent files ($env:USERPROFILE\.claude\agents\)"
@@ -1022,11 +1083,24 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
 function Init-Project {
   if (-not (Test-InGitRepo)) { Err "run from a git repo (no git repo here)"; exit 1 }
   if (-not (Have 'graphify')) { Err "graphify not installed - run '.\stack-init.ps1 global' first"; exit 1 }
+  # Everything below is repo-ROOT state: `graphify .` from config\ would build a
+  # graph of config\ alone and drop .gitignore there, while the autobuild hook
+  # (which cd's to the top level) builds the real one - two graphs, one repo.
+  # Match the hook and move to the top first.
+  $top = git rev-parse --show-toplevel 2>$null
+  if ($top) { Set-Location $top; Say "repo root: $top" }
   Say "building knowledge graph (graphify .)"; graphify .
   Say "installing local post-commit hook (incremental rebuild)"; graphify hook install
   Say "installing post-checkout/post-merge/post-rewrite refresh hooks"; Install-RefreshHooks
-  if (-not ((Test-Path .gitignore) -and (Select-String -Path .gitignore -Pattern '^graphify-out/' -Quiet))) {
-    Add-Content -Path .gitignore -Value "`r`n# Claude context-stack knowledge graph`r`ngraphify-out/" -Encoding utf8
+  # Read-then-write rather than Add-Content: on 5.1 Add-Content -Encoding utf8
+  # stamps a BOM when it CREATES the file, and git treats a BOM as part of the
+  # first pattern - a .gitignore whose first line is BOM+'graphify-out/' would
+  # silently match nothing.
+  $gi = Join-Path (Get-Location).Path '.gitignore'
+  $giText = Read-Text $gi
+  if ($giText -notmatch '(?m)^graphify-out/') {
+    $giNew = ($giText.TrimEnd() + "`r`n`r`n# Claude context-stack knowledge graph`r`ngraphify-out/").TrimStart()
+    Write-Utf8 $gi $giNew
     Say "gitignored graphify-out/"
   }
   Say "Condensed contract -> subagent files (.claude\agents\)"
@@ -1035,14 +1109,39 @@ function Init-Project {
   Say "architecture question and confirm it reads the graph instead of grepping."
 }
 
+function Get-ToolOutput {
+  # `2>&1` turns a native command's stderr into ErrorRecords, and Windows
+  # PowerShell 5.1 raises a TERMINATING NativeCommandError for those while
+  # $ErrorActionPreference is 'Stop' - the same trap that used to abort `verify`
+  # at its first check and take every later check with it. Drop to 'Continue'
+  # for the duration of the call so a tool that merely chats on stderr (rtk's
+  # "No hook installed" banner is exactly that) cannot kill the snapshot.
+  param([string]$Exe, [string[]]$ExeArgs, [string]$Absent)
+  if (-not (Have $Exe)) { return $Absent }
+  $ErrorActionPreference = 'Continue'
+  try {
+    # .ToString() per record: `2>&1 | Out-String` renders each stderr line as a
+    # full ErrorRecord (CategoryInfo, FullyQualifiedErrorId, a caret diagram
+    # pointing back into THIS file), which buried the tool's actual one-line
+    # message in ~400 characters of PowerShell scaffolding inside the snapshot.
+    return ((& $Exe @ExeArgs 2>&1 | ForEach-Object { $_.ToString() }) -join "`n")
+  }
+  catch { return "$Exe failed: $($_.Exception.Message)" }
+  finally { $global:LASTEXITCODE = 0 }
+}
+
 function Get-Stats {
   $dir = Join-Path $ClaudeDir 'stack-stats'
   New-Item -ItemType Directory -Force -Path $dir | Out-Null
   $ts = (Get-Date).ToUniversalTime().ToString('yyyyMMddTHHmmssZ')
   $snapPath = Join-Path $dir "$ts.json"
-  if (Have 'rtk') { $rtkOut = (rtk gain 2>&1 | Out-String); $global:LASTEXITCODE = 0 } else { $rtkOut = 'rtk not on PATH' }
-  if (Have 'headroom') { $headroomOut = (headroom stats 2>&1 | Out-String); $global:LASTEXITCODE = 0 } else { $headroomOut = 'headroom not installed' }
-  @{ date = $ts; rtk_gain = $rtkOut; headroom_stats = $headroomOut } | ConvertTo-Json | Set-Content -Path $snapPath -Encoding utf8
+  # `headroom savings`, not `headroom stats` - the latter has never been a
+  # headroom subcommand, so every snapshot ever taken recorded a usage error
+  # instead of the numbers. (`headroom memory stats` exists and is a different
+  # thing: memory-store counts, not compression savings.)
+  $rtkOut      = Get-ToolOutput 'rtk'      @('gain')    'rtk not on PATH'
+  $headroomOut = Get-ToolOutput 'headroom' @('savings') 'headroom not installed'
+  Write-Utf8 $snapPath (@{ date = $ts; rtk_gain = $rtkOut; headroom_stats = $headroomOut } | ConvertTo-Json)
   Say "  snapshot written -> $snapPath"
   $snaps = Get-ChildItem -Path $dir -Filter '*.json' | Sort-Object Name | Select-Object -Last 2
   if ($snaps) {
@@ -1056,7 +1155,6 @@ function Get-Stats {
 
 function Invoke-Verify {
   Say "verifying"
-  $settingsPath = Join-Path $ClaudeDir 'settings.json'
   if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" }
   else { Write-Host "  rtk:            NOT ON PATH" }
   # Read the registered hook, do NOT shell out to `rtk gain`. Two reasons: its
@@ -1066,9 +1164,9 @@ function Invoke-Verify {
   # which aborted the whole verify run at this line - every check below it never
   # ran. settings.json is the source of truth for whether the hook is installed.
   $rtkHookActive = $false
-  if (Test-Path $settingsPath) {
+  if (Test-Path $SettingsPath) {
     try {
-      $sj = Get-Content -Raw $settingsPath | ConvertFrom-Json
+      $sj = (Read-Text $SettingsPath) | ConvertFrom-Json
       if ($sj.PSObject.Properties['hooks'] -and $sj.hooks.PSObject.Properties['PreToolUse']) {
         $rtkHookActive = (($sj.hooks.PreToolUse | ConvertTo-Json -Depth 10) -match 'rtk')
       }
@@ -1085,11 +1183,11 @@ function Invoke-Verify {
     if ($first -and $first.Source -like "$shimDir*") { Write-Host "  claude shim:    OK (bare 'claude' auto-wraps through headroom)" }
     else { Write-Host "  claude shim:    installed but NOT first on PATH (open a new terminal?)" }
   } else { Write-Host "  claude shim:    NOT installed" }
-  if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $settingsPath) -and
-      (Select-String -Path $settingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
+  if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $SettingsPath) -and
+      (Select-String -Path $SettingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
   else { Write-Host "  graph autobuild: NOT registered" }
-  if ((Test-Path (Join-Path $ClaudeDir 'hooks\serena-autoinit.ps1')) -and (Test-Path $settingsPath) -and
-      (Select-String -Path $settingsPath -Pattern 'serena-autoinit' -Quiet)) { Write-Host "  serena autoinit: OK (SessionStart)" }
+  if ((Test-Path (Join-Path $ClaudeDir 'hooks\serena-autoinit.ps1')) -and (Test-Path $SettingsPath) -and
+      (Select-String -Path $SettingsPath -Pattern 'serena-autoinit' -Quiet)) { Write-Host "  serena autoinit: OK (SessionStart)" }
   else { Write-Host "  serena autoinit: NOT registered" }
   $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
     [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
@@ -1117,8 +1215,18 @@ function Invoke-Verify {
       $br = git rev-parse --abbrev-ref HEAD 2>$null
       Write-Host "  checkout:       linked worktree ($br) - own graph + Serena project, shared hooks"
     } else { Write-Host "  checkout:       primary" }
-    if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
-    if (Test-Path .serena\project.yml) { Write-Host "  serena project: OK (.serena\project.yml)" } else { Write-Host "  serena project: none - autoinits next session" }
+    # Anchor on the repo ROOT, never cwd. graphify-out/ and .serena/ are written
+    # at the top level by the SessionStart hooks (which `cd $top` first), so
+    # cwd-relative tests reported "not built" / "none" for a fully wired repo
+    # whenever verify ran from a subdirectory - and the README tells Windows
+    # users to run this script from the repo's config\ directory, so that was
+    # the DEFAULT experience, not an edge case.
+    $top = git rev-parse --show-toplevel 2>$null
+    if (-not $top) { $top = (Get-Location).Path }
+    $graphJson = Join-Path $top 'graphify-out/graph.json'
+    $serenaYml = Join-Path $top '.serena/project.yml'
+    if (Test-Path $graphJson) { $kb = "{0:N0} KB" -f ((Get-Item $graphJson).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
+    if (Test-Path $serenaYml) { Write-Host "  serena project: OK (.serena\project.yml)" } else { Write-Host "  serena project: none - autoinits next session" }
     $hooksDir = Get-GitHooksDir
     if (-not $hooksDir) { $hooksDir = Join-Path $PWD.Path '.git\hooks' }
     if (Test-Path (Join-Path $hooksDir 'post-commit')) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
@@ -1134,14 +1242,36 @@ function Invoke-Verify {
   }
 }
 
+$Usage = "usage: .\stack-init.ps1 [global|init|verify|contract [--condensed]|stats|help]"
+
+# Anything the binder could not place lands in $Rest, INCLUDING dash-prefixed
+# words that match no parameter. That made `.\stack-init.ps1 --help` leave
+# $Command at its 'global' default and perform a full unattended install - the
+# single most surprising thing this script could do to someone asking for help.
+# Recognise help explicitly, and refuse to run `global` with leftover arguments
+# rather than silently ignoring a typo'd command.
+$HelpWords = @('help', '-h', '--help', '-help', '/?', '-?')
+if (($HelpWords -contains $Command.ToLower()) -or ($Rest | Where-Object { $HelpWords -contains $_.ToLower() })) {
+  Write-Output $Usage
+  Write-Output ""
+  Write-Output "  global    install the whole stack for this user (run once)"
+  Write-Output "  init      build this repo's graph eagerly + tracked-file extras"
+  Write-Output "  verify    report what is and is not wired up"
+  Write-Output "  contract  print the routing contract (--condensed for the agent form)"
+  Write-Output "  stats     append and print an rtk/headroom usage snapshot"
+  exit 0
+}
+
 switch ($Command.ToLower()) {
-  'global'   { Install-Global }
-  ''         { Install-Global }
+  { $_ -in '', 'global' } {
+    if ($Rest.Count) { Err "unexpected argument(s): $($Rest -join ' ')"; Write-Host $Usage; exit 1 }
+    Install-Global
+  }
   'init'     { Init-Project }
   'verify'   { Invoke-Verify }
   'contract' { if (($Rest -contains '--condensed') -or ($Rest -contains '-condensed')) { Write-Output $ContractCondensed } else { Write-Output $Contract } }
   'stats'    { Get-Stats }
-  default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-init.ps1 [global|init|verify|contract [--condensed]|stats]"; exit 1 }
+  default    { Err "unknown command: $Command"; Write-Host $Usage; exit 1 }
 }
 # A stray $LASTEXITCODE from any native command above (pip/npm/winget/claude)
 # must not become this script's exit code - completing the switch means success.
