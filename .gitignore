@@ -7,4 +7,8 @@ graphify-out/
 # Local Claude Code settings (machine-specific, not shared)
 .claude/settings.local.json
 
+# Worktrunk nests linked worktrees here. Each is its own checkout with its own
+# graph and Serena project - never content of the primary one.
+.claude/worktrees/
+
 

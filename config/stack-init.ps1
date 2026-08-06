@@ -59,7 +59,12 @@
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned (or -ExecutionPolicy Bypass).
 =============================================================================
 #>
-param([string]$Command = 'global', [string]$SubOption = '')
+# ValueFromRemainingArguments rather than a plain [string]$SubOption: when run
+# via -File, PowerShell's binder treats ANY argument starting with '-' as a
+# parameter NAME, so `stack-init.ps1 contract --condensed` bound nothing, left
+# $SubOption empty, and silently printed the FULL contract instead of the short
+# form documented above. Remaining-argument capture takes '--condensed' as data.
+param([string]$Command = 'global', [Parameter(ValueFromRemainingArguments = $true)][string[]]$Rest = @())
 $ErrorActionPreference = 'Stop'
 
 $ClaudeDir = if ($env:CLAUDE_CONFIG_DIR) { $env:CLAUDE_CONFIG_DIR } else { Join-Path $env:USERPROFILE '.claude' }
@@ -168,17 +173,45 @@ function Check-Deps {
   if ($miss) { Err "install the required tools above, then re-run"; exit 1 }
 }
 
+function Get-GitHooksDir {
+  # Ask git for the hooks dir instead of assuming .git\hooks. In a LINKED
+  # WORKTREE .git is a FILE, not a directory, so .git\hooks does not exist and
+  # writing there either fails or drops hooks somewhere git never reads.
+  # `rev-parse --git-path hooks` resolves core.hooksPath and worktrees alike,
+  # and points every worktree at the COMMON hooks dir - which is what we want:
+  # git supports one hooks dir per repo, and the bodies below are cwd-relative,
+  # so they act on whichever worktree ran the command.
+  # [IO.File] resolves relative paths against .NET's process-wide current
+  # directory, which does NOT track PowerShell's Set-Location/Push-Location -
+  # always resolve to an absolute path via $PWD first, or this can write into
+  # whatever directory the process originally launched from instead of cwd.
+  $p = git rev-parse --git-path hooks 2>$null
+  if (-not $p) { return $null }
+  if (-not [IO.Path]::IsPathRooted($p)) { $p = Join-Path $PWD.Path $p }
+  return [IO.Path]::GetFullPath($p)
+}
+
+function Test-InGitRepo {
+  # `.git` is a DIRECTORY only in the primary checkout - in a linked worktree it
+  # is a FILE pointing at the common dir, so `Test-Path .git -PathType Container`
+  # is false and every worktree gets locked out of `init` and of verify's
+  # repo-local checks. Ask git instead, which answers the same in both.
+  $null = git rev-parse --git-dir 2>$null
+  $ok = ($LASTEXITCODE -eq 0)
+  $global:LASTEXITCODE = 0
+  return $ok
+}
+
 function Write-GitHook {
   # Merge-not-clobber: skip if our marker is already there, append under the
   # marker if some other tool owns the file, otherwise create it fresh. Hook
   # bodies are POSIX sh - Git for Windows runs hooks via its bundled bash
   # regardless of host OS, same as the existing post-commit hook.
   param([string]$Name, [string]$Body)
-  # [IO.File] resolves relative paths against .NET's process-wide current
-  # directory, which does NOT track PowerShell's Set-Location/Push-Location -
-  # always resolve to an absolute path via $PWD first, or this can write into
-  # whatever directory the process originally launched from instead of cwd.
-  $path = Join-Path (Join-Path $PWD.Path '.git\hooks') $Name
+  $hooksDir = Get-GitHooksDir
+  if (-not $hooksDir) { return }
+  New-Item -ItemType Directory -Force -Path $hooksDir | Out-Null
+  $path = Join-Path $hooksDir $Name
   if ((Test-Path $path) -and (Select-String -Path $path -Pattern 'claude-context-stack:' -Quiet)) { return }
   if (Test-Path $path) {
     [IO.File]::AppendAllText($path, "`n$Body`n")
@@ -844,16 +877,20 @@ function Install-Global {
       # Appending a second [post-start] table would make the whole TOML invalid
       # and break worktrunk entirely - never do it. Ask for a manual merge.
       Warn "config.toml already defines post-start - add this line to it manually:"
-      Warn 'claude-context-stack = "[ -d ''{{ primary_worktree_path }}/graphify-out'' ] && graphify . && graphify hook install || true"'
+      Warn 'claude-context-stack = "[ -d ''{{ primary_worktree_path }}/graphify-out'' ] && graphify . && graphify hook install && cp -n ''{{ primary_worktree_path }}/graphify-out/.graphify_python'' graphify-out/ 2>/dev/null || true"'
     } else {
       # Hook body is POSIX sh: worktrunk runs hooks via Git for Windows' bash.
       $wtHook = @'
 
-# claude-context-stack: replicate the stack's per-checkout state (graphify graph
-# + post-commit rebuild hook) into every new worktree, only where the primary
-# checkout was stack-inited. Delete this block to opt out.
+# claude-context-stack: replicate the stack's per-checkout state (graphify graph,
+# post-commit rebuild hook, interpreter pin) into every new worktree, only where
+# the primary checkout was stack-inited. The .graphify_python copy matters
+# because the post-commit hook is SHARED across worktrees but reads its override
+# relative to cwd - without it a new worktree's first commit warns instead of
+# rebuilding, until a Claude session's autobuild hook repairs it.
+# Delete this block to opt out.
 [post-start]
-claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true"
+claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install && cp -n '{{ primary_worktree_path }}/graphify-out/.graphify_python' graphify-out/ 2>/dev/null || true"
 '@
       # IO.File writes BOM-less UTF-8 on both PS 5.1 and 7; Add-Content -Encoding
       # utf8 on 5.1 stamps a BOM when creating the file, which TOML parsers reject.
@@ -891,7 +928,7 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
 }
 
 function Init-Project {
-  if (-not (Test-Path .git -PathType Container)) { Err "run from a git repo root (no .git here)"; exit 1 }
+  if (-not (Test-InGitRepo)) { Err "run from a git repo (no git repo here)"; exit 1 }
   if (-not (Have 'graphify')) { Err "graphify not installed - run '.\stack-init.ps1 global' first"; exit 1 }
   Say "building knowledge graph (graphify .)"; graphify .
   Say "installing local post-commit hook (incremental rebuild)"; graphify hook install
@@ -927,14 +964,26 @@ function Get-Stats {
 
 function Invoke-Verify {
   Say "verifying"
+  $settingsPath = Join-Path $ClaudeDir 'settings.json'
+  if (Have 'rtk') { Write-Host "  rtk:            OK ($(rtk --version 2>$null))" }
+  else { Write-Host "  rtk:            NOT ON PATH" }
+  # Read the registered hook, do NOT shell out to `rtk gain`. Two reasons: its
+  # exit code is 0 whether or not a hook exists (it just prints a warning), so
+  # it never actually detected anything; and under $ErrorActionPreference='Stop'
+  # a native command writing to stderr raises a TERMINATING NativeCommandError,
+  # which aborted the whole verify run at this line - every check below it never
+  # ran. settings.json is the source of truth for whether the hook is installed.
   $rtkHookActive = $false
-  if (Have 'rtk') {
-    Write-Host "  rtk:            OK ($(rtk --version 2>$null))"
-    rtk gain *> $null
-    $rtkHookActive = ($LASTEXITCODE -eq 0)
-    $global:LASTEXITCODE = 0
-  } else { Write-Host "  rtk:            NOT ON PATH" }
-  if ($rtkHookActive) { Write-Host "  rtk hook:       active" } else { Write-Host "  rtk hook:       no stats yet (run a few Bash cmds)" }
+  if (Test-Path $settingsPath) {
+    try {
+      $sj = Get-Content -Raw $settingsPath | ConvertFrom-Json
+      if ($sj.PSObject.Properties['hooks'] -and $sj.hooks.PSObject.Properties['PreToolUse']) {
+        $rtkHookActive = (($sj.hooks.PreToolUse | ConvertTo-Json -Depth 10) -match 'rtk')
+      }
+    } catch {}
+  }
+  if ($rtkHookActive) { Write-Host "  rtk hook:       OK (PreToolUse Bash)" }
+  else { Write-Host "  rtk hook:       NOT registered - run: rtk init -g" }
   if ((claude mcp list 2>$null | Select-String -Quiet 'serena')) { Write-Host "  serena (mcp):   OK (user scope)" } else { Write-Host "  serena (mcp):   NOT registered" }
   if (Have 'graphify') { Write-Host "  graphify:       OK" } else { Write-Host "  graphify:       NOT installed" }
   if (Have 'headroom') { Write-Host "  headroom:       OK" } else { Write-Host "  headroom:       NOT installed" }
@@ -944,13 +993,12 @@ function Invoke-Verify {
     if ($first -and $first.Source -like "$shimDir*") { Write-Host "  claude shim:    OK (bare 'claude' auto-wraps through headroom)" }
     else { Write-Host "  claude shim:    installed but NOT first on PATH (open a new terminal?)" }
   } else { Write-Host "  claude shim:    NOT installed" }
-  $settingsPath = Join-Path $ClaudeDir 'settings.json'
   if ((Test-Path (Join-Path $ClaudeDir 'hooks\graph-autobuild.ps1')) -and (Test-Path $settingsPath) -and
       (Select-String -Path $settingsPath -Pattern 'graph-autobuild' -Quiet)) { Write-Host "  graph autobuild: OK (SessionStart)" }
+  else { Write-Host "  graph autobuild: NOT registered" }
   if ((Test-Path (Join-Path $ClaudeDir 'hooks\serena-autoinit.ps1')) -and (Test-Path $settingsPath) -and
       (Select-String -Path $settingsPath -Pattern 'serena-autoinit' -Quiet)) { Write-Host "  serena autoinit: OK (SessionStart)" }
   else { Write-Host "  serena autoinit: NOT registered" }
-  else { Write-Host "  graph autobuild: NOT registered" }
   $wtFound = (Have 'git-wt') -or (Test-Path (Join-Path $env:USERPROFILE '.cargo\bin\wt.exe')) -or
     [bool](Get-ChildItem (Join-Path $env:LOCALAPPDATA 'Microsoft\WinGet\Packages') -Directory -Filter 'max-sixty.worktrunk_*' -ErrorAction SilentlyContinue)
   if ($wtFound) { Write-Host "  worktrunk:      OK (workflow tool - outside the contract)" } else { Write-Host "  worktrunk:      NOT installed (optional)" }
@@ -958,12 +1006,33 @@ function Invoke-Verify {
   if (Test-Path (Join-Path $ClaudeDir 'skills\opensrc\SKILL.md'))   { Write-Host "  opensrc skill:    OK (global)" }   else { Write-Host "  opensrc skill:    NOT deployed - rerun global" }
   if (Test-Path (Join-Path $ClaudeDir 'skills\worktrunk\SKILL.md')) { Write-Host "  worktrunk skill:  OK (global)" } else { Write-Host "  worktrunk skill:  NOT deployed - rerun global" }
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Host "  contract:       OK ($ClaudeMd)" } else { Write-Host "  contract:       MISSING" }
-  if (Test-Path .git -PathType Container) {
+  if (Test-InGitRepo) {
+    # Everything below is PER CHECKOUT, and a linked worktree is a checkout like
+    # any other: it gets its own graph and its own Serena project, because both
+    # describe the code at THIS path. Only the hooks are shared - git supports
+    # one hooks dir per repo - which is fine, since the bodies are cwd-relative
+    # and so act on whichever worktree invoked them.
+    $gd  = git rev-parse --git-dir 2>$null
+    $cgd = git rev-parse --git-common-dir 2>$null
+    if (-not $cgd) { $cgd = $gd }
+    $isLinked = $false
+    if ($gd -and $cgd) {
+      if (-not [IO.Path]::IsPathRooted($gd))  { $gd  = Join-Path $PWD.Path $gd }
+      if (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $PWD.Path $cgd }
+      $isLinked = ([IO.Path]::GetFullPath($gd) -ne [IO.Path]::GetFullPath($cgd))
+    }
+    if ($isLinked) {
+      $br = git rev-parse --abbrev-ref HEAD 2>$null
+      Write-Host "  checkout:       linked worktree ($br) - own graph + Serena project, shared hooks"
+    } else { Write-Host "  checkout:       primary" }
     if (Test-Path graphify-out\graph.json) { $kb = "{0:N0} KB" -f ((Get-Item graphify-out\graph.json).Length/1KB); Write-Host "  graph (here):   OK ($kb)" } else { Write-Host "  graph (here):   not built - autobuilds next session (or run: .\stack-init.ps1 init)" }
-    if (Test-Path .git\hooks\post-commit) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
+    if (Test-Path .serena\project.yml) { Write-Host "  serena project: OK (.serena\project.yml)" } else { Write-Host "  serena project: none - autoinits next session" }
+    $hooksDir = Get-GitHooksDir
+    if (-not $hooksDir) { $hooksDir = Join-Path $PWD.Path '.git\hooks' }
+    if (Test-Path (Join-Path $hooksDir 'post-commit')) { Write-Host "  post-commit:    OK" } else { Write-Host "  post-commit:    none" }
     $refreshHooksActive = $true
     foreach ($hook in 'post-checkout', 'post-merge', 'post-rewrite') {
-      $hookPath = Join-Path (Join-Path $PWD.Path '.git\hooks') $hook
+      $hookPath = Join-Path $hooksDir $hook
       if (-not ((Test-Path $hookPath) -and (Select-String -Path $hookPath -Pattern 'claude-context-stack:' -Quiet))) {
         $refreshHooksActive = $false
         break
@@ -978,7 +1047,7 @@ switch ($Command.ToLower()) {
   ''         { Install-Global }
   'init'     { Init-Project }
   'verify'   { Invoke-Verify }
-  'contract' { if ($SubOption -eq '--condensed') { Write-Output $ContractCondensed } else { Write-Output $Contract } }
+  'contract' { if (($Rest -contains '--condensed') -or ($Rest -contains '-condensed')) { Write-Output $ContractCondensed } else { Write-Output $Contract } }
   'stats'    { Get-Stats }
   default    { Err "unknown command: $Command"; Write-Host "usage: .\stack-init.ps1 [global|init|verify|contract [--condensed]|stats]"; exit 1 }
 }
