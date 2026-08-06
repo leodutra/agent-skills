@@ -8,7 +8,9 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 
 | File | What it is | When to read/run |
 |---|---|---|
-| `claude-code-context-stack.md` | The spec-of-whys. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), decisions log (§8), verification (§9). | Read §1–3 first; the rest is reference. |
+| `claude-code-context-stack.md` | The spec: what the stack is and how to operate it. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), verification (§8). Carries no rationale — only `D<n>` citations. | Read §1–3 first; the rest is reference. |
+| `DECISIONS.md` | Every "why", as numbered append-only decisions (D1–D37). A decision's body is never rewritten: when one is reversed or its stated reason turns out to be wrong, a new entry is appended and the old one gets a pointer. | When you want to know why something is the way it is — or before changing it. |
+| `CHANGELOG.md` | What changed and when, one terse line per change, each citing the decision it implements. | To see what moved between versions. |
 | `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack (including the claude shim and the graph-autobuild SessionStart hook); `init` builds a repo's graph eagerly; also `verify` and `contract`. | `stack-init` once, ever. `init` only for eager builds. |
 | `stack-init.ps1` | The Windows installer (PowerShell). Same command surface and functional guarantees, equally idempotent; platform-native integrations differ where necessary. | `.\stack-init.ps1` once, ever. |
 | `contract.md` / `contract-condensed.md` | The routing contract itself, as the installers write it: the full form into `~/.claude/CLAUDE.md`, the short form into every agent file. Both installers read these, so the two platforms cannot drift on the one artifact they both produce. ASCII-only — Windows PowerShell 5.1 decodes a BOM-less file as ANSI. | Edit here to change the contract; never edit the managed block in `CLAUDE.md`. |
@@ -39,7 +41,7 @@ stack-init verify
 cd /path/to/project && stack-init init
 ```
 
-On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.4 for path translations and the Git-for-Windows requirement.
+On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.5 for path translations and the Git-for-Windows requirement.
 
 Escape hatches: `CLAUDE_NO_HEADROOM=1 claude` launches unwrapped once; `CLAUDE_STACK_NO_AUTOBUILD=1` or a `.graphify-skip` file in a repo root disables graph autobuild there. The first session in a repo with no graph gets a session-start note that a build is running; the contract degrades gracefully until it lands.
 
@@ -64,7 +66,7 @@ For each, the installer also mirrors its whole skill directory from [`skills/<na
 
 **worktrunk** (`wt`; `git-wt` on Windows) — a git-worktree manager for parallel agents/tasks. It moves no tokens and routes no questions; it only manages where checkouts live. `git-wt` and `git wt` are the same binary, not two names to pick between — git auto-discovers any `git-<name>` executable on PATH and exposes it as a `git <name>` subcommand. The Windows/Linux split is deliberate, not an inconsistency to fix: stock Win11 ships Windows Terminal's own `wt.exe`, so `stack-init.ps1` never trusts bare `wt` as evidence of worktrunk and only accepts `git-wt` (winget's install name) or a `.cargo\bin\wt.exe` found by explicit path; Linux/macOS have no such collision — brew and cargo both name the binary plainly `wt` — so `stack-init.sh` keeps bare `wt` first, matching what's actually installed there.
 
-Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. The installer writes a single user-global worktrunk `post-start` hook that re-runs the stack's per-checkout step (`graphify .` + rebuild hook) in every new worktree, only for repos whose primary checkout has `graphify-out/`. Un-inited repos are untouched; the contract degrades gracefully there exactly as it always did. RTK, Serena, and Headroom are global and need nothing per-worktree (Serena re-onboards per directory; that's inherent to worktrees).
+Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. The installer writes a single user-global worktrunk `post-start` hook that re-runs the stack's per-checkout step (`graphify .` + rebuild hook) in every new worktree, only for repos whose primary checkout has `graphify-out/`. Un-inited repos are untouched; the contract degrades gracefully there exactly as it always did. RTK and Headroom are global and need nothing per-worktree. Serena does: a linked worktree is a separate checkout at its own path, so it gets its own `.serena/project.yml` (named `repo@branch`) from the serena-autoinit SessionStart hook — no manual step, but not "nothing" either (doc §6.3, D33).
 
 `wt switch -x claude` resolves `claude` on PATH like any shell, so it hits the shim and gets wrapped like every other launch. (Before the shim existed this was a bare-launch gotcha; it isn't anymore.)
 
@@ -74,4 +76,4 @@ Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and
 
 ## Versioning
 
-Doc is at **v2.3.2** (changelog in its header). The doc is the source of truth for *why*; `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and source of truth for behavior, kept functionally equivalent across their platform-native implementations — change behavior in the scripts, record the reasoning in the doc.
+Docs are at **v2.3.3** — see [`CHANGELOG.md`](CHANGELOG.md). `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and the source of truth for *behavior*, kept functionally equivalent across their platform-native implementations. [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why*. Change behavior in the scripts, record the reasoning as a new decision, add a changelog line.

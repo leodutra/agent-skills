@@ -23,8 +23,10 @@ shipped scripts, plus a hook that had been shipping undocumented.
 - **Fix** `headroom stats` → `headroom savings` in the cache-bust symptom and the
   benchmark procedure; the subcommand has never existed. [D29](DECISIONS.md#d29)
 - **Add** failure mode "Serena registered but never activated (silent)".
-- **Change** spec split into spec / `DECISIONS.md` / `CHANGELOG.md`; new
-  `tests/check-doc-commands.py` fitness test. [D36](DECISIONS.md#d36)
+- **Change** §2.4 boundary 5 no longer conditions Headroom on a benchmark nobody
+  runs: retained on wire-token evidence, cache economics recorded as unverified,
+  status provisional and monitored. [D37](DECISIONS.md#d37) (narrows [D20](DECISIONS.md#d20))
+- **Change** spec split into spec / `DECISIONS.md` / `CHANGELOG.md`. [D36](DECISIONS.md#d36)
 - **Change** spec sections renumbered: Serena autoinit is §6.3; Windows §6.5;
   optional MCP server §6.6; verification §8.
 

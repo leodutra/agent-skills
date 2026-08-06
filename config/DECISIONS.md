@@ -33,7 +33,7 @@ with its correction next to it, is the point.
 | [D17](#d17) | Standalone `clw` wrapper instead of a shell alias | 2.2 | Superseded by D25 |
 | [D18](#d18) | Rejected: a wrapper named `cc` | 2.2 | Active (constraint) |
 | [D19](#d19) | Condensed contract injected into agent files | 2.2 | Active |
-| [D20](#d20) | Headroom's place is gated on a cache-economics benchmark | 2.2 | Active |
+| [D20](#d20) | Headroom's place is gated on a cache-economics benchmark | 2.2 | Narrowed by D37 — gate never ran |
 | [D21](#d21) | Rejected: per-prompt structural-diff injection | 2.2 | Active (rejection) |
 | [D22](#d22) | Rejected: folding graphify into Serena's MCP server | 2.2 | Active (rejection) |
 | [D23](#d23) | Serena tool-surface audit deferred | 2.2 | Deferred |
@@ -50,6 +50,7 @@ with its correction next to it, is the point.
 | [D34](#d34) | Serena's language set derived from tracked files | 2.3.3 | Active |
 | [D35](#d35) | `graphify claude install`'s hook is active, not a no-op | 2.3.3 | Active — corrects D5 |
 | [D36](#d36) | Spec split into spec / decisions / changelog + a fitness test | 2.3.3 | Active |
+| [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20 |
 
 ---
 
@@ -286,7 +287,7 @@ under `~/.claude/agents/` and `.claude/agents/`.
 
 ## D20 — Headroom's place is gated on a cache-economics benchmark
 
-**Version:** 2.2 · **Status:** Active
+**Version:** 2.2 · **Status:** **Narrowed by [D37](#d37)** — the gate was never run
 
 Wire-level compression can bust Anthropic's prompt cache even while shrinking
 wire tokens: recompressing history changes the bytes the API sees turn to turn,
@@ -585,10 +586,49 @@ same rule D30 applied to the contract text and D2 applied to behavior.
 The fitness test (`tests/check-doc-commands.py`) exists because this class of
 drift is mechanically detectable and was not being detected. It extracts every
 command and subcommand named in the docs and asserts each appears in the
-corresponding tool's help output — `headroom stats` (D29) would have failed it for
-two versions. It also checks that every `§` cross-reference resolves to a real
+corresponding tool's help output — `headroom stats` (D29), which does not exist,
+would have failed it for two versions. It also checks that every `§` cross-reference resolves to a real
 section and that every cited `D<n>` exists, since the split made both newly
 breakable. It is a *fitness function*, not a unit test: it constrains the
 documentation to stay true, and it can only ever catch drift that is checkable
 against a machine-readable source. Prose claims about behavior — D4's and D5's
 wrong reasons — remain outside its reach and are still caught only by reading.
+
+<a id="d37"></a>
+## D37 — Cache-economics benchmark declined; Headroom retained provisionally
+
+**Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20)
+
+D20 said Headroom is "retained only as long as the cache-economics benchmark
+shows it's net-positive on effective cost." That benchmark has never been run,
+and there is no plan to run it. A conditional that is never evaluated does not
+gate anything — so as written, D20 made the spec assert a control that did not
+exist, the same defect class as D4's and D5's stale reasons and D29's phantom
+subcommand. This entry records the decision rather than letting the claim drift.
+
+**Decision:** the benchmark is **declined**, not pending. Headroom stays in the
+stack on **wire-token evidence alone**, and its cache economics are recorded as
+**unverified**. Its status is provisional and monitored, not established.
+
+**Why declined.** The benchmark requires two full matched sessions per
+Headroom-affecting change, hand-compared across four token counters, with the
+confound it is meant to isolate (prompt-cache behavior) partly controlled by
+upstream code — CCR's tool injection — that can change between runs. The cost is
+real and recurring; the result would be valid only until the next upstream
+release. Against that, the mitigation it would inform is already available and
+free: Headroom is the only per-launch-optional layer, so if the §7 symptom
+appears, the response is to launch bare, and nothing else in the stack is
+affected. Measuring is not the cheapest path to the action the measurement would
+recommend.
+
+**What replaces it.** The §7 symptom — `headroom savings` reporting savings while
+`cache_read_input_tokens` collapses — is the standing check, watched in ordinary
+use rather than in a controlled run. The procedure stays documented in the spec's
+verification section so the question remains answerable on demand: run it if the
+symptom appears, or before anyone proposes making Headroom non-optional.
+
+**What this costs.** "Headroom saves money" is unproven and must not be stated as
+fact anywhere in the docs; only "Headroom reduces wire tokens" is supported. If
+the cache-bust effect is real and large, the stack is currently paying for it and
+would not know — accepted, bounded by Headroom being the one layer that can be
+dropped per launch with no other consequence.
