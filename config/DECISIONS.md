@@ -49,8 +49,9 @@ with its correction next to it, is the point.
 | [D33](#d33) | Serena does not self-activate; serena-autoinit hook added | 2.3.3 | Active — corrects D4 |
 | [D34](#d34) | Serena's language set derived from tracked files | 2.3.3 | Active |
 | [D35](#d35) | `graphify claude install`'s hook is active, not a no-op | 2.3.3 | Active — corrects D5 |
-| [D36](#d36) | Spec split into spec / decisions / changelog + a fitness test | 2.3.3 | Active |
+| [D36](#d36) | Spec split into spec / decisions / changelog | 2.3.3 | Active — enforcement narrowed by D38 |
 | [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20 |
+| [D38](#d38) | Mechanical doc-drift checking declined | 2.3.3 | Active — narrows D36 |
 
 ---
 
@@ -423,8 +424,8 @@ what the autobuild hook already did.
 `headroom stats` has never been a headroom subcommand, so every snapshot ever
 taken recorded a usage error instead of the numbers. (`headroom memory stats`
 exists and is a different thing: memory-store counts, not compression savings.)
-The spec kept citing the nonexistent form in two more places until D36's fitness
-test was added to catch exactly this.
+The spec kept citing the nonexistent form in two more places, in §7 and §9,
+until they were found by reading in 2.3.3.
 
 <a id="d30"></a>
 
@@ -566,9 +567,9 @@ per-repo defense-in-depth is ever wanted, the place to wire the hook is
 
 <a id="d36"></a>
 
-## D36 — Spec split into spec / decisions / changelog, plus a fitness test
+## D36 — Spec split into spec / decisions / changelog
 
-**Version:** 2.3.3 · **Status:** Active
+**Version:** 2.3.3 · **Status:** Active — enforcement narrowed by [D38](#d38)
 
 The single document had become its own drift source. Its changelog had grown into
 the largest section and narrated the same rationale as the decisions log, so a
@@ -583,16 +584,9 @@ modes, verification) and carries no rationale beyond a `D<n>` citation;
 line per change pointing at a decision. Rationale then has exactly one home, the
 same rule D30 applied to the contract text and D2 applied to behavior.
 
-The fitness test (`tests/check-doc-commands.py`) exists because this class of
-drift is mechanically detectable and was not being detected. It extracts every
-command and subcommand named in the docs and asserts each appears in the
-corresponding tool's help output — `headroom stats` (D29), which does not exist,
-would have failed it for two versions. It also checks that every `§` cross-reference resolves to a real
-section and that every cited `D<n>` exists, since the split made both newly
-breakable. It is a *fitness function*, not a unit test: it constrains the
-documentation to stay true, and it can only ever catch drift that is checkable
-against a machine-readable source. Prose claims about behavior — D4's and D5's
-wrong reasons — remain outside its reach and are still caught only by reading.
+Enforcement of the split is by review, not by tooling. A mechanical checker
+was written and then removed the same day — see D38 for why, and for what the
+split therefore relies on instead.
 
 <a id="d37"></a>
 ## D37 — Cache-economics benchmark declined; Headroom retained provisionally
@@ -632,3 +626,33 @@ fact anywhere in the docs; only "Headroom reduces wire tokens" is supported. If
 the cache-bust effect is real and large, the stack is currently paying for it and
 would not know — accepted, bounded by Headroom being the one layer that can be
 dropped per launch with no other consequence.
+
+<a id="d38"></a>
+## D38 — Mechanical doc-drift checking declined
+
+**Version:** 2.3.3 · **Status:** Active — narrows [D36](#d36)
+
+A checker was written for the drift class D36 describes: extract every
+`tool subcommand` named in the docs, assert each appears in that tool's help;
+likewise every `§` reference and every `D<n>` citation. It worked — on its first
+run it caught a stale `§9` in the README and a `wt` that resolved to Windows
+Terminal rather than worktrunk. It is still removed.
+
+**Why.** It was a third implementation language sitting beside `stack-init.sh`
+and `stack-init.ps1` in a repo whose direction is *fewer* implementations — the
+same pressure behind D2, D30 and D31, and behind the pending consolidation into
+one binary. A doc checker is not the thing worth spending that budget on, and
+keeping it would have meant maintaining Python tooling through the .ps1 retirement
+for a benefit review already provides.
+
+**What the split relies on instead.** Review. Section renumbering and `D<n>`
+citations are checked by reading, as the prose claims always were — and the three
+defects that motivated this whole version (D33, D35, D29) were *all* found that
+way, not by tooling. The checker would have caught D29's phantom subcommand and
+neither of the other two, which is a fair statement of its actual ceiling.
+
+**What this costs.** Renumbering a spec section can silently break a reference in
+three other files, and nothing will say so. Accepted: the blast radius is a wrong
+pointer in a doc, not wrong behavior, and the doc set is small enough to re-read.
+If it stops being small enough, the place for these checks is the invariant-test
+layer, not a standalone script.

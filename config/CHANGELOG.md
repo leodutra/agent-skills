@@ -26,7 +26,8 @@ shipped scripts, plus a hook that had been shipping undocumented.
 - **Change** §2.4 boundary 5 no longer conditions Headroom on a benchmark nobody
   runs: retained on wire-token evidence, cache economics recorded as unverified,
   status provisional and monitored. [D37](DECISIONS.md#d37) (narrows [D20](DECISIONS.md#d20))
-- **Change** spec split into spec / `DECISIONS.md` / `CHANGELOG.md`. [D36](DECISIONS.md#d36)
+- **Change** spec split into spec / `DECISIONS.md` / `CHANGELOG.md`; enforced by
+  review, not tooling. [D36](DECISIONS.md#d36), [D38](DECISIONS.md#d38)
 - **Change** spec sections renumbered: Serena autoinit is §6.3; Windows §6.5;
   optional MCP server §6.6; verification §8.
 
