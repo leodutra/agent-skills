@@ -54,10 +54,10 @@ What this stack deliberately does **not** do: manage intent (specs, ADRs, roadma
 
 **Why it's in the stack:** it is the only layer that provides ground truth. `find_referencing_symbols` returns actual call sites, not text matches — no false positives from comments, strings, or look-alike methods. `get_diagnostics_for_file` returns structured compile/type/lint state without running (or paying for) a full `cargo check` dump.
 
-**Hard boundaries (enforced by the `ide-assistant` context):**
+**Hard boundaries (enforced by the `claude-code` context, formerly `ide-assistant`):**
 
-1. `execute_shell_command` is **disabled** by default in `ide-assistant` — keep it that way. MCP tool calls bypass RTK's Bash hook; if tests ran through Serena you'd pay full uncompressed output cost. All shell goes through Claude Code's native Bash.
-2. `read_file` / `search_for_pattern` are likewise disabled in `ide-assistant` — Claude Code provides those natively, and duplicate tools confuse routing.
+1. `execute_shell_command` is **disabled** by default in `claude-code` — keep it that way. MCP tool calls bypass RTK's Bash hook; if tests ran through Serena you'd pay full uncompressed output cost. All shell goes through Claude Code's native Bash.
+2. `read_file` / `search_for_pattern` are likewise disabled in `claude-code` — Claude Code provides those natively, and duplicate tools confuse routing.
 
 These are structural, not instructional: the tools simply aren't in Serena's surface, so the agent *can't* route around RTK.
 
@@ -107,7 +107,7 @@ Route every information need to exactly one layer.
 | "Does this compile / what are the type errors?" | Serena (`get_diagnostics_for_file`) | running `cargo check` via Bash | Diagnostics are structured and already minimal; no compression heuristics involved |
 | Editing a function/class body | Serena (`replace_symbol_body`, `insert_*_symbol`) | regex/string replace | Symbol-anchored edits don't hit comments, strings, or look-alike names |
 | Renaming / refactoring a symbol | Serena symbol-level edits | search-and-replace | Avoids missed aliased imports and false hits |
-| Running tests / builds / linters / git / docker | Bash (RTK compresses automatically) | any MCP shell tool | The RTK hook only covers Bash; an MCP shell would bypass it |
+| Running tests / builds / linters / git / docker | Bash (RTK compresses automatically) | any MCP shell tool; the PowerShell tool on Windows | The RTK hook matcher is `Bash` only, so both return uncompressed output |
 | Fuzzy "where's the code that handles ~concept~?" | graphify query first; Serena once a symbol name surfaces | reading many files | Graph narrows the neighborhood; LSP takes over at symbol granularity |
 
 **Tie-breakers:**
@@ -140,7 +140,9 @@ This is the text the global installer writes into `~/.claude/CLAUDE.md` (between
 4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
    insert_after_symbol, rename_symbol), not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash. RTK compresses it.
-   Do NOT route execution through any MCP shell tool - that bypasses RTK.
+   Do NOT route execution through an MCP shell tool or the PowerShell tool -
+   RTK's hook matches Bash only, so both hand back uncompressed output.
+   PowerShell is for genuinely Windows-only work (registry, COM, cmdlets).
 6. The graph reflects the last REBUILD (normally the last commit).
    - Symbol-level questions about uncommitted work -> Serena (live). Never the graph.
    - ARCHITECTURAL questions that involve uncommitted work -> run `graphify update .`
@@ -197,7 +199,7 @@ The graph and its refresh hooks are the only irreducibly per-repo *state*: there
 Run once. The installer:
 
 1. **RTK** — `cargo install` if absent, then `rtk init -g` (global Bash PreToolUse hook).
-2. **Serena** — `claude mcp add --scope user serena -- uvx --from git+https://github.com/oraios/serena serena start-mcp-server --context ide-assistant`. **No `--project` flag** — registered bare, Serena activates the project from the session's cwd, so one registration serves every repo. `--context ide-assistant` is what disables the shell/read/search tools (§2.2).
+2. **Serena** — `uv tool install --from git+https://github.com/oraios/serena serena-agent`, then `claude mcp add --scope user serena -- serena start-mcp-server --context claude-code`. **No `--project` flag** — registered bare, Serena activates the project from the session's cwd, so one registration serves every repo. `--context claude-code` (the current name of the deprecated `ide-assistant`) is what disables the shell/read/search tools (§2.2). Launching via a **pinned binary rather than `uvx --from git+…`** is load-bearing: uvx re-resolves the git ref and rebuilds the package whenever uv's cache is cold, which overruns Claude Code's 30 s MCP startup limit and leaves the session with **no Serena at all** — a silent failure, since the model simply falls back to grep and nothing in the UI says the contract's rule 2 is now unenforceable. The installer also migrates an existing uvx-based registration (a bare "already registered" check would preserve the bug forever) and sets `env.MCP_TIMEOUT = 120000` in `settings.json` as a safety net for a genuinely cold first launch (LSP download).
 3. **graphify** — `uv tool install 'graphifyy[all]'` (PyPI package is `graphifyy`, double-y; `uv tool`/`pipx` over plain `pip` because PATH issues are the most common "command not found" cause), then `graphify install` for the `/graphify` skill, then registers the **graph-autobuild SessionStart hook** (§6.2) that makes per-repo init automatic. It deliberately does **not** run `graphify claude install` — see §8.
 4. **Headroom** — `uv tool install 'headroom-ai[all]'` (PyPI package is `headroom-ai`; same `uv tool` preference and reasoning as graphify). Installing it is necessary but not sufficient: it only takes effect for sessions launched through the proxy. Since 2.3 the installer shadows bare `claude` with a **recursion-safe shim** in `~/.claude/stack-bin`, prepended to PATH (on Unix via a marker-guarded line in `.profile`/`.bashrc`/`.zshrc`; on Windows via the user PATH in the registry, with three shim files covering PowerShell/cmd/Git-Bash resolution). `headroom wrap` only accepts tool names (click subcommands) and re-resolves `claude` on PATH itself, so re-resolution back onto the shim is unavoidable — the shim bounds it by construction: it exports a re-entry guard (`CLAUDE_STACK_SHIM`) before delegating to `headroom wrap claude`, and the re-entered shim execs the real binary directly (resolved by the shim itself, skipping its own directory) — exactly one bounce, never a loop. It never double-wraps an already-proxied session (localhost `ANTHROPIC_BASE_URL`) and falls through to exec-ing the real binary when headroom is missing or `CLAUDE_NO_HEADROOM=1` is set — a broken shim never blocks a session. The shim also passes `--no-tokensave` when the installed headroom supports it (probed at install time), because newer headroom builds its own "tokensave" code graph by default — the renamed, default-on incarnation of `--code-graph`, which §2.4 boundary 2 and §8 forbid as a duplicate of graphify. The 2.2 wrapper (`clw`/`hclaude`/`claudew`) is removed as superseded — the installer deletes any it previously wrote; where the shim's PATH entry doesn't win, `headroom wrap claude` itself is the manual fallback (§7).
 5. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent).
@@ -250,7 +252,7 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Over-compression eating a needed signal.** An RTK filter strips context the agent needed. Mitigation: RTK preserves failures in full and dumps raw output to disk on failure; run `rtk discover` periodically; verify the broken-test path once at setup. Don't pass secrets as CLI args — RTK's tracking DB stores full command strings for ~90 days.
 
-**Shell routing around RTK.** Any MCP tool that executes commands bypasses the Bash hook. Mitigation: structural — `ide-assistant` exposes no Serena shell tool. If you add another MCP server with an exec tool, decide its compression story explicitly.
+**Shell routing around RTK.** Any MCP tool that executes commands bypasses the Bash hook, and so does Claude Code's own **PowerShell** tool on Windows — `rtk init -g` registers the PreToolUse hook with matcher `Bash`, which does not match the separate `PowerShell` tool name. Mitigation for MCP is structural (`claude-code` exposes no Serena shell tool); for PowerShell it is instructional only (§4 rule 5), because RTK's rewriter targets POSIX command lines and pointing it at PowerShell risks mangling cmdlet pipelines. If you add another MCP server with an exec tool, decide its compression story explicitly.
 
 **Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-init verify`).
 
@@ -280,7 +282,7 @@ For graph queries as MCP tools instead of CLI calls, add a `graphify` server to 
 
 **Serena at user scope, no `--project`.** One registration serves every repo, activating from the session's cwd. Per-repo memories stay in each repo's `.serena/`, so there's no cross-project contamination; the only cost is first-session onboarding per repo.
 
-**Serena in `ide-assistant` context, shell disabled.** Makes the RTK-bypass impossible structurally rather than by instruction, and removes duplicate read/search tools that confuse routing.
+**Serena in `claude-code` context (formerly `ide-assistant`), shell disabled.** Makes the RTK-bypass impossible structurally rather than by instruction, and removes duplicate read/search tools that confuse routing.
 
 **graphify rebuild on git post-commit, not on agent hooks.** Matches the graph's epistemic status ("true as of last commit"), avoids rebuild thrash, keeps staleness bounded and *known* rather than variable.
 
