@@ -190,11 +190,33 @@ check_deps() {
   [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
 }
 
+get_git_hooks_dir() {
+  # Ask git for the hooks dir instead of assuming .git/hooks. In a LINKED
+  # WORKTREE .git is a FILE, not a directory, so .git/hooks does not exist and
+  # writing there either fails or drops hooks somewhere git never reads.
+  # `rev-parse --git-path hooks` resolves core.hooksPath and worktrees alike,
+  # and points every worktree at the COMMON hooks dir - which is what we want:
+  # git supports one hooks dir per repo, and the bodies below are cwd-relative,
+  # so they act on whichever worktree ran the command.
+  git rev-parse --git-path hooks 2>/dev/null
+}
+
+in_git_repo() {
+  # `.git` is a DIRECTORY only in the primary checkout - in a linked worktree it
+  # is a FILE pointing at the common dir, so `[ -d .git ]` is false and every
+  # worktree gets locked out of `init` and of verify's repo-local checks. Ask
+  # git instead, which answers the same in both.
+  git rev-parse --git-dir >/dev/null 2>&1
+}
+
 write_git_hook() {
   # Merge-not-clobber: skip if our marker is already there, append under the
   # marker if some other tool owns the file, otherwise create it fresh.
-  local name="$1" body="$2"
-  local path=".git/hooks/$name"
+  local name="$1" body="$2" dir
+  dir="$(get_git_hooks_dir)" || return 0
+  [ -n "$dir" ] || return 0
+  mkdir -p "$dir"
+  local path="$dir/$name"
   if [ -f "$path" ] && grep -q 'claude-context-stack:' "$path" 2>/dev/null; then
     return
   fi
@@ -757,15 +779,19 @@ install_global() {
       # Appending a second [post-start] table would make the whole TOML invalid
       # and break worktrunk entirely — never do it. Ask for a manual merge.
       warn "config.toml already defines post-start — add this line to it manually:"
-      warn "claude-context-stack = \"[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true\""
+      warn "claude-context-stack = \"[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install && cp -n '{{ primary_worktree_path }}/graphify-out/.graphify_python' graphify-out/ 2>/dev/null || true\""
     else
       cat >> "$WT_CFG" <<'WTHOOK'
 
-# claude-context-stack: replicate the stack's per-checkout state (graphify graph
-# + post-commit rebuild hook) into every new worktree, only where the primary
-# checkout was stack-inited. Delete this block to opt out.
+# claude-context-stack: replicate the stack's per-checkout state (graphify graph,
+# post-commit rebuild hook, interpreter pin) into every new worktree, only where
+# the primary checkout was stack-inited. The .graphify_python copy matters
+# because the post-commit hook is SHARED across worktrees but reads its override
+# relative to cwd - without it a new worktree's first commit warns instead of
+# rebuilding, until a Claude session's autobuild hook repairs it.
+# Delete this block to opt out.
 [post-start]
-claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install || true"
+claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install && cp -n '{{ primary_worktree_path }}/graphify-out/.graphify_python' graphify-out/ 2>/dev/null || true"
 WTHOOK
       say "  global post-start hook written -> $WT_CFG"
     fi
@@ -802,7 +828,7 @@ WTHOOK
 }
 
 init_project() {
-  [ -d .git ] || { err "run from a git repo root (no .git here)"; exit 1; }
+  in_git_repo || { err "run from a git repo (no git repo here)"; exit 1; }
   have graphify || { err "graphify not installed — run '$(basename "$0") global' first"; exit 1; }
   say "building knowledge graph (graphify .)"; graphify .
   say "installing local post-commit hook (incremental rebuild)"; graphify hook install
@@ -843,7 +869,13 @@ PYEOF
 verify() {
   say "verifying"
   have rtk && echo "  rtk:            OK ($(rtk --version 2>/dev/null))" || echo "  rtk:            NOT ON PATH"
-  rtk gain >/dev/null 2>&1 && echo "  rtk hook:       active" || echo "  rtk hook:       no stats yet (run a few Bash cmds)"
+  # Read the registered hook, do NOT shell out to `rtk gain`: it exits 0 whether
+  # or not a hook exists (it merely prints a warning), so the old check reported
+  # "active" for an uninstalled hook. settings.json is the source of truth.
+  if grep -q '"PreToolUse"' "$CLAUDE_DIR/settings.json" 2>/dev/null &&
+     grep -q 'rtk' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
+    echo "  rtk hook:       OK (PreToolUse Bash)"
+  else echo "  rtk hook:       NOT registered — run: rtk init -g"; fi
   claude mcp list 2>/dev/null | grep -qi serena && echo "  serena (mcp):   OK (user scope)" || echo "  serena (mcp):   NOT registered"
   have graphify && echo "  graphify:       OK" || echo "  graphify:       NOT installed"
   have headroom && echo "  headroom:       OK" || echo "  headroom:       NOT installed"
@@ -863,12 +895,33 @@ verify() {
   [ -f "$CLAUDE_DIR/skills/opensrc/SKILL.md" ]   && echo "  opensrc skill:    OK (global)"   || echo "  opensrc skill:    NOT deployed — rerun global"
   [ -f "$CLAUDE_DIR/skills/worktrunk/SKILL.md" ] && echo "  worktrunk skill:  OK (global)"   || echo "  worktrunk skill:  NOT deployed — rerun global"
   grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null && echo "  contract:       OK ($CLAUDE_MD)" || echo "  contract:       MISSING"
-  if [ -d .git ]; then
+  if in_git_repo; then
+    # Everything below is PER CHECKOUT, and a linked worktree is a checkout like
+    # any other: it gets its own graph and its own Serena project, because both
+    # describe the code at THIS path. Only the hooks are shared — git supports
+    # one hooks dir per repo — which is fine, since the bodies are cwd-relative
+    # and so act on whichever worktree invoked them.
+    local gd cgd hooks_dir br refresh_hook refresh_hooks_ok=1
+    # Both paths can come back relative, and there is no portable absolute form
+    # (--path-format needs git 2.31+), so normalise BOTH through `cd && pwd -P`.
+    # Doing it to only one side would leave the comparison symlink-sensitive and
+    # a worktree would look linked (or not) depending on how the repo was reached.
+    gd="$(git rev-parse --git-dir 2>/dev/null)"
+    [ -n "$gd" ] && gd="$(CDPATH= cd -- "$gd" 2>/dev/null && pwd -P)"
+    cgd="$(git rev-parse --git-common-dir 2>/dev/null)"
+    [ -n "$cgd" ] && cgd="$(CDPATH= cd -- "$cgd" 2>/dev/null && pwd -P)"
+    [ -n "$cgd" ] || cgd="$gd"
+    if [ -n "$gd" ] && [ "$gd" != "$cgd" ]; then
+      br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+      echo "  checkout:       linked worktree ($br) — own graph + Serena project, shared hooks"
+    else echo "  checkout:       primary"; fi
     [ -f graphify-out/graph.json ] && echo "  graph (here):   OK ($(du -h graphify-out/graph.json | cut -f1))" || echo "  graph (here):   not built — autobuilds next session (or run: $(basename "$0") init)"
-    [ -x .git/hooks/post-commit ]  && echo "  post-commit:    OK" || echo "  post-commit:    none"
-    local refresh_hook refresh_hooks_ok=1
+    [ -f .serena/project.yml ] && echo "  serena project: OK (.serena/project.yml)" || echo "  serena project: none — autoinits next session"
+    hooks_dir="$(get_git_hooks_dir)"
+    [ -n "$hooks_dir" ] || hooks_dir=".git/hooks"
+    [ -f "$hooks_dir/post-commit" ] && echo "  post-commit:    OK" || echo "  post-commit:    none"
     for refresh_hook in post-checkout post-merge post-rewrite; do
-      grep -q 'claude-context-stack:' ".git/hooks/$refresh_hook" 2>/dev/null || { refresh_hooks_ok=0; break; }
+      grep -q 'claude-context-stack:' "$hooks_dir/$refresh_hook" 2>/dev/null || { refresh_hooks_ok=0; break; }
     done
     [ "$refresh_hooks_ok" = 1 ] && echo "  graph refresh:  OK (checkout/merge/rewrite)" || echo "  graph refresh:  MISSING (checkout/merge/rewrite)"
   fi
