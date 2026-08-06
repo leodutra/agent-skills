@@ -697,6 +697,62 @@ Send-Activation $top $name
   Say "  SessionStart serena-autoinit hook installed (opt out: CLAUDE_STACK_NO_SERENA_INIT=1 or .serena-skip)"
 }
 
+function Install-ContractRefresh {
+  # The condensed contract was written into agent files ONLY at install time, so
+  # editing contract-condensed.md left every deployed copy stale until somebody
+  # re-ran the installer - the same drift removed from the contract text itself
+  # one level up, reintroduced one level down. Every comparable per-repo concern
+  # had already become a self-healing SessionStart hook (the graph, then Serena);
+  # this was the one that had not.
+  #
+  # Scope is ~\.claude\agents\ ONLY, deliberately. .claude\agents\ is TRACKED,
+  # and a background job must never mutate files the user would have to commit
+  # (the rule the graph autobuild follows by writing solely under .git\). The
+  # per-repo copies stay with `init`, where a human asked for them.
+  #
+  # The hook reads contract-condensed.md live, through an absolute path resolved
+  # now - baking the TEXT in would recreate exactly the staleness this fixes.
+  $src = Join-Path $PSScriptRoot 'contract-condensed.md'
+  $agents = Join-Path $ClaudeDir 'agents'
+  $hookPath = Join-Path $ClaudeDir 'hooks\contract-refresh.ps1'
+  $tpl = @'
+# claude-context-stack: refresh the condensed routing contract in user-global
+# agent files at session start. Opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1.
+# Uninstall: remove the SessionStart entry in settings.json.
+if ($env:CLAUDE_STACK_NO_CONTRACT_REFRESH) { exit 0 }
+$src = '__SRC__'
+$dir = '__DIR__'
+if (-not (Test-Path $src)) { exit 0 }
+if (-not (Test-Path $dir)) { exit 0 }
+$block = Get-Content -Raw $src -ErrorAction SilentlyContinue
+if (-not $block) { exit 0 }
+$block = ($block -replace "^$([char]0xFEFF)", '').TrimEnd()
+$marker = '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<'
+# Silent by design - a session-start hook that cannot write a file the user did
+# not ask about should not editorialise about it.
+foreach ($f in (Get-ChildItem -Path $dir -Filter '*.md' -File -ErrorAction SilentlyContinue)) {
+  $text = Get-Content -Raw $f.FullName -ErrorAction SilentlyContinue
+  if ($null -eq $text) { continue }
+  $text = $text -replace "^$([char]0xFEFF)", ''
+  # Skip files already carrying the current text: the common case is no change
+  # at all, and rewriting every agent file every session churns mtimes for
+  # nothing.
+  $cur = [regex]::Match($text, $marker)
+  if ($cur.Success -and ($cur.Value.TrimEnd() -eq $block)) { continue }
+  $stripped = [regex]::Replace($text, ($marker + '\r?\n?'), '')
+  $new = ($stripped.TrimEnd() + "`r`n`r`n" + $block).TrimStart() + "`r`n"
+  try {
+    [IO.File]::WriteAllText($f.FullName, $new, (New-Object Text.UTF8Encoding $false))
+  } catch { continue }
+}
+exit 0
+'@
+  $tpl = $tpl.Replace('__SRC__', $src.Replace("'", "''")).Replace('__DIR__', $agents.Replace("'", "''"))
+  Write-Utf8 $hookPath $tpl
+  Register-SessionStartHook "powershell -NoProfile -ExecutionPolicy Bypass -File `"$hookPath`"" | Out-Null
+  Say "  SessionStart contract-refresh hook installed (~\.claude\agents only; opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1)"
+}
+
 function Install-ClaudeShim {
   # Shadows bare `claude` so it launches through Headroom automatically. The
   # self-recursion hazard that made shadowing dangerous (headroom re-resolving
@@ -709,10 +765,8 @@ function Install-ClaudeShim {
   # ANTHROPIC_BASE_URL) is never double-wrapped. Headroom missing or
   # CLAUDE_NO_HEADROOM=1 falls through to the real binary - a broken shim
   # never blocks a session.
-  # $HeadroomFlags carries ' --no-tokensave' when supported: newer headroom
-  # builds its own code graph by default, which the stack's decisions log
-  # forbids (duplicate of graphify; see the --code-graph entry).
-  param([string]$HeadroomFlags = '')
+  # --no-tokensave is probed by the shim at LAUNCH, not here - see the comment
+  # at the probe itself for why an install-time answer could not stay correct.
   $binDir = Join-Path $ClaudeDir 'stack-bin'
   New-Item -ItemType Directory -Force -Path $binDir | Out-Null
 
@@ -733,8 +787,39 @@ $bypass = $env:CLAUDE_NO_HEADROOM -or $env:CLAUDE_STACK_SHIM -or
   -not (Get-Command headroom -ErrorAction SilentlyContinue)
 if ($bypass) { & $real.Source @args; exit $LASTEXITCODE }
 $env:CLAUDE_STACK_SHIM = '1'
+
+# --no-tokensave is probed HERE, at launch, rather than baked in at install:
+# newer headroom builds its own "tokensave" code graph by default, which the
+# stack's decisions log forbids as a duplicate of graphify. An install-time
+# answer went stale the moment headroom was upgraded - silently restoring the
+# very thing the flag suppresses - and the mitigation was an instruction to
+# re-run the installer, which nobody does. The cache key is headroom's version,
+# so an upgrade re-probes exactly once. Any failure falls back to passing no
+# flag, which is what older headroom builds (no such flag) need anyway.
+$flags = @()
+$ver = ''
+try { $ver = ((headroom --version 2>$null | Out-String) -replace '[^0-9A-Za-z.\-]', '') } catch {}
+if ($ver) {
+  $cache = Join-Path $selfDir ".tokensave-$ver"
+  if (Test-Path $cache) {
+    $cached = Get-Content $cache -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($cached) { $flags = @($cached) }
+  } else {
+    try {
+      if ((headroom wrap claude --help 2>$null | Out-String) -match '--no-tokensave') {
+        $flags = @('--no-tokensave')
+      }
+      # One cache file at a time: drop prior versions' answers so an upgrade
+      # cycle cannot leave the directory accumulating stale entries.
+      Get-ChildItem -Path $selfDir -Filter '.tokensave-*' -Force -ErrorAction SilentlyContinue |
+        Remove-Item -Force -ErrorAction SilentlyContinue
+      Set-Content -Path $cache -Value ($flags -join '') -Encoding ascii -ErrorAction SilentlyContinue
+    } catch {}
+  }
+}
+headroom wrap claude @flags @args
+exit $LASTEXITCODE
 '@
-  $shimPs1 += "`nheadroom wrap claude$HeadroomFlags @args`nexit `$LASTEXITCODE`n"
   Write-Utf8 (Join-Path $binDir 'claude.ps1') $shimPs1
 
   Set-Content -Path (Join-Path $binDir 'claude.cmd') -Encoding ascii -Value @'
@@ -774,8 +859,27 @@ if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "
 fi
 CLAUDE_STACK_SHIM=1
 export CLAUDE_STACK_SHIM
+
+# --no-tokensave is probed HERE, at launch, rather than baked in at install -
+# an install-time answer went stale the moment headroom was upgraded, silently
+# restoring the duplicate code graph the flag exists to suppress. Cache key is
+# headroom's version, so an upgrade re-probes exactly once.
+flags=
+ver=$(headroom --version 2>/dev/null | tr -cd '0-9A-Za-z.-')
+if [ -n "$ver" ]; then
+  cache="$self_dir/.tokensave-$ver"
+  if [ -f "$cache" ]; then
+    read -r flags < "$cache" 2>/dev/null || flags=
+  else
+    headroom wrap claude --help 2>/dev/null | grep -q -- '--no-tokensave' \
+      && flags=--no-tokensave
+    rm -f "$self_dir"/.tokensave-* 2>/dev/null
+    printf '%s\n' "$flags" > "$cache" 2>/dev/null || true
+  fi
+fi
+[ -n "$flags" ] && exec headroom wrap claude "$flags" "$@"
+exec headroom wrap claude "$@"
 '@
-  $shimSh += "`nexec headroom wrap claude$HeadroomFlags `"`$@`""
   [IO.File]::WriteAllText((Join-Path $binDir 'claude'), ($shimSh -replace "`r`n", "`n") + "`n")
   Say "  shim written -> $binDir (claude.cmd / claude.ps1 / claude for Git Bash)"
 
@@ -922,17 +1026,10 @@ function Install-Global {
     claude mcp remove --scope user headroom 2>$null | Out-Null
     Say "  removed stray headroom MCP registration (wire proxy is the integration, not MCP)"
   }
-  # Newer headroom builds its own "tokensave" code graph by default - the
-  # renamed, default-on incarnation of --code-graph, which the decisions log
-  # forbids as a duplicate of graphify. Disable it when the flag exists;
-  # probing keeps older headroom versions (no such flag) launching cleanly.
-  $HeadroomFlags = ''
-  if ((Have 'headroom') -and
-      ((headroom wrap claude --help 2>$null | Out-String) -match '--no-tokensave')) { $HeadroomFlags = ' --no-tokensave' }
   $global:LASTEXITCODE = 0
   Say "  shadowing bare 'claude' with a recursion-safe shim (see Install-ClaudeShim"
   Say "  for how the old self-recursion hazard is closed)"
-  Install-ClaudeShim -HeadroomFlags $HeadroomFlags
+  Install-ClaudeShim
   # The shim supersedes the 2.2 clw/hclaude/claudew wrapper - remove any of
   # ours a previous version wrote. Manual fallback is `headroom wrap claude`.
   $wrapBinDir = Join-Path $env:USERPROFILE '.local\bin'
@@ -1034,6 +1131,9 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
 
   Say "Condensed contract -> subagent files ($env:USERPROFILE\.claude\agents\)"
   Invoke-InjectCondensedContract (Join-Path $ClaudeDir 'agents')
+  # ...and keep them current between installs. Only the user-global copies:
+  # .claude\agents\ is tracked, so it stays with `init` (see the function).
+  Install-ContractRefresh
 
   if (-not (Have 'rust-analyzer')) { Warn "rust-analyzer not on PATH - Serena needs it for Rust (rustup component add rust-analyzer)" }
   Write-Host ""; Say "Global install done. Open a NEW terminal so the claude shim takes effect."
@@ -1176,6 +1276,7 @@ function Invoke-Verify {
   } else { Write-Row 'claude shim' 'NOT installed' }
   Write-RowHook 'graph-autobuild' 'graph autobuild'
   Write-RowHook 'serena-autoinit' 'serena autoinit'
+  Write-RowHook 'contract-refresh' 'contract refresh'
   if (Find-WtBin) { Write-Row 'worktrunk' 'OK (workflow tool - outside the contract)' }
   else { Write-Row 'worktrunk' 'NOT installed (optional)' }
   Write-RowHave 'opensrc' 'opensrc' 'OK (context tool - outside the contract)' 'NOT installed (optional)'
@@ -1258,7 +1359,17 @@ switch ($Command.ToLower()) {
     Install-Global
   }
   'init'     { Init-Project }
-  'verify'   { Invoke-Verify }
+  'verify'   {
+    # --docs validates THIS REPO's documentation, not an installation, and is
+    # deliberately Unix-only (the decisions log records why). Say so rather than
+    # silently running the install check and reporting success for a flag that
+    # did nothing.
+    if (($Rest -contains '--docs') -or ($Rest -contains '-docs')) {
+      Err "verify --docs is Unix-only by design - run: bash stack-init.sh verify --docs"
+      exit 1
+    }
+    Invoke-Verify
+  }
   'contract' {
     $file = if (($Rest -contains '--condensed') -or ($Rest -contains '-condensed')) { 'contract-condensed.md' } else { 'contract.md' }
     Write-Output (Get-Contract $file)

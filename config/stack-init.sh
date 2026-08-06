@@ -45,6 +45,8 @@
 #    stack-init            # or: stack-init global    -> global install (once)
 #    stack-init init       # inside a repo   -> build graph + hooks eagerly
 #    stack-init verify     # check everything is wired
+#    stack-init verify --docs  # check THIS REPO's docs: every section and
+#                          # decision reference resolves (maintenance, not install)
 #    stack-init contract   # print the routing contract it installs
 #    stack-init contract --condensed  # print the short form injected into agents
 #    stack-init stats      # append + print a usage snapshot (rtk/headroom)
@@ -78,6 +80,11 @@ say()  { printf "${B}==>${N} %s\n" "$*"; }
 warn() { printf "${Y}warn:${N} %s\n" "$*"; }
 err()  { printf "${R}error:${N} %s\n" "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
+
+# Single-quote a value for embedding in a GENERATED script. The hooks below bake
+# absolute paths in, and a home directory with a space or a quote in it would
+# otherwise produce a hook that is silently syntactically broken.
+quote_sh() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
 
 script_dir() {
   # Resolve symlinks so `ln -s .../config/stack-init.sh ~/.local/bin/stack-init`
@@ -664,6 +671,64 @@ HOOK
   say "  SessionStart serena-autoinit hook installed (opt out: CLAUDE_STACK_NO_SERENA_INIT=1 or .serena-skip)"
 }
 
+install_contract_refresh() {
+  # The condensed contract was written into agent files ONLY at install time, so
+  # editing contract-condensed.md left every deployed copy stale until somebody
+  # re-ran the installer - the same drift D30 removed from the contract text
+  # itself, reintroduced one level down. Every comparable per-repo concern had
+  # already been converted to a self-healing SessionStart hook (the graph, then
+  # Serena); this was the one that had not.
+  #
+  # Scope is ~/.claude/agents/ ONLY, deliberately. .claude/agents/ is TRACKED,
+  # and a background job must never mutate files the user would have to commit
+  # (the rule the graph autobuild follows by writing solely under .git/). The
+  # per-repo copies stay with `init`, where a human asked for them.
+  #
+  # The hook reads contract-condensed.md live, through an absolute path resolved
+  # now - baking the TEXT in would recreate exactly the staleness this fixes.
+  local src; src="$(script_dir)/contract-condensed.md"
+  mkdir -p "$CLAUDE_DIR/hooks"
+  {
+    cat <<'HOOK'
+#!/bin/sh
+# claude-context-stack: refresh the condensed routing contract in user-global
+# agent files at session start. Opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1.
+# Uninstall: remove the SessionStart entry in settings.json.
+[ -n "${CLAUDE_STACK_NO_CONTRACT_REFRESH:-}" ] && exit 0
+HOOK
+    printf 'src=%s\n' "$(quote_sh "$src")"
+    printf 'dir=%s\n' "$(quote_sh "$CLAUDE_DIR/agents")"
+    cat <<'HOOK'
+[ -f "$src" ] || exit 0
+[ -d "$dir" ] || exit 0
+
+# Marker-guarded and sentinel-replaced, identical in shape to the installer's
+# own injection: strip any existing managed block, then append the current one.
+# Silent by design - a session-start hook that cannot write a file the user did
+# not ask about should not editorialise about it.
+for f in "$dir"/*.md; do
+  [ -e "$f" ] || continue
+  # Skip files already carrying the current text: the common case is no change
+  # at all, and rewriting every agent file every session churns mtimes for
+  # nothing.
+  if grep -q '>>> claude-context-stack >>>' "$f" 2>/dev/null; then
+    cur=$(awk '/>>> claude-context-stack >>>/{s=1} s{print} /<<< claude-context-stack <<</{s=0}' "$f" 2>/dev/null)
+    [ "$cur" = "$(cat "$src")" ] && continue
+    tmp=$(mktemp) || continue
+    if awk '/>>> claude-context-stack >>>/{s=1} !s{print} /<<< claude-context-stack <<</{s=0}' \
+      "$f" > "$tmp" 2>/dev/null && mv "$tmp" "$f" 2>/dev/null; then :; else rm -f "$tmp"; continue; fi
+  fi
+  body=$(cat "$f" 2>/dev/null) || continue
+  { printf '%s\n\n' "$body"; cat "$src"; } > "$f" 2>/dev/null || continue
+done
+exit 0
+HOOK
+  } > "$CLAUDE_DIR/hooks/contract-refresh.sh"
+  chmod +x "$CLAUDE_DIR/hooks/contract-refresh.sh"
+  register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/contract-refresh.sh\"" >/dev/null
+  say "  SessionStart contract-refresh hook installed (~/.claude/agents only; opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1)"
+}
+
 install_claude_shim() {
   # Shadows bare `claude` so it launches through Headroom automatically. The
   # self-recursion hazard that made shadowing dangerous (headroom re-resolving
@@ -676,10 +741,9 @@ install_claude_shim() {
   # ANTHROPIC_BASE_URL) is never double-wrapped. Headroom missing or
   # CLAUDE_NO_HEADROOM=1 falls through to the real binary - a broken shim
   # never blocks a session.
-  # $1 carries ' --no-tokensave' when supported: newer headroom builds its own
-  # code graph by default, which the decisions log forbids (duplicate of
-  # graphify; see the --code-graph entry).
-  local headroom_flags="${1:-}" bin_dir="$CLAUDE_DIR/stack-bin" rc line
+  # --no-tokensave is probed by the shim at LAUNCH, not here - see the comment
+  # at the probe itself for why an install-time answer could not stay correct.
+  local bin_dir="$CLAUDE_DIR/stack-bin" rc line
   mkdir -p "$bin_dir"
   cat > "$bin_dir/claude" <<'SHIM'
 #!/bin/sh
@@ -710,8 +774,34 @@ if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "
 fi
 CLAUDE_STACK_SHIM=1
 export CLAUDE_STACK_SHIM
+
+# --no-tokensave is probed HERE, at launch, rather than baked in at install:
+# newer headroom builds its own "tokensave" code graph by default, which the
+# decisions log forbids as a duplicate of graphify. An install-time answer went
+# stale the moment headroom was upgraded - silently restoring the very thing the
+# flag suppresses - and the mitigation was an instruction to re-run the
+# installer, which nobody does. The cache key is headroom's version, so an
+# upgrade re-probes exactly once and every later launch is a file read. Any
+# failure falls back to passing no flag, which is what older headroom builds
+# (which have no such flag) need anyway.
+flags=
+ver=$(headroom --version 2>/dev/null | tr -cd '0-9A-Za-z.-')
+if [ -n "$ver" ]; then
+  cache="$self_dir/.tokensave-$ver"
+  if [ -f "$cache" ]; then
+    read -r flags < "$cache" 2>/dev/null || flags=
+  else
+    headroom wrap claude --help 2>/dev/null | grep -q -- '--no-tokensave' \
+      && flags=--no-tokensave
+    # One cache file at a time: drop prior versions' answers so an upgrade
+    # cycle can't leave the directory accumulating stale entries.
+    rm -f "$self_dir"/.tokensave-* 2>/dev/null
+    printf '%s\n' "$flags" > "$cache" 2>/dev/null || true
+  fi
+fi
+[ -n "$flags" ] && exec headroom wrap claude "$flags" "$@"
+exec headroom wrap claude "$@"
 SHIM
-  printf 'exec headroom wrap claude%s "$@"\n' "$headroom_flags" >> "$bin_dir/claude"
   chmod +x "$bin_dir/claude"
   say "  shim written -> $bin_dir/claude"
   line="export PATH=\"$bin_dir:\$PATH\"  # claude-context-stack shim"
@@ -828,15 +918,9 @@ install_global() {
     claude mcp remove --scope user headroom >/dev/null 2>&1
     say "  removed stray headroom MCP registration (wire proxy is the integration, not MCP)"
   fi
-  # Newer headroom builds its own "tokensave" code graph by default - the
-  # renamed, default-on incarnation of --code-graph, which the decisions log
-  # forbids as a duplicate of graphify. Disable it when the flag exists;
-  # probing keeps older headroom versions (no such flag) launching cleanly.
-  HEADROOM_FLAGS=""
-  headroom wrap claude --help 2>/dev/null | grep -q -- '--no-tokensave' && HEADROOM_FLAGS=" --no-tokensave"
   say "  shadowing bare 'claude' with a recursion-safe shim (see install_claude_shim"
   say "  for how the old self-recursion hazard is closed)"
-  install_claude_shim "$HEADROOM_FLAGS"
+  install_claude_shim
   # The shim supersedes the 2.2 clw/hclaude/claudew wrapper - remove any of
   # ours a previous version wrote. Manual fallback is `headroom wrap claude`.
   for old in clw hclaude claudew; do
@@ -936,6 +1020,9 @@ WTHOOK
 
   say "Condensed contract -> subagent files (~/.claude/agents/)"
   inject_condensed_contract "$CLAUDE_DIR/agents"
+  # ...and keep them current between installs. Only the user-global copies:
+  # .claude/agents/ is tracked, so it stays with `init` (see the function).
+  install_contract_refresh
 
   have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
   echo; say "Global install done. Open a NEW shell so the claude shim takes effect."
@@ -1033,6 +1120,7 @@ verify() {
   else row "claude shim" "NOT installed"; fi
   row_hook graph-autobuild "graph autobuild"
   row_hook serena-autoinit "serena autoinit"
+  row_hook contract-refresh "contract refresh"
   if have wt || have git-wt; then row worktrunk "OK (workflow tool — outside the contract)"
   else row worktrunk "NOT installed (optional)"; fi
   row_have opensrc "opensrc" "OK (context tool — outside the contract)" "NOT installed (optional)"
@@ -1084,15 +1172,99 @@ verify() {
   fi
 }
 
+verify_docs() {
+  # Reinstated after being declined. The stated reason for removing it - "a third
+  # implementation language" - was wrong on this platform: python3 is already a
+  # hard prerequisite (check_deps aborts without it) and already runs every
+  # settings.json merge and `stats`. It is right on Windows, where the .ps1 uses
+  # PowerShell for the same work, which is why this subcommand is Unix-only and
+  # deliberately NOT mirrored - it validates the REPO's documentation, not a
+  # user's installation, so a Windows user never has occasion to run it.
+  #
+  # Only the two purely textual checks came back. The third - tool subcommands
+  # named in the docs against that tool's --help - stays dropped: it needs the
+  # tools installed, it is slow, and it has one hit in the project's history.
+  local root; root="$(script_dir)"
+  have python3 || { err "python3 not found - cannot run verify --docs"; return 1; }
+  python3 - "$root" <<'PYEOF'
+import os, re, sys
+
+root = sys.argv[1]
+SPEC = 'claude-code-context-stack.md'
+DEC = 'DECISIONS.md'
+DOCS = [SPEC, DEC, 'README.md', 'CHANGELOG.md', 'BACKLOG.md',
+        'contract.md', 'contract-condensed.md']
+
+
+def read(name):
+    path = os.path.join(root, name)
+    if not os.path.isfile(path):
+        return None
+    with open(path, encoding='utf-8') as fh:
+        return fh.read()
+
+
+spec = read(SPEC) or ''
+# '## 7. Guardrails', '### 2.1 graphify', '### 6.x Subagents' -> 7, 2.1, 6.x.
+# A bare '2' is valid whenever '## 2.' exists, which is how the spec numbers its
+# top-level sections, so no extra work is needed to accept '2.4' AND '2'.
+sections = set(re.findall(r'^#{2,3}\s+(\d+(?:\.\w+)?)\.?\s', spec, re.M))
+decisions = set(re.findall(r'^##\s+D(\d+)\b', read(DEC) or '', re.M))
+
+if not sections or not decisions:
+    sys.stderr.write('verify --docs: could not read the doc set at %s\n' % root)
+    sys.exit(1)
+
+# Ranges are written with an en dash in this doc set ('Read S1-3 first'), so the
+# tail of a range has to be validated too, not just the head.
+SECTION_REF = re.compile(u'§\\s*(\\d+(?:\\.\\w+)?)'
+                         u'(?:\\s*[–—-]\\s*(\\d+(?:\\.\\w+)?))?')
+DECISION_REF = re.compile(r'\bD(\d+)\b')
+
+bad = []
+for name in DOCS:
+    text = read(name)
+    if text is None:
+        continue
+    def at(pos):
+        return text.count('\n', 0, pos) + 1
+    # DECISIONS.md is exempt from the section check, and not as a convenience.
+    # Its bodies are append-only, and D36 renumbered the spec - so an old entry
+    # citing a section that no longer exists is both CORRECT (it describes the
+    # numbering of its own time) and unfixable (the body may not be rewritten).
+    # A check that reports defects nobody is permitted to repair produces
+    # permanent noise, and a checker people learn to ignore is worse than none.
+    # Decision citations are still checked here: those must always resolve.
+    if name != DEC:
+        for m in SECTION_REF.finditer(text):
+            for ref in (m.group(1), m.group(2)):
+                if ref and ref not in sections:
+                    bad.append(u'%s:%d: no such section: §%s' % (name, at(m.start()), ref))
+    for m in DECISION_REF.finditer(text):
+        if m.group(1) not in decisions:
+            bad.append('%s:%d: no such decision: D%s' % (name, at(m.start()), m.group(1)))
+
+for line in bad:
+    print(line)
+print('  %d sections, %d decisions, %d files checked -- %s'
+      % (len(sections), len(decisions), len([d for d in DOCS if read(d) is not None]),
+         'OK' if not bad else '%d BROKEN REFERENCE(S)' % len(bad)))
+sys.exit(1 if bad else 0)
+PYEOF
+}
+
 case "${1:-global}" in
   global|"")  install_global ;;
   init)       init_project ;;
-  verify)     verify ;;
+  # Not `[ ... ] && verify_docs || verify`: that idiom runs the full install
+  # check as a "fallback" the moment --docs legitimately reports a broken
+  # reference and exits non-zero.
+  verify)     if [ "${2:-}" = "--docs" ]; then verify_docs; else verify; fi ;;
   contract)   [ "${2:-}" = "--condensed" ] && print_contract_condensed || print_contract ;;
   stats)      stats ;;
   # Print the whole comment banner, however long it grows. The old fixed
   # '2,57p' range silently truncated it mid-sentence once the header moved -
   # by the time this was noticed it was cutting the PREREQS line off.
   -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify|contract [--condensed]|stats|help]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify [--docs]|contract [--condensed]|stats|help]"; exit 1 ;;
 esac

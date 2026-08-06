@@ -6,6 +6,35 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 2.4
+
+Backlog-clearing release: the six open defects in the decision set are closed,
+four of them by declining or affirming rather than by building. Two gates that
+could never fire are now decisions; one standing check that was circular is now
+a number you can read off `/cost`; two install-time writes that went stale are
+now self-healing.
+
+- **Change** Serena tool-surface audit declined outright — it was gated on
+  per-tool usage data nothing in the stack collects. [D39](DECISIONS.md#d39) (declines [D23](DECISIONS.md#d23))
+- **Change** Headroom stays default-on despite being the unverified layer;
+  recorded deliberately, with both alternatives evaluated and rejected. [D40](DECISIONS.md#d40) (affirms [D25](DECISIONS.md#d25))
+- **Fix** the cache-bust symptom no longer requires a matched bare session to
+  observe — it was defined in terms of the benchmark D37 declined, so nothing
+  was being watched. Now a single-session ratio:
+  `cache_read / (cache_read + cache_creation)` after ~10 turns. [D41](DECISIONS.md#d41)
+- **Add** `stack-init verify --docs` — every `§` reference and every `D<n>`
+  citation across the doc set must resolve. Unix-only by design. [D42](DECISIONS.md#d42) (corrects [D38](DECISIONS.md#d38))
+- **Add** contract-refresh `SessionStart` hook: editing `contract-condensed.md`
+  now propagates to `~/.claude/agents/*.md` without re-running the installer.
+  Scoped to user-global files only — `.claude/agents/` is tracked, so it stays
+  with `init` per [D24](DECISIONS.md#d24). [D43](DECISIONS.md#d43) (narrows [D19](DECISIONS.md#d19))
+- **Fix** `--no-tokensave` is probed by the shim at launch and cached on
+  headroom's version, instead of being baked in at install and going stale on
+  the next upgrade — which silently restored the duplicate code graph
+  [D13](DECISIONS.md#d13) forbids. [D44](DECISIONS.md#d44) (narrows [D26](DECISIONS.md#d26))
+- **Add** `BACKLOG.md` recorded as the fourth document: open defects in the
+  decision set, one item each, deleted as they close. [D45](DECISIONS.md#d45) (extends [D36](DECISIONS.md#d36))
+
 ## 2.3.3
 
 Documentation-integrity release: three places where the spec contradicted the
@@ -30,6 +59,7 @@ shipped scripts, plus a hook that had been shipping undocumented.
   review, not tooling. [D36](DECISIONS.md#d36), [D38](DECISIONS.md#d38)
 - **Change** spec sections renumbered: Serena autoinit is §6.3; Windows §6.5;
   optional MCP server §6.6; verification §8.
+- **Fix** `README.md` file table said the decisions log runs D1–D37; D38 exists.
 
 ## 2.3.2
 

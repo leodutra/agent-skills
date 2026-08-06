@@ -32,14 +32,14 @@ with its correction next to it, is the point.
 | [D16](#d16) | Four refresh hooks; staleness bounded to one git operation | 2.2 | Active |
 | [D17](#d17) | Standalone `clw` wrapper instead of a shell alias | 2.2 | Superseded by D25 |
 | [D18](#d18) | Rejected: a wrapper named `cc` | 2.2 | Active (constraint) |
-| [D19](#d19) | Condensed contract injected into agent files | 2.2 | Active |
+| [D19](#d19) | Condensed contract injected into agent files | 2.2 | Active — user-global half moved to a hook by D43 |
 | [D20](#d20) | Headroom's place is gated on a cache-economics benchmark | 2.2 | Narrowed by D37 — gate never ran |
 | [D21](#d21) | Rejected: per-prompt structural-diff injection | 2.2 | Active (rejection) |
 | [D22](#d22) | Rejected: folding graphify into Serena's MCP server | 2.2 | Active (rejection) |
-| [D23](#d23) | Serena tool-surface audit deferred | 2.2 | Deferred |
+| [D23](#d23) | Serena tool-surface audit deferred | 2.2 | Declined by D39 — the gate was uncollectable |
 | [D24](#d24) | Per-repo init automated via SessionStart autobuild | 2.3 | Active |
-| [D25](#d25) | `claude` shadowed by a recursion-safe shim | 2.3 | Active |
-| [D26](#d26) | `--no-tokensave` probed and passed | 2.3 | Active |
+| [D25](#d25) | `claude` shadowed by a recursion-safe shim | 2.3 | Active — default-on affirmed by D40 |
+| [D26](#d26) | `--no-tokensave` probed and passed | 2.3 | Active — probe moved to launch by D44 |
 | [D27](#d27) | `settings.json` is never clobbered on a parse failure | 2.3.1 | Active |
 | [D28](#d28) | Repo state anchored on the repo root, not cwd | 2.3.1 | Active |
 | [D29](#d29) | `stats` calls `headroom savings` | 2.3.1 | Active |
@@ -50,8 +50,15 @@ with its correction next to it, is the point.
 | [D34](#d34) | Serena's language set derived from tracked files | 2.3.3 | Active |
 | [D35](#d35) | `graphify claude install`'s hook is active, not a no-op | 2.3.3 | Active — corrects D5 |
 | [D36](#d36) | Spec split into spec / decisions / changelog | 2.3.3 | Active — enforcement narrowed by D38 |
-| [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20 |
-| [D38](#d38) | Mechanical doc-drift checking declined | 2.3.3 | Active — narrows D36 |
+| [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20; standing check made executable by D41 |
+| [D38](#d38) | Mechanical doc-drift checking declined | 2.3.3 | Premise corrected, partly reversed by D42 — narrows D36 |
+| [D39](#d39) | Serena tool-surface audit declined | 2.4 | Active — declines D23 |
+| [D40](#d40) | Headroom stays default-on despite being the unverified layer | 2.4 | Active — affirms D25 |
+| [D41](#d41) | The cache-bust symptom restated as a single-session ratio | 2.4 | Active — repairs the standing check in D37 |
+| [D42](#d42) | Doc reference checking reinstated, Unix-scoped | 2.4 | Active — corrects the premise of D38 |
+| [D43](#d43) | Condensed contract refreshed by hook, user-global scope only | 2.4 | Active — narrows D19 |
+| [D44](#d44) | `--no-tokensave` probed at launch, cached on headroom's version | 2.4 | Active — narrows D26 |
+| [D45](#d45) | `BACKLOG.md` as the fourth document | 2.4 | Active — extends D36 |
 
 ---
 
@@ -274,7 +281,7 @@ binds anything future that shadows a command name.
 
 ## D19 — Condensed contract injected into agent files
 
-**Version:** 2.2 · **Status:** Active
+**Version:** 2.2 · **Status:** Active — user-global half moved to a hook by [D43](#d43)
 
 Task-tool subagents get a fresh context that does not load `~/.claude/CLAUDE.md`.
 RTK's hook (settings-level) and Headroom's env (process-level) both propagate
@@ -325,7 +332,7 @@ remains the sanctioned escape hatch if the agent under-uses the CLI graph.
 
 ## D23 — Serena tool-surface audit deferred
 
-**Version:** 2.2 · **Status:** Deferred — gated on usage data
+**Version:** 2.2 · **Status:** **Declined by [D39](#d39)** — the gate was uncollectable
 
 If, after enough `stack-init stats` snapshots, some Serena tools turn out never
 to be invoked, they could be excluded via Serena's tool include/exclude config:
@@ -355,7 +362,8 @@ tracked-file conveniences stay in `stack-init init`, where a human asked for the
 
 ## D25 — `claude` shadowed by a recursion-safe shim
 
-**Version:** 2.3 · **Status:** Active — supersedes [D17](#d17), [D14](#d14)
+**Version:** 2.3 · **Status:** Active — supersedes [D17](#d17), [D14](#d14); default-on
+affirmed by [D40](#d40)
 
 Shadowing `claude` itself is now done deliberately, with D14's recursion hazard
 bounded by construction instead of avoided by naming. An absolute-path handoff
@@ -379,7 +387,8 @@ SessionStart headroom-check catches those at runtime.
 
 ## D26 — `--no-tokensave` probed and passed
 
-**Version:** 2.3 · **Status:** Active — extends [D13](#d13)
+**Version:** 2.3 · **Status:** Active — extends [D13](#d13); probe moved to launch
+by [D44](#d44)
 
 Upstream renamed and promoted the code-graph feature: newer headroom builds its
 own "tokensave" code graph *by default*. An upstream default change does not
@@ -591,7 +600,8 @@ split therefore relies on instead.
 <a id="d37"></a>
 ## D37 — Cache-economics benchmark declined; Headroom retained provisionally
 
-**Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20)
+**Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20); its standing check
+made executable by [D41](#d41)
 
 D20 said Headroom is "retained only as long as the cache-economics benchmark
 shows it's net-positive on effective cost." That benchmark has never been run,
@@ -630,7 +640,8 @@ dropped per launch with no other consequence.
 <a id="d38"></a>
 ## D38 — Mechanical doc-drift checking declined
 
-**Version:** 2.3.3 · **Status:** Active — narrows [D36](#d36)
+**Version:** 2.3.3 · **Status:** **Premise corrected, partly reversed by
+[D42](#d42)** — narrows [D36](#d36)
 
 A checker was written for the drift class D36 describes: extract every
 `tool subcommand` named in the docs, assert each appears in that tool's help;
@@ -656,3 +667,231 @@ three other files, and nothing will say so. Accepted: the blast radius is a wron
 pointer in a doc, not wrong behavior, and the doc set is small enough to re-read.
 If it stops being small enough, the place for these checks is the invariant-test
 layer, not a standalone script.
+
+<a id="d39"></a>
+## D39 — Serena tool-surface audit declined
+
+**Version:** 2.4 · **Status:** Active — declines [D23](#d23)
+
+D23 deferred the audit "gated on real usage data" from `stack-init stats`
+snapshots. `stats` records exactly two fields, `rtk gain` and `headroom savings`,
+and nothing anywhere in the stack counts Serena tool invocations. The gate could
+never fire — the defect class D37 named, left standing one entry away from where
+it was found.
+
+**Decision:** the audit is **declined**, not deferred. Serena's tool set stays as
+`--context claude-code` leaves it.
+
+**Why declined.** The win is a one-time reduction in standing tool-definition
+tokens, and the surface is already narrowed structurally: D3's context flag
+removes the shell, read and search tools, which were the bulk of it. Collecting
+the evidence to trim further means building a telemetry subsystem — an OTEL
+reader for `claude_code.tool.decision`, or a transcript scanner for
+`mcp__serena__*` — and mirroring it in `stack-init.ps1`, in a repo whose stated
+direction is fewer implementations (D2, D38). Against that cost, the failure mode
+of getting it wrong is the worst shape in the stack: an excluded tool that turns
+out to be needed produces "No active project"-style silence, the model falls back
+to grep, and contract rule 2 is unenforceable with nothing in the UI to say so
+(§7). This is D37's calculation applied to a smaller prize — measuring is not the
+cheapest path to the action the measurement would recommend.
+
+**What this costs.** The stack carries some number of Serena tool definitions it
+may never invoke, and will not learn which. Accepted: the cost is a fixed,
+cached prefix, not a per-turn one.
+
+<a id="d40"></a>
+## D40 — Headroom stays default-on despite being the unverified layer
+
+**Version:** 2.4 · **Status:** Active — affirms [D25](#d25)
+
+Raised as a defect: D25 leaves the stack's largest machine footprint — rc-file
+PATH lines, a registry PATH prepend and three shim files on Windows, a re-entry
+guard, a bypass variable, a runtime detection hook, a `verify` PATH check —
+serving Headroom, the one layer D37 records as unverified, provisional and
+monitored. RTK and Serena, both established, mutate no PATH. The apparent
+conclusion is that invasiveness should track evidence.
+
+**Decision:** the shim stays default-on, unchanged. Recorded deliberately rather
+than left implicit.
+
+**Why.** The premise conflates two independent axes. The shim's size is set by a
+*technical* constraint D25 already documents: `headroom wrap` accepts only tool
+names and re-resolves `claude` on PATH itself, so an absolute-path handoff is
+impossible and the guard machinery is what bounds the resulting re-entry. RTK and
+Serena need no PATH mutation because they wire into the *session* — a settings
+hook and an MCP registration — not into the launch command. That is an
+architectural difference, not a statement about evidence.
+
+The two alternatives are both dominated. Making the shim pass through unless
+`CLAUDE_HEADROOM=1` keeps the entire footprint while delivering nothing by
+default. Restoring D17's `clw` reverts to the arrangement D25 superseded because
+nobody types it. Either way Headroom goes inert for the launches people actually
+perform, discarding the one thing D37 says *is* established — that it reduces
+wire tokens — in order to hedge the part that is unproven.
+
+And D37's mitigation is not foreclosed. "Launch bare" is one variable away:
+`CLAUDE_NO_HEADROOM=1` is implemented in the shim, documented in the README's
+escape hatches, and falls through to the real binary. The unverified half is
+cache economics; the per-launch escape hatch is exactly the control for it. The
+established half is what default-on delivers.
+
+**What this costs.** A user who never reads the escape hatches runs an unproven
+layer by default. Bounded by the footprint being marker-guarded and idempotent on
+both platforms, so removal is one edit per rc file plus a directory.
+
+<a id="d41"></a>
+## D41 — The cache-bust symptom restated as a single-session ratio
+
+**Version:** 2.4 · **Status:** Active — repairs the standing check in [D37](#d37)
+
+D37 declined the cache-economics benchmark and substituted "watch the §7 symptom
+in ordinary use." §7 defined that symptom as `cache_read_input_tokens` collapsing
+**relative to a bare session** — which requires the matched bare run that step 1
+of the declined benchmark specifies. The replacement check silently depended on
+the thing it replaced, so nothing was being watched. The decision to decline was
+sound; only its substitute was broken.
+
+**Decision:** the standing check is restated in terms observable inside one
+wrapped session, with no baseline.
+
+**The signal.** A prefix-cache bust has a distinct single-session signature.
+When the cache works, conversation history is stable, so as a session grows each
+turn reads a large cached prefix and creates only the new turn's delta:
+`cache_read_input_tokens` dominates and `cache_creation_input_tokens` stays
+small. When Headroom recompresses history turn to turn, the prefix bytes change
+every turn, so the cache never hits: `cache_creation_input_tokens` re-pays
+approximately the whole conversation each turn while `cache_read_input_tokens`
+stays flat near zero.
+
+**The threshold.** After roughly ten turns, read
+`cache_read / (cache_read + cache_creation)` off `/cost`. Healthy sessions sit
+well above 0.5 and climb as history grows. Near zero, with `cache_creation`
+tracking total conversation size, means the prefix is being invalidated every
+turn — the failure D37 accepted the risk of. Response is unchanged: launch bare.
+
+**Why this and not "unmonitored".** The alternative was to admit Headroom's cache
+economics are unwatched and strip the claim from §2.4 boundary 5. That was not
+necessary: the signal exists, costs nothing, and needs no second session. The
+full benchmark stays declined and stays documented in §8 for the case where the
+ratio does look wrong and someone wants the effective-cost number.
+
+<a id="d42"></a>
+## D42 — Doc reference checking reinstated, Unix-scoped
+
+**Version:** 2.4 · **Status:** Active — corrects the premise of [D38](#d38)
+
+D38 removed a working doc checker because it "was a third implementation language
+sitting beside `stack-init.sh` and `stack-init.ps1`." That is wrong for the Unix
+half: `stack-init.sh` already embeds Python heredocs for every `settings.json`
+merge and for `stats`, and `check_deps` makes `python3` a hard prerequisite that
+aborts the install when missing. On that platform the checker added no language
+and no dependency. It is right for the Windows half, where `stack-init.ps1` does
+the same merges in PowerShell.
+
+D38's remaining reasons survive: maintaining tooling through the `.ps1`
+retirement is real cost, and the checker's own ceiling was fairly stated — of the
+three defects that motivated 2.3.3 it would have caught one.
+
+**Decision:** the two purely textual checks come back as `stack-init verify
+--docs`, on Unix only. Every `§` reference resolves to a real heading in the
+spec; every `D<n>` citation resolves to an entry in `DECISIONS.md`. The third
+check — tool subcommands named in the docs against that tool's `--help` — stays
+dropped: it needs the tools installed, it is slow, and it has one hit in the
+project's entire history (D29).
+
+**Why the gap won.** The drift is not hypothetical. It produced a second instance
+while this backlog was being worked: `README.md`'s file table still read
+"(D1–D37)" after D38 was appended, found by reading. What comes back is ~40 lines
+inside the heredoc pattern already in the file, over six documents, reading text
+and matching strings — no network, no tool invocation, no new dependency.
+
+**Why Unix only.** `--docs` validates *this repo's own documentation*, not a
+user's installation. It is a maintenance check for whoever edits the doc set; a
+Windows user of the stack has no occasion to run it. Scoping it there is
+deliberate and is the one sanctioned exception to D2's equivalence rule, which
+otherwise still binds: every behavior that touches a user's machine is mirrored.
+
+**What this costs.** One subcommand that exists on one platform. Accepted, and
+declared, rather than mirrored into PowerShell for symmetry alone.
+
+<a id="d43"></a>
+## D43 — Condensed contract refreshed by hook, user-global scope only
+
+**Version:** 2.4 · **Status:** Active — narrows [D19](#d19)
+
+D19 writes the condensed contract into every `*.md` under `~/.claude/agents/` and
+`.claude/agents/` when the installer runs. D30 exists because a normative text
+kept in several places drifts, and had. D19 puts a derivative of that text into an
+unbounded number of files across checkouts, re-synced only when someone re-runs
+`stack-init`. Every comparable per-repo concern was converted from an install-time
+write to a self-healing SessionStart hook — D24 for the graph, D33 for Serena.
+This was the one that was not.
+
+**Decision:** a `contract-refresh` SessionStart hook re-injects the condensed
+contract into `~/.claude/agents/*.md` at every session start, marker-guarded and
+sentinel-replaced, reusing the same injection routine the installer calls.
+`.claude/agents/` is **not** touched by the hook and stays with `stack-init init`.
+
+**Why the split is not a compromise.** D24 settled that a background job must
+never mutate files the user would have to commit; that is why autobuild writes
+only under `.git/`. `~/.claude/agents/` is untracked user configuration, so the
+rule does not bind there — and it is the copy that spans every project and goes
+stale invisibly. `.claude/agents/` is tracked, so the rule does bind. Staleness
+there is also the benign case: it surfaces as a reviewable diff the next time
+someone runs `init`, not as silent drift.
+
+**What this costs.** A fourth SessionStart hook. Its body is a directory glob and
+a marker comparison over user-global files, with no git or network work, so the
+added session-start latency is negligible.
+
+<a id="d44"></a>
+## D44 — `--no-tokensave` probed at launch, cached on headroom's version
+
+**Version:** 2.4 · **Status:** Active — narrows [D26](#d26)
+
+D26 probes the flag once at install time and bakes the answer into the shim,
+mitigated by the instruction "re-run `stack-init global` after upgrading
+headroom." Nobody re-runs it. Upgrade headroom and the baked flag silently stops
+matching the installed build — silently restoring the duplicate code graph D13
+forbids. §1's stated principle is structural over instructional; this was the
+instructional one, guarding a boundary the stack calls hard.
+
+**Decision:** the shim probes at launch and caches the result keyed on `headroom
+--version`. A cache miss runs the `--help` probe once and writes the answer; every
+later launch on that version reads the file. An unreadable version or a failed
+probe falls back to passing no flag, which is the behavior older headrooms need
+anyway. The "re-run after upgrading" instruction is dropped from §6.1 step 4. It
+stays in D26's body, which is never rewritten; that body gets a status line
+pointing here, which is what marks the instruction dead.
+
+**Why not the alternatives.** Probing `--help` on every launch costs a slow
+subprocess per session for an answer that changes only on upgrade. Passing the
+flag optimistically and retrying on a non-zero exit cannot distinguish an unknown
+flag from a genuine failure, and the retry would mean re-launching an interactive
+session.
+
+**What this costs.** One `headroom --version` subprocess per `claude` launch.
+Accepted: it runs once per session, and it converts an instruction nobody follows
+into a mechanism that cannot be skipped.
+
+<a id="d45"></a>
+## D45 — `BACKLOG.md` as the fourth document
+
+**Version:** 2.4 · **Status:** Active — extends [D36](#d36)
+
+D36 split the spec three ways: spec, decisions, changelog. It has no slot for
+work that is *known wrong and not yet fixed*. That state had been living in the
+decisions log as deferrals — D20's unrun benchmark, D23's uncollectable gate —
+where an entry that reads `Deferred` is indistinguishable from one that has
+quietly become permanent, which is how both of those defects survived.
+
+**Decision:** `BACKLOG.md` holds open defects in the decision set, one item each,
+ordered by cost. It carries no rationale — D36's rule applies to it unchanged.
+Closing an item means appending a decision, adding a changelog line, and deleting
+the item, so the file trends empty rather than accumulating. An item left long
+enough to feel permanent is itself a decision to decline the work, and is written
+as one.
+
+**Why it is not a fourth source of truth.** It states only what is wrong, the
+evidence, and what "done" looks like. Every "why" it would otherwise carry is the
+decision that closes it. The file is the queue; `DECISIONS.md` remains the record.
