@@ -44,6 +44,10 @@
 #  USAGE
 #    stack-init            # or: stack-init global    -> global install (once)
 #    stack-init init       # inside a repo   -> build graph + hooks eagerly
+#    stack-init skills     # list this repo's deployable skills and where each is
+#    stack-init skills <name>...  # inside a repo -> symlink domain skills into
+#                          # .claude/skills/ (--copy for a committable copy);
+#                          # domain skills stay OUT of the global install (D48)
 #    stack-init verify     # check everything is wired
 #    stack-init verify --docs  # check THIS REPO's docs: every section and
 #                          # decision reference resolves (maintenance, not install)
@@ -1152,6 +1156,125 @@ init_project() {
   say "architecture question and confirm it reads the graph instead of grepping."
 }
 
+# Per-repo skill deployment (`skills`). The global install deploys exactly
+# three skills (gauntlet-loop, opensrc, worktrunk) because they are
+# project-agnostic; the repo's DOMAIN skills (architecture-blueprint,
+# rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of
+# $CLAUDE_DIR/skills on purpose: every skill there pays its description into
+# EVERY session's context, in every project, relevant or not — about a
+# thousand tokens of standing overhead for skills that only apply to specific
+# project types, plus the odd spurious trigger. This deploys them into the
+# CURRENT repo's .claude/skills/ instead, where only sessions in that repo
+# pay for them.
+#
+# Symlink by default, copy on --copy. A symlink stays current with this
+# checkout automatically — the same reasoning that turned the condensed
+# contract into a refresh hook (D43: install-time copies go stale). But its
+# target is an absolute path on THIS machine, so it must never be committed;
+# the path goes into .git/info/exclude (the machine-local channel the
+# SessionStart hooks already use). --copy inverts the trade: committable and
+# portable to collaborators, refreshed only by re-running, and taken OUT of
+# the exclude so git can track it. Copies carry a marker file so a refresh
+# only ever deletes a directory this command created — a user's own
+# same-named skill is refused, never clobbered.
+SKILL_COPY_MARKER=".claude-context-stack"
+
+repo_skill_names() {
+  local d
+  for d in "$(script_dir)/../skills"/*/; do
+    [ -f "${d}SKILL.md" ] && basename "$d"
+  done
+}
+
+list_repo_skills() {
+  local top="" name state dst
+  in_git_repo && top="$(git rev-parse --show-toplevel 2>/dev/null)"
+  say "deployable skills (canonical: $(script_dir)/../skills)"
+  for name in $(repo_skill_names); do
+    state=""
+    [ -f "$CLAUDE_DIR/skills/$name/SKILL.md" ] && state="global"
+    if [ -n "$top" ]; then
+      dst="$top/.claude/skills/$name"
+      if [ -L "$dst" ]; then state="${state:+$state, }linked here"
+      elif [ -d "$dst" ]; then state="${state:+$state, }copied here"; fi
+    fi
+    row "$name" "${state:-not deployed}"
+  done
+  [ -n "$top" ] || say "  (not in a git repo — per-repo state not shown)"
+}
+
+# Exact-line add/remove on the COMMON git dir's info/exclude, so one entry
+# covers the main checkout and every linked worktree (same rule the hooks
+# follow). Exact-match (-xF) on both sides: these must never eat a broader
+# user-written pattern that merely contains the same text.
+exclude_line_add() {
+  local cgd="$1" line="$2"
+  mkdir -p "$cgd/info"
+  grep -qxF "$line" "$cgd/info/exclude" 2>/dev/null || printf '%s\n' "$line" >> "$cgd/info/exclude"
+}
+exclude_line_remove() {
+  local cgd="$1" line="$2" tmp
+  [ -f "$cgd/info/exclude" ] || return 0
+  grep -qxF "$line" "$cgd/info/exclude" || return 0
+  tmp="$(mktemp)" || return 0
+  if grep -vxF "$line" "$cgd/info/exclude" > "$tmp"; then mv "$tmp" "$cgd/info/exclude"
+  else rm -f "$tmp"; fi
+}
+
+deploy_repo_skills() {
+  local mode=link names="" a name src dst top cgd line fail=0
+  for a in "$@"; do
+    case "$a" in
+      --copy) mode=copy ;;
+      -*) err "unknown flag: $a"
+          echo "usage: $(basename "$0") skills [--copy] [<name>...]"; exit 1 ;;
+      *) names="$names $a" ;;
+    esac
+  done
+  if [ -z "${names// /}" ]; then list_repo_skills; return 0; fi
+  in_git_repo || { err "run from a git repo — skills deploy into the repo's .claude/skills/"; exit 1; }
+  top="$(git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] || { err "could not resolve the repo root"; exit 1; }
+  cgd="$(cd "$top" && { git rev-parse --git-common-dir 2>/dev/null || git rev-parse --git-dir; })"
+  case "$cgd" in /*) ;; *) cgd="$top/$cgd" ;; esac
+  mkdir -p "$top/.claude/skills"
+  for name in $names; do
+    src="$(script_dir)/../skills/$name"
+    if [ ! -f "$src/SKILL.md" ]; then
+      err "no such skill: $name (available: $(repo_skill_names | tr '\n' ' '))"
+      fail=1; continue
+    fi
+    # Absolute and symlink-resolved: a link target relative to cwd would break
+    # the moment anyone ran this from a different directory.
+    src="$(CDPATH= cd -- "$src" && pwd -P)"
+    dst="$top/.claude/skills/$name"
+    # No trailing slash: a slash-terminated gitignore pattern matches only real
+    # directories, and the default deployment is a SYMLINK — which git treats
+    # as a file, so the slashed form silently failed to exclude it.
+    line="/.claude/skills/$name"
+    if [ -e "$dst" ] && [ ! -L "$dst" ] && [ ! -f "$dst/$SKILL_COPY_MARKER" ]; then
+      warn "$name: $dst exists and was not deployed by this command — remove it yourself first"
+      fail=1; continue
+    fi
+    if [ "$mode" = link ]; then
+      # A previous --copy of ours upgrades to a link; rm -rf on a symlink
+      # removes the link itself, never the target.
+      [ -d "$dst" ] && [ ! -L "$dst" ] && rm -rf "$dst"
+      ln -sfn "$src" "$dst"
+      exclude_line_add "$cgd" "$line"
+      say "  $name linked -> $src (machine-local; excluded from git)"
+    else
+      rm -rf "$dst"
+      cp -R "$src" "$dst"
+      printf '%s\n' "Deployed by stack-init skills --copy. Managed: re-running replaces this directory; hand edits do not survive." > "$dst/$SKILL_COPY_MARKER"
+      exclude_line_remove "$cgd" "$line"
+      say "  $name copied (committable; re-run 'skills --copy $name' to refresh)"
+    fi
+  done
+  say "skills load at session start — restart Claude Code to pick them up"
+  [ "$fail" = 0 ] || exit 1
+}
+
 stats() {
   local dir="$CLAUDE_DIR/stack-stats" ts snap rtk_out headroom_out
   mkdir -p "$dir"
@@ -1258,6 +1381,16 @@ verify() {
     if [ -f "$top/.serena/project.yml" ]
     then row "serena project" "OK (.serena/project.yml)"
     else row "serena project" "none — autoinits next session"; fi
+    # Repo-local skills deployed by `skills` (or by hand — anything with a
+    # SKILL.md counts, annotated by how it got here).
+    local rskills="" sd
+    for sd in "$top/.claude/skills"/*/; do
+      [ -f "${sd}SKILL.md" ] || continue
+      if [ -L "${sd%/}" ]; then rskills="$rskills $(basename "$sd")(link)"
+      else rskills="$rskills $(basename "$sd")(copy)"; fi
+    done
+    if [ -n "$rskills" ]; then row "repo skills" "${rskills# }"
+    else row "repo skills" "none (optional — deploy: $(basename "$0") skills <name>)"; fi
     hooks_dir="$(get_git_hooks_dir)"
     [ -n "$hooks_dir" ] || hooks_dir=".git/hooks"
     if [ -f "$hooks_dir/post-commit" ]; then row post-commit "OK"; else row post-commit "none"; fi
@@ -1353,6 +1486,7 @@ PYEOF
 case "${1:-global}" in
   global|"")  install_global ;;
   init)       init_project ;;
+  skills)     shift; deploy_repo_skills "$@" ;;
   # Not `[ ... ] && verify_docs || verify`: that idiom runs the full install
   # check as a "fallback" the moment --docs legitimately reports a broken
   # reference and exits non-zero.
@@ -1363,5 +1497,5 @@ case "${1:-global}" in
   # '2,57p' range silently truncated it mid-sentence once the header moved -
   # by the time this was noticed it was cutting the PREREQS line off.
   -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|verify [--docs]|contract [--condensed]|stats|help]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|skills [--copy] [<name>...]|verify [--docs]|contract [--condensed]|stats|help]"; exit 1 ;;
 esac

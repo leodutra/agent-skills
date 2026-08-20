@@ -43,6 +43,10 @@
   USAGE
     .\stack-init.ps1            # or: global   -> global install (once)
     .\stack-init.ps1 init       # inside a repo -> build graph + hooks eagerly
+    .\stack-init.ps1 skills     # list this repo's deployable skills and where each is
+    .\stack-init.ps1 skills <name>...  # inside a repo -> junction domain skills into
+                                # .claude\skills (--copy for a committable copy);
+                                # domain skills stay OUT of the global install (D48)
     .\stack-init.ps1 verify     # check wiring
     .\stack-init.ps1 contract   # print the routing contract
     .\stack-init.ps1 contract --condensed  # print the short form injected into agents
@@ -1191,6 +1195,137 @@ function Init-Project {
   Say "architecture question and confirm it reads the graph instead of grepping."
 }
 
+# Per-repo skill deployment (`skills`). The global install deploys exactly
+# three skills (gauntlet-loop, opensrc, worktrunk) because they are
+# project-agnostic; the repo's DOMAIN skills (architecture-blueprint,
+# rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of
+# $ClaudeDir\skills on purpose: every skill there pays its description into
+# EVERY session's context, in every project, relevant or not. This deploys
+# them into the CURRENT repo's .claude\skills instead, where only sessions in
+# that repo pay for them.
+#
+# Junction by default (the Windows counterpart of stack-init.sh's symlink:
+# needs no Developer Mode or elevation, unlike -ItemType SymbolicLink), copy
+# on --copy. A junction stays current with this checkout automatically but
+# targets an absolute path on THIS machine, so it goes into .git\info\exclude;
+# --copy is committable/portable, refreshed only by re-running, and taken OUT
+# of the exclude. Copies carry a marker file so a refresh only ever deletes a
+# directory this command created - a user's own same-named skill is refused,
+# never clobbered.
+$SkillCopyMarker = '.claude-context-stack'
+
+function Get-RepoSkillNames {
+  Get-ChildItem -Path (Join-Path $PSScriptRoot '..\skills') -Directory -ErrorAction SilentlyContinue |
+    Where-Object { Test-Path (Join-Path $_.FullName 'SKILL.md') } |
+    ForEach-Object { $_.Name }
+}
+
+function Show-RepoSkills {
+  $top = $null
+  if (Test-InGitRepo) { $top = git rev-parse --show-toplevel 2>$null }
+  Say ("deployable skills (canonical: " + (Join-Path $PSScriptRoot '..\skills') + ")")
+  foreach ($name in Get-RepoSkillNames) {
+    $state = @()
+    if (Test-Path (Join-Path $ClaudeDir "skills\$name\SKILL.md")) { $state += 'global' }
+    if ($top) {
+      $dst = Join-Path $top ".claude\skills\$name"
+      if (Test-Path $dst) {
+        if ((Get-Item $dst -Force).Attributes -band [IO.FileAttributes]::ReparsePoint) { $state += 'linked here' }
+        else { $state += 'copied here' }
+      }
+    }
+    Write-Row $name $(if ($state.Count) { $state -join ', ' } else { 'not deployed' })
+  }
+  if (-not $top) { Say '  (not in a git repo - per-repo state not shown)' }
+}
+
+# Exact-line add/remove on the COMMON git dir's info\exclude, so one entry
+# covers the main checkout and every linked worktree (same rule the hooks
+# follow). Exact match on both sides: these must never eat a broader
+# user-written pattern that merely contains the same text.
+function Add-ExcludeLine {
+  param([string]$Cgd, [string]$Line)
+  $dir = Join-Path $Cgd 'info'
+  New-Item -ItemType Directory -Force -Path $dir | Out-Null
+  $f = Join-Path $dir 'exclude'
+  $text = Read-Text $f
+  if (($text -split "\r?\n") -notcontains $Line) {
+    Write-Utf8 $f (($text.TrimEnd() + "`r`n" + $Line).TrimStart())
+  }
+}
+function Remove-ExcludeLine {
+  param([string]$Cgd, [string]$Line)
+  $f = Join-Path $Cgd 'info\exclude'
+  if (-not (Test-Path $f)) { return }
+  $lines = (Read-Text $f) -split "\r?\n"
+  if ($lines -notcontains $Line) { return }
+  Write-Utf8 $f (($lines | Where-Object { $_ -ne $Line }) -join "`r`n")
+}
+
+function Deploy-RepoSkills {
+  param([string[]]$SkillArgs = @())
+  $copyMode = $false; $names = @()
+  foreach ($a in $SkillArgs) {
+    if ($a -in '--copy', '-copy') { $copyMode = $true }
+    elseif ($a -like '-*') { Err "unknown flag: $a"; Write-Host 'usage: .\stack-init.ps1 skills [--copy] [<name>...]'; exit 1 }
+    else { $names += $a }
+  }
+  if (-not $names.Count) { Show-RepoSkills; return }
+  if (-not (Test-InGitRepo)) { Err "run from a git repo - skills deploy into the repo's .claude\skills"; exit 1 }
+  $top = git rev-parse --show-toplevel 2>$null
+  if (-not $top) { Err 'could not resolve the repo root'; exit 1 }
+  $cgd = git rev-parse --git-common-dir 2>$null
+  if (-not $cgd) { $cgd = git rev-parse --git-dir 2>$null }
+  if (-not [IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
+  New-Item -ItemType Directory -Force -Path (Join-Path $top '.claude\skills') | Out-Null
+  $fail = $false
+  foreach ($name in $names) {
+    $src = Join-Path $PSScriptRoot "..\skills\$name"
+    if (-not (Test-Path (Join-Path $src 'SKILL.md'))) {
+      Err "no such skill: $name (available: $((Get-RepoSkillNames) -join ' '))"
+      $fail = $true; continue
+    }
+    $src = (Resolve-Path $src).Path
+    $dst = Join-Path $top ".claude\skills\$name"
+    # No trailing slash: a slash-terminated gitignore pattern matches only real
+    # directories, and a junction/symlink is not one to git - the slashed form
+    # silently failed to exclude it. Forward slashes: gitignore syntax, not a
+    # filesystem path.
+    $line = "/.claude/skills/$name"
+    $existing = if (Test-Path $dst) { Get-Item $dst -Force } else { $null }
+    $isLink = $existing -and ($existing.Attributes -band [IO.FileAttributes]::ReparsePoint)
+    $isOurCopy = $existing -and -not $isLink -and (Test-Path (Join-Path $dst $SkillCopyMarker))
+    if ($existing -and -not $isLink -and -not $isOurCopy) {
+      Warn "${name}: $dst exists and was not deployed by this command - remove it yourself first"
+      $fail = $true; continue
+    }
+    # [IO.Directory]::Delete removes a junction WITHOUT following it into the
+    # target; Remove-Item -Recurse on a reparse point has deleted target
+    # contents on older PowerShell, so it is never used on one.
+    if ($isLink) { [IO.Directory]::Delete($dst) }
+    elseif ($isOurCopy) { Remove-Item -Recurse -Force $dst }
+    if ($copyMode) {
+      Copy-Item -Recurse -Force $src $dst
+      Write-Utf8 (Join-Path $dst $SkillCopyMarker) 'Deployed by stack-init skills --copy. Managed: re-running replaces this directory; hand edits do not survive.'
+      Remove-ExcludeLine $cgd $line
+      Say "  $name copied (committable; re-run 'skills --copy $name' to refresh)"
+    } else {
+      try {
+        New-Item -ItemType Junction -Path $dst -Target $src | Out-Null
+        Add-ExcludeLine $cgd $line
+        Say "  $name linked (junction) -> $src (machine-local; excluded from git)"
+      } catch {
+        # Junctions need the target on a local NTFS volume; a repo checkout on
+        # a network share is the one setup that refuses. Copy still works.
+        Warn "${name}: junction failed ($($_.Exception.Message)) - use: skills --copy $name"
+        $fail = $true
+      }
+    }
+  }
+  Say 'skills load at session start - restart Claude Code to pick them up'
+  if ($fail) { exit 1 }
+}
+
 function Get-ToolOutput {
   # `2>&1` turns a native command's stderr into ErrorRecords, and Windows
   # PowerShell 5.1 raises a TERMINATING NativeCommandError for those while
@@ -1335,6 +1470,16 @@ function Invoke-Verify {
     else { Write-Row 'graph (here)' 'not built - autobuilds next session (or run: .\stack-init.ps1 init)' }
     if (Test-Path $serenaYml) { Write-Row 'serena project' 'OK (.serena\project.yml)' }
     else { Write-Row 'serena project' 'none - autoinits next session' }
+    # Repo-local skills deployed by `skills` (or by hand - anything with a
+    # SKILL.md counts, annotated by how it got here).
+    $repoSkills = @()
+    foreach ($sd in (Get-ChildItem -Path (Join-Path $top '.claude\skills') -Directory -Force -ErrorAction SilentlyContinue)) {
+      if (-not (Test-Path (Join-Path $sd.FullName 'SKILL.md'))) { continue }
+      if ($sd.Attributes -band [IO.FileAttributes]::ReparsePoint) { $repoSkills += "$($sd.Name)(link)" }
+      else { $repoSkills += "$($sd.Name)(copy)" }
+    }
+    if ($repoSkills.Count) { Write-Row 'repo skills' ($repoSkills -join ' ') }
+    else { Write-Row 'repo skills' 'none (optional - deploy: .\stack-init.ps1 skills <name>)' }
     $hooksDir = Get-GitHooksDir
     if (-not $hooksDir) { $hooksDir = Join-Path $PWD.Path '.git\hooks' }
     if (Test-Path (Join-Path $hooksDir 'post-commit')) { Write-Row 'post-commit' 'OK' } else { Write-Row 'post-commit' 'none' }
@@ -1351,7 +1496,7 @@ function Invoke-Verify {
   }
 }
 
-$Usage = "usage: .\stack-init.ps1 [global|init|verify|contract [--condensed]|stats|help]"
+$Usage = "usage: .\stack-init.ps1 [global|init|skills [--copy] [<name>...]|verify|contract [--condensed]|stats|help]"
 
 # Anything the binder could not place lands in $Rest, INCLUDING dash-prefixed
 # words that match no parameter. That made `.\stack-init.ps1 --help` leave
@@ -1365,6 +1510,7 @@ if (($HelpWords -contains $Command.ToLower()) -or ($Rest | Where-Object { $HelpW
   Write-Output ""
   Write-Output "  global    install the whole stack for this user (run once)"
   Write-Output "  init      build this repo's graph eagerly + tracked-file extras"
+  Write-Output "  skills    list the repo's skills, or junction/copy them into THIS repo's .claude\skills"
   Write-Output "  verify    report what is and is not wired up"
   Write-Output "  contract  print the routing contract (--condensed for the agent form)"
   Write-Output "  stats     append and print an rtk/headroom usage snapshot"
@@ -1377,6 +1523,7 @@ switch ($Command.ToLower()) {
     Install-Global
   }
   'init'     { Init-Project }
+  'skills'   { Deploy-RepoSkills $Rest }
   'verify'   {
     # --docs validates THIS REPO's documentation, not an installation, and is
     # deliberately Unix-only (the decisions log records why). Say so rather than

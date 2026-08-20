@@ -6,6 +6,20 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 2.5
+
+- **Add** `skills` subcommand on both installers: lists the repo's deployable
+  skills, or deploys named ones into the CURRENT repo's `.claude/skills/` —
+  symlink on Unix / junction on Windows by default (stays current with the
+  checkout, machine-local, excluded via `.git/info/exclude`), `--copy` for a
+  committable copy (marker-guarded so a refresh never clobbers a user's own
+  same-named skill). Domain skills (architecture-blueprint,
+  rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of the
+  global install on purpose: every global skill's description is loaded into
+  every session in every project. [D48](DECISIONS.md#d48)
+- **Add** `verify` reports the current repo's `.claude/skills/` deployments
+  (annotated link/copy) alongside the global skill rows.
+
 ## 2.4.1
 
 Two inherited defaults become pinned decisions. Both were already correct today;

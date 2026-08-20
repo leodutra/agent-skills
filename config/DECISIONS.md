@@ -61,6 +61,7 @@ with its correction next to it, is the point.
 | [D45](#d45) | `BACKLOG.md` as the fourth document | 2.4 | Active — extends D36 |
 | [D46](#d46) | Serena's dashboard interface is pinned, and a tray is earned not assumed | 2.4.1 | Active — narrows D33 |
 | [D47](#d47) | The shim pins Headroom to cache mode | 2.4.1 | Active — narrows D25 |
+| [D48](#d48) | Domain skills deploy per-repo, never globally | 2.5 | Active |
 
 ---
 
@@ -985,3 +986,50 @@ Its value is entirely in the failure it forecloses: an upstream default flip
 silently trading this stack's cache hits for a few hundred compressed tokens,
 with D41's ratio as the only thing that would ever notice.
 
+
+<a id="d48"></a>
+
+## D48 — Domain skills deploy per-repo, never globally
+
+**Version:** 2.5 · **Status:** Active
+
+The global install deploys exactly three skills to `~/.claude/skills/`
+(gauntlet-loop, opensrc, worktrunk) and that set does not grow. The repo's
+remaining skills — architecture-blueprint, rust-bevy-architecture,
+rust-wgpu-functional, macro-analyst — are DOMAIN skills, and they get a new
+`skills` subcommand on both installers that deploys them into the current
+repo's `.claude/skills/` instead.
+
+**Why not global.** Every skill in `~/.claude/skills/` pays its description
+frontmatter into every session's context, in every project, relevant or not.
+Measured on the four domain skills as written, that is roughly a thousand
+tokens of standing overhead per session — charged to markdown repos, shell
+repos, and everything else that can never trigger them — plus the occasional
+spurious trigger from a plausible-but-wrong description match. For a stack
+whose entire premise is killing wasted context, a Bevy skill's description in
+a non-Bevy session is the same waste one layer up. The three global skills
+earn their seat by being project-agnostic: they surface globally installed
+tools and apply to any repo.
+
+**Why symlink-first.** `skills <name>` symlinks (Unix) or junctions (Windows —
+needs no Developer Mode, unlike a true symlink) the repo's canonical skill
+directory into the target repo, so edits to the canonical copy are live
+everywhere at once. This is D43's lesson applied in advance: install-time
+copies go stale, and the fix there was to stop copying. A link's target is an
+absolute path on one machine, so the deployment is excluded via
+`.git/info/exclude` (the machine-local channel every SessionStart hook already
+uses; written slashless, because a slash-terminated gitignore pattern matches
+only real directories and a symlink is not one to git). `--copy` inverts the
+trade for repos shared with collaborators: committable and portable, refreshed
+only by re-running, left out of the exclude so git can track it.
+
+**The marker rule.** A copied deployment carries a `.claude-context-stack`
+marker file, and the command refuses to touch any directory that is neither a
+link nor marker-carrying — the same principle as the serena-autoinit header:
+managed state is replaceable precisely because it is labeled, and a user's own
+same-named skill is never clobbered.
+
+**What this costs.** Per-repo deployment is a manual, per-checkout step —
+there is no SessionStart hook auto-linking skills by project type, on purpose:
+which domain method applies to a repo is a judgment call, not something
+derivable from file extensions the way serena-autoinit's language list is.
