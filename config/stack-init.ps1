@@ -762,7 +762,7 @@ function Install-Global {
 
 # Per-repo skill deployment (`skills`). The global install deploys exactly
 # three skills (gauntlet-loop, opensrc, worktrunk) because they are
-# project-agnostic; the repo's DOMAIN skills (architecture-blueprint,
+# project-agnostic; the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
 # rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of
 # $ClaudeDir\skills on purpose: every skill there pays its description into
 # EVERY session's context, in every project, relevant or not. This deploys

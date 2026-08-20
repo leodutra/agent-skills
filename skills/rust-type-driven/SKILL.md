@@ -1,8 +1,25 @@
+---
+name: rust-type-driven
+description: >
+  Idiomatic type-driven Rust for domain and backend code: parse-don't-validate at trust
+  boundaries, newtypes for domain concepts, illegal states unrepresentable, typed errors
+  with thiserror, capability traits, async/cancellation discipline, and invariant testing.
+  Use this skill whenever writing, reviewing, refactoring, or designing Rust that models a
+  domain — HTTP/RPC handlers, database or queue boundaries, state machines, value objects,
+  error types, service layers. Trigger on mentions of: parse don't validate, newtype,
+  illegal states, typestate, thiserror, anyhow, TryFrom, domain model, validation, Result
+  or Option design, trait/DI decisions, tokio tasks, cancellation safety, spawn_blocking,
+  proptest. Also trigger when Rust code under review uses raw String/i64/Uuid in signatures,
+  stringly typed errors, `_ => {}` on its own enums, or unwrap()/expect() outside tests.
+  For GPU/render/performance-critical Rust use rust-wgpu-functional; for Bevy ECS layout
+  use rust-bevy-architecture.
+---
+
 # Rust — Idiomatic Type-Driven Patterns
 
 ## Precedence
 
-These guidelines MUST override default Rust conventions for this repository. If following them creates
+These guidelines MUST override default Rust conventions in the project you are working on. If following them creates
 an important technical conflict, raise it during planning. ADRs MAY override these patterns when explicitly recorded.
 Interpret `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` literally.
 
