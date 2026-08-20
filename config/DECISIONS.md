@@ -68,6 +68,9 @@ with its correction next to it, is the point.
 | [D52](#d52) | graphify removed | 3.0 | Active — retires D5, D6, D7, D15, D21, D22, D24, D31, D35 |
 | [D53](#d53) | Serena descoped to per-session opt-in | 3.0 | Active — narrows D4, D11, D33, D34, D46; corrects D3's reason |
 | [D54](#d54) | ponytail added, default-on | 3.0 | Active |
+| [D55](#d55) | Serena's manifest measured: ~5.8K tokens, not ~24K | 3.0 | Active — corrects the figure in D53; decision stands on narrower grounds |
+| [D56](#d56) | Anti-bypass rules deleted; the shell exclusion re-grounded | 3.0 | Active — completes D51's removal; re-grounds D3 |
+| [D57](#d57) | Serena retained behind a mechanical kill criterion | 3.0 | Active — gates D53; the gate D20 never had |
 
 ---
 
@@ -97,7 +100,7 @@ one home: change behavior in the script, record reasoning here.
 
 **Version:** 2.0 · **Status:** Active
 
-**Reason corrected by [D53](#d53)** — the RTK half of this justification died with RTK ([D51](#d51)). The decision stands on the duplicate-tools half alone.
+**Reason corrected by [D53](#d53)** — the RTK half of this justification died with RTK ([D51](#d51)). The decision stands on the duplicate-tools half alone, and is **re-grounded by [D56](#d56)** on permission granularity.
 
 Running Serena under the `claude-code` context (formerly `ide-assistant`) makes
 the RTK bypass impossible *structurally* rather than by instruction:
@@ -1346,7 +1349,9 @@ quietly filled by telling the agent to grep more carefully.
 ## D53 — Serena descoped to per-session opt-in
 
 **Version:** 3.0 · **Status:** Active — narrows [D4](#d4), [D11](#d11),
-[D33](#d33), [D34](#d34), [D46](#d46); [D3](#d3)'s stated reason corrected
+[D33](#d33), [D34](#d34), [D46](#d46); [D3](#d3)'s stated reason corrected.
+**Its ~24K manifest figure is corrected by [D55](#d55)** — the real number is
+~5.8K and the decision now rests on different grounds.
 
 Serena stays in the stack but stops being globally enabled. It is installed and
 registered, and **left off** until a session needs it.
@@ -1447,3 +1452,174 @@ and weaker than [D49](#d49)'s, which was measured on this machine.
 inside the plugin and is injected by its hook. It is deliberately **not** copied
 into `contract.md`: one fact, one home ([D30](#d30)), and a copy here would drift
 from the plugin on its next release.
+
+
+<a id="d55"></a>
+
+## D55 — Serena's manifest measured: ~5.8K tokens, not ~24K
+
+**Version:** 3.0 · **Status:** Active — corrects the cited figure in [D53](#d53)
+
+[D53](#d53) made Serena opt-in partly because its tool manifest is "a fixed
+per-session tax (~24K tokens)", and flagged that figure as external, unverified,
+and directly measurable. It has now been measured.
+
+**Method.** Drive an MCP `tools/list` handshake against `serena start-mcp-server
+--context claude-code`, serialise the returned array compactly, and count it with
+a real BPE tokenizer rather than a chars/4 rule of thumb.
+
+| Context | Tools | Characters | Tokens |
+| --- | --- | --- | --- |
+| `claude-code` (what this stack registers) | 24 | 26,212 | **5,791** |
+| Serena default | 30 | 37,624 | 8,299 |
+
+The six tools [D3](#d3) excludes — `create_text_file`, `execute_shell_command`,
+`find_file`, `list_dir`, `read_file`, `search_for_pattern` — account for 2,508
+tokens, so that boundary was already paying for itself at ~30% of the manifest.
+The single most expensive definition is `find_symbol` at 852 tokens.
+
+**Confidence.** The count uses tiktoken's BPE, not Anthropic's tokenizer, so
+treat it as ±35% rather than exact. Even at the top of that range (~7.8K) the
+cited figure is overstated ~3×; at the measured value it is ~4×. The conclusion
+does not depend on which tokenizer is right.
+
+**Where "24K" probably came from.** 26,212 *characters* rounds to "~24K" about as
+readily as it rounds to 26K. A character count read as a token count is the most
+likely origin, and it is the same error class as [D51](#d51)'s: a number quoted
+from elsewhere, never checked, load-bearing in a decision.
+
+**The decision stands; two of its three legs do not.** Opt-in Serena is still
+right, but not because the manifest is huge:
+
+1. **The tax is small and mostly cached.** Tool definitions render *first* in
+   Anthropic's cache prefix, so after the first turn 5,791 tokens are read at
+   ~0.1×. As a steady-state cost this is close to noise, and [D53](#d53)
+   overstated it.
+2. **Toggling is expensive in a way [D53](#d53) never considered.** Because the
+   tools block is first in the prefix, enabling or disabling Serena mid-session
+   changes the frontmost bytes and invalidates the **entire** cached prefix —
+   the exact mechanism [D50](#d50) identified. An opt-in model invites toggling,
+   and each toggle costs a full cache rebuild. Enable it at session start, not
+   part-way through.
+3. **The real argument is inert cost.** A registered-but-never-activated Serena
+   charges the full manifest for literally zero benefit, silently. That is not
+   hypothetical: this machine ran exactly that way for two days — 40 server
+   spawns, zero tool calls, zero memories, no project ever activated (§7's
+   [D33](#d33) failure, observed). Opt-in makes the tax coincide with intent.
+
+The remaining external claim from [D53](#d53) — ~4× cost on cheap lookups — is
+still unverified and still flagged.
+
+**Standing lesson, now twice.** Three versions, two cited numbers, both wrong on
+measurement and both load-bearing: Headroom's self-reported savings (inflated ~4×,
+[D51](#d51)) and this manifest figure (inflated ~4×). The pattern is not
+carelessness about arithmetic, it is quoting a number nobody produced. Cite a
+measurement or flag it as external — and when it is flagged, measuring it is
+work that pays.
+
+
+<a id="d56"></a>
+
+## D56 — Anti-bypass rules deleted; the shell exclusion re-grounded
+
+**Version:** 3.0 · **Status:** Active — completes [D51](#d51)'s removal;
+re-grounds [D3](#d3)
+
+[D51](#d51) removed RTK but left its shadow behind. Six provisions across the
+contract, the spec and both installers existed to stop the agent routing
+execution through an MCP shell tool *so it could not escape RTK's Bash hook*.
+With no hook, there is nothing to escape. They are deleted.
+
+**Why they were worse than merely obsolete.** `--context claude-code` already
+removes `execute_shell_command` from Serena's tool surface entirely — [D55](#d55)
+measured it as one of the six exclusions worth 2,508 tokens. So the contract was
+spending tokens, in every session, forbidding the agent from calling a tool that
+does not exist in its surface. A prohibition on the impossible is not harmless:
+it invites the reader to believe the tool is reachable and must be resisted.
+
+**Decision:** delete the instruction, keep the structure.
+
+- `contract.md` / `contract-condensed.md` rule 5 drops "never an MCP shell tool".
+- §3's routing matrix drops "any MCP shell tool" from its NOT-to column.
+- Both installers drop the "so it can't shadow Bash" comment.
+- `--context claude-code` **stays**, and §2.1 boundary 1 stays with it.
+
+**The exclusion's new ground.** [D3](#d3)'s stated reason was duplicate tools
+plus the RTK bypass; the second half is dead. A stronger one has been available
+all along and was never written down: **Claude Code gates Bash per command and
+MCP tools per tool.** A Bash permission can allow `git status` while still
+prompting for `rm`; an approved `mcp__serena__execute_shell_command` is one
+blanket grant covering every command it will ever run. Enabling Serena's shell
+tool would therefore collapse per-command permission granularity into a single
+approval — a control regression, entirely independent of compression. That, plus
+duplicate-tool routing confusion, is what the exclusion now rests on.
+
+**What is deliberately NOT claimed.** This is not "MCP execution is unguarded" —
+Claude Code does prompt for MCP tool use. The loss is granularity, not gating.
+
+**Pattern, third instance.** [D4](#d4), [D5](#d5) and now [D3](#d3): a decision
+that stayed correct while its stated reason went stale. Each time the decision
+survived on a ground nobody had written down. The append-only rule exists for
+exactly this, and it keeps paying — [D51](#d51) would have quietly deleted a
+sound boundary if the reason had been the only thing recorded.
+
+
+<a id="d57"></a>
+
+## D57 — Serena retained behind a mechanical kill criterion
+
+**Version:** 3.0 · **Status:** Active — gates [D53](#d53); supplies the kind of
+gate [D20](#d20) lacked
+
+Serena stays. The reasons are narrower than they were, and the retention is
+conditional in a way that can actually fire.
+
+**Why keep it.** It is the only ground truth in the stack:
+`find_referencing_symbols` returns real call sites, not text matches, which no
+native tool does. Since [D53](#d53) made it opt-in it is **not connected** when
+disabled, so its measured 5,791-token manifest ([D55](#d55)) costs **zero** in
+every session that does not ask for it. Idle cost is nil; the price is
+maintenance surface — 17 of 57 decisions touch Serena, §6.3 is the longest
+section in the spec, and [D33](#d33)/[D34](#d34)/[D46](#d46) exist only to keep
+it working.
+
+**Why the evidence so far proves nothing.** Serena has never executed a single
+tool on the reference machine: 40 server spawns, zero calls, zero memories, no
+project ever activated. That is not a verdict on Serena — it is a verdict on an
+install where `contract: MISSING` and `serena autoinit: NOT registered`, so
+nothing ever told a session to call `activate_project`. The fair test has not
+been run, which is precisely why this entry exists instead of a removal.
+
+**The structural stake.** If Serena goes, the stack is ponytail plus a contract
+that mostly records what nothing owns — two slash commands behind 2,166 lines of
+installer and 57 decisions. Serena is the only remaining thing that makes this a
+stack rather than a plugin recommendation. That is an argument for testing it
+properly, not for keeping it unconditionally.
+
+**Decision — the gate.** Retain Serena. After roughly ten real working sessions
+following a completed `stack-init global`, check whether it was ever actually
+used:
+
+```
+grep -rl 'activate_project: .*session_id:' ~/.serena/logs/ | wc -l
+```
+
+Zero means remove Serena **and** `stack-init` with it, replacing both with
+"install ponytail". Non-zero means the layer earned its maintenance and the gate
+closes.
+
+**Why that pattern.** `serena/tools/tools_base.py` logs
+`<tool_name>: {params}; session_id: <id>` on every execution. The `; session_id:`
+suffix is what separates a real call from the tool name merely appearing in a
+startup manifest line — the distinction that made the first pass at this
+evidence read 38 tool calls that were actually pydantic error field paths.
+
+**Why it is mechanical, and why that matters.** [D20](#d20) retained Headroom
+"only as long as the cache-economics benchmark shows it's net-positive". That
+benchmark required two matched sessions and four hand-compared counters; it was
+never run, through four versions, until [D37](#d37) had to declare it declined —
+and the layer it was supposed to gate turned out to be inflating its own numbers
+~4× ([D51](#d51)). A retention condition that needs work to evaluate is not a
+condition. This one is a `grep` over logs the tool already writes, and
+`stack-init verify` runs it, so the answer arrives without anyone deciding to
+look for it.

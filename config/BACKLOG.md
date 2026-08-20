@@ -16,7 +16,25 @@ append-only rule those bodies are never edited, only given a status line.
 
 ---
 
-## No open items
+## B7 — Evaluate the Serena retention gate
+
+**Touches:** [D53](DECISIONS.md#d53), [D57](DECISIONS.md#d57)
+
+Serena has never executed a tool on the reference machine (40 spawns, 0 calls,
+0 memories). [D57](DECISIONS.md#d57) retains it on the grounds that the install
+was never completed, so the question was never fairly put.
+
+**Evidence:** `stack-init verify` reports the count; the raw check is
+`grep -rl 'activate_project: .*session_id:' ~/.serena/logs/ | wc -l`.
+
+**Done looks like:** after ~10 real sessions following a completed
+`stack-init global`, the count is read. Non-zero -> append a decision closing
+the gate and delete this item. Zero -> append a decision removing Serena *and*
+`stack-init`, since installing one plugin does not need an installer.
+
+---
+
+## No other open items
 
 B1–B6 closed in 2.4 as D39–D44. Four were closed by deciding rather than
 building — two gates that could never fire (D39, D40), one circular standing

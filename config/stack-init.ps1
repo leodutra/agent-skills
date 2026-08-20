@@ -656,8 +656,10 @@ function Install-Global {
   else {
     # --context claude-code is the current name of the old 'ide-assistant'
     # context (Serena logs a deprecation warning for the latter); same
-    # toolset, shell/read/file-search tools excluded so it can't shadow
-    # Bash or the built-in file tools.
+    # toolset, shell/read/file-search tools excluded. The shell exclusion is a
+    # PERMISSION boundary, not a compression one (D56): Claude Code gates Bash
+    # per command and MCP tools per tool, so an approved execute_shell_command
+    # would be one blanket grant over every command it ever runs.
     claude mcp add --scope user serena -- serena start-mcp-server --context claude-code
     Say "  serena registered at user scope (claude-code context: no shell/read tools)"
   }
@@ -927,6 +929,17 @@ function Invoke-Verify {
   else { Write-Row 'serena state' 'ENABLED globally - D53 expects it off' }
   if ((claude plugin list 2>$null | Out-String) -match '(?i)ponytail') { Write-Row 'ponytail' 'OK (plugin installed)' }
   else { Write-Row 'ponytail' 'NOT installed - run: claude plugin install ponytail@ponytail' }
+  # Serena retention gate (D57). serena/tools/tools_base.py logs
+  # "<tool>: {params}; session_id: <id>" on every execution, so the "; session_id:"
+  # suffix separates a REAL call from a startup manifest line. Reported on every
+  # verify so the gate collects itself (the defect that sank D20).
+  $serenaLogs = Join-Path $env:USERPROFILE '.serena\logs'
+  if (Test-Path $serenaLogs) {
+    $sact = @(Get-ChildItem -Path $serenaLogs -Recurse -File -ErrorAction SilentlyContinue |
+      Where-Object { Select-String -Path $_.FullName -Pattern 'activate_project: .*session_id:' -Quiet }).Count
+    if ($sact -gt 0) { Write-Row 'serena used' "OK ($sact session(s) activated it - D57 gate satisfied)" }
+    else { Write-Row 'serena used' 'NEVER activated - if still 0 after ~10 sessions, remove it (D57, B7)' }
+  }
   # ponytail's hooks are Node; without node the activation goes quiet rather than
   # erroring, so a broken install is invisible from inside a session.
   Write-RowHave 'node' 'node' 'OK (ponytail hooks)' 'MISSING - ponytail activation stays silent'

@@ -43,11 +43,13 @@ What this stack deliberately does **not** do: manage intent (specs, ADRs, roadma
 
 **Why it's in the stack:** it is the only layer that provides ground truth. `find_referencing_symbols` returns actual call sites, not text matches — no false positives from comments, strings, or look-alike methods. `get_diagnostics_for_file` returns structured compile/type/lint state without running (or paying for) a full `cargo check` dump.
 
-**Why it is off by default (D53):** its cost profile is not flat. It is reported to lose on cheap lookups — roughly 4× the cost of simply answering — and to win on deep modification work in large codebases, while its tool manifest is a **fixed per-session tax** (~24K tokens) paid by every session whether or not one symbol tool is called. A layer shaped like that should be reached for, not inherited. Enable it with `/mcp` for refactor, test-writing, and architecture work on larger projects; leave it off for quick queries, small repos, and greenfield prototypes. Those two figures are **external and unverified here** (D53) — the manifest one is directly measurable and should be.
+**Why it is off by default (D53, D55):** its cost profile is not flat. It is reported to lose on cheap lookups — roughly 4× the cost of simply answering — and to win on deep modification work in large codebases. Its tool manifest is a fixed per-session tax, **measured at 5,791 tokens** across 24 tools in the `claude-code` context (Serena's default context is 8,299 across 30; the six tools §2.1 boundary 1–2 exclude are 2,508 of them). That is ~4× *smaller* than the ~24K originally cited, and D55 records the correction.
+
+So the case for opt-in is not that the manifest is huge. Tool definitions render **first** in Anthropic's cache prefix, so in steady state those tokens are read at ~0.1× and cost little. The real reasons are that a registered-but-never-activated Serena charges the full tax for zero benefit — silently, and observed on the reference machine for two days (§7) — and that toggling it mid-session rewrites the frontmost bytes of the prefix and invalidates the **entire** cache (D50's mechanism). **Enable it at session start, not part-way through.** Use `/mcp` for refactor, test-writing, and architecture work on larger projects; leave it off for quick queries, small repos, and greenfield prototypes. The ~4×-on-cheap-lookups figure remains external and unverified (D53).
 
 **Hard boundaries (enforced by the `claude-code` context, formerly `ide-assistant`):**
 
-1. `execute_shell_command` is **disabled** by default in `claude-code` — keep it that way. Claude Code provides Bash natively, and a second shell tool splits execution across two surfaces for no gain. (Until 3.0 this rule carried a second justification — that MCP calls bypassed RTK's compression hook. RTK is gone, and with it that half of the reasoning; D3, D51, D53.)
+1. `execute_shell_command` is **disabled** by default in `claude-code` — keep it that way. Claude Code gates **Bash per command** and **MCP tools per tool**: a Bash rule can allow `git status` while still prompting for `rm`, whereas one approved `mcp__serena__execute_shell_command` is a blanket grant covering every command it will ever run. Enabling it would collapse per-command permission granularity into a single approval — a control regression, independent of compression. That, plus duplicate-tool routing confusion, is what the exclusion rests on (D3, D56). Until 3.0 it was justified by RTK bypass instead; RTK is gone and so is that reasoning (D51). The contract no longer *instructs* the agent to avoid the tool, because the tool is not in its surface to avoid (D56).
 2. `read_file` / `search_for_pattern` are likewise disabled in `claude-code` — Claude Code provides those natively, and duplicate tools confuse routing.
 
 These are structural, not instructional: the tools simply aren't in Serena's surface.
@@ -88,7 +90,7 @@ Route every information need to exactly one layer. **Rows naming Serena apply on
 | Editing a function/class body | Serena (`replace_symbol_body`, `insert_*_symbol`) | regex/string replace | Symbol-anchored edits don't hit comments, strings, or look-alike names |
 | Renaming / refactoring a symbol | Serena symbol-level edits | search-and-replace | Avoids missed aliased imports and false hits |
 | Any of the above, **Serena not enabled** | Claude Code's native Read/Grep/Glob/Edit | asking for Serena to be turned on | Off is the normal state, not a misconfiguration |
-| Running tests / builds / linters / git / docker | Bash | any MCP shell tool | Execution belongs on one surface |
+| Running tests / builds / linters / git / docker | Bash | — | Serena exposes no shell tool to route to (§2.1) |
 | "How is this organized / what connects A to B?" | reading and searching, kept scoped | — | Unowned since 3.0 (§2.3, D52); no tool answers it |
 
 **Tie-breakers:**
@@ -259,14 +261,22 @@ cat .serena/project.yml                      # exists; language_servers covers t
 #    "No active project" as a reason to grep
 #  - get_diagnostics_for_file on a planted type error -> structured error, no dump
 #  - agent tool list shows NO serena execute_shell_command / read_file
+#    (structural: nothing in the contract needs to mention it, D56)
 #  - an architecture question is answered by scoped reading/searching, and the
 #    agent does NOT claim a graph tool is missing (unowned since 3.0, §2.3)
 
-# Cost of the one optional layer (D53's unverified ~24K claim)
+# Cost of the optional layer — MEASURED (D55), no longer an open follow-on
 claude plugin details ponytail               # component inventory + projected token cost
-#  Serena's manifest is measurable the same way: compare a session's tool-definition
-#  token count with Serena enabled vs disabled. D53 records that figure as external
-#  and unverified; measuring it is the open follow-on.
+#  Serena's manifest: 24 tools / 26,212 chars / 5,791 tokens under --context
+#  claude-code; 30 tools / 8,299 tokens in Serena's default context. Reproduce by
+#  driving an MCP tools/list handshake against `serena start-mcp-server` and
+#  counting the serialised array with a real tokenizer (not chars/4).
+
+# Serena retention gate (D57) - reported by `stack-init verify` on every run
+grep -rl 'activate_project: .*session_id:' ~/.serena/logs/ | wc -l
+#  0 after ~10 real sessions = Serena was never used; remove it AND stack-init
+#  (B7). The "; session_id:" suffix is what separates a real call from the tool
+#  name appearing in a startup manifest line.
 
 # Editing the doc set (Unix only, D42)
 stack-init verify --docs                     # every § and D<n> reference resolves

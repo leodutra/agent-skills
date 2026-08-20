@@ -16,9 +16,9 @@
 4. Edits to existing symbols -> Serena symbol-level edits (replace_symbol_body,
    insert_after_symbol, rename_symbol) when enabled, not string/regex replacement.
 5. Anything that executes (tests, builds, git, tooling) -> Bash.
-   Do NOT route execution through an MCP shell tool. Nothing compresses tool
-   output downstream, so prefer targeted commands over ones that dump.
-   PowerShell is for genuinely Windows-only work (registry, COM, cmdlets).
+   Nothing compresses tool output downstream, so prefer targeted commands over
+   ones that dump. PowerShell is for genuinely Windows-only work (registry,
+   COM, cmdlets).
 6. Orientation ("what connects X to Y", blast radius, how this repo is
    organized) has no dedicated tool. Answer it by reading and searching, and
    keep that search scoped - it is the most expensive thing you do.

@@ -27,11 +27,30 @@ removed; what remains is one opt-in tool and one instruction-injecting plugin.
   projects; leave it off for quick queries, small repos, and greenfield. The
   ~4×-on-cheap-lookups and ~24K-manifest figures behind this are external and
   flagged unverified. [D53](DECISIONS.md#d53)
+- **Fix** Serena's manifest measured at **5,791 tokens** (24 tools, `claude-code`
+  context), not the ~24K D53 cited from an external source — a ~4× overstatement,
+  most likely a character count read as tokens. D53's decision stands but on
+  different grounds: the tax is small and mostly cached, so what actually argues
+  for opt-in is inert cost when Serena is never activated, plus the full
+  prefix-cache bust that toggling it mid-session causes (D50's mechanism).
+  [D55](DECISIONS.md#d55) (corrects [D53](DECISIONS.md#d53))
 - **Add** ponytail as a default-on Claude Code plugin (marketplace
   `DietrichGebert/ponytail`, plugin `ponytail@ponytail`), installed by
   `stack-init` via the `claude plugin` CLI. Injects a minimal-code-discipline
   ruleset at session start. Requires `node` on the non-interactive PATH; without
   it the activation stays quiet rather than erroring. [D54](DECISIONS.md#d54)
+- **Add** Serena is retained behind a mechanical kill criterion: `verify` now
+  reports how many sessions ever actually called a Serena tool, read from
+  Serena's own logs. Zero after ~10 real sessions means remove Serena *and*
+  `stack-init`. Unlike D20's never-run benchmark, the gate collects itself.
+  [D57](DECISIONS.md#d57), backlog B7
+- **Remove** the anti-bypass rules that survived RTK. The contract had been
+  spending tokens every session forbidding an MCP shell tool that
+  `--context claude-code` already removes from Serena's surface. The exclusion
+  itself stays, re-grounded on permission granularity: Claude Code gates Bash
+  per command and MCP tools per tool, so enabling `execute_shell_command` would
+  collapse per-command approval into one blanket grant.
+  [D56](DECISIONS.md#d56) (re-grounds [D3](DECISIONS.md#d3))
 - **Remove** `stack-init init` (built a graph that no longer exists) and
   `stack-init stats` (reported `rtk gain` and `headroom savings`), retiring
   [D29](DECISIONS.md#d29).

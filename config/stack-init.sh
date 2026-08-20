@@ -709,8 +709,10 @@ install_global() {
   else
     # --context claude-code is the current name of the old 'ide-assistant'
     # context (Serena logs a deprecation warning for the latter); same
-    # toolset, shell/read/file-search tools excluded so it can't shadow
-    # Bash+RTK or the built-in file tools.
+    # toolset, shell/read/file-search tools excluded. The shell exclusion is a
+    # PERMISSION boundary, not a compression one (D56): Claude Code gates Bash
+    # per command and MCP tools per tool, so an approved execute_shell_command
+    # would be one blanket grant over every command it ever runs.
     claude mcp add --scope user serena -- serena start-mcp-server --context claude-code
     say "  serena registered at user scope (--context claude-code: no shell/read tools)"
   fi
@@ -962,6 +964,21 @@ verify() {
   if claude plugin list 2>/dev/null | grep -qi ponytail
   then row ponytail "OK (plugin installed)"
   else row ponytail "NOT installed — run: claude plugin install ponytail@ponytail"; fi
+  # Serena retention gate (D57). serena/tools/tools_base.py logs
+  # "<tool>: {params}; session_id: <id>" on every execution, so the "; session_id:"
+  # suffix separates a REAL call from the tool name merely appearing in a startup
+  # manifest line. Reported on every verify so the gate collects itself rather
+  # than waiting for someone to remember to look (the defect that sank D20).
+  if [ -d "$HOME/.serena/logs" ]; then
+    # `|| true` is load-bearing under `set -euo pipefail`: grep exits 1 when it
+    # finds nothing, pipefail propagates that through the pipe, and set -e then
+    # aborts verify at the FIRST run on a machine where Serena was never used -
+    # which is exactly the machine this row exists to report on.
+    _sact="$( { grep -rl 'activate_project: .*session_id:' "$HOME/.serena/logs" 2>/dev/null || true; } | wc -l | tr -d ' ')"
+    if [ "$_sact" -gt 0 ]
+    then row "serena used" "OK ($_sact session(s) activated it — D57 gate satisfied)"
+    else row "serena used" "NEVER activated — if still 0 after ~10 sessions, remove it (D57, B7)"; fi
+  fi
   # ponytail's hooks are Node; without node the activation goes quiet rather
   # than erroring, so a broken install is invisible from inside a session.
   row_have node "node" "OK (ponytail hooks)" "MISSING — ponytail activation stays silent"
