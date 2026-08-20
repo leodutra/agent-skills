@@ -212,6 +212,8 @@ Why the language set is derived rather than delegated to Serena's own detection,
 
 **Operational caveat — the language-server set is fixed per session.** Serena binds a project's language servers when it first activates that project. Editing `project.yml` afterwards, or calling `activate_project` on it again *in the same session*, does **not** reload them; the tools keep answering with the old set until a brand-new session starts. Verify a repair by reading the file, not by re-running a Serena tool in the same session.
 
+**Dashboard.** Serena runs one instance per Claude session, each on its own port, so its stock `web_dashboard_open_on_launch: true` means a browser tab per session. `stack-init global` sets that to `false` and then *pins* `web_dashboard_interface` rather than leaving it empty, because empty means "platform default" and a default can move. On Windows the pin is `tray_manager`. On Unix the installer probes for the two independent conditions a tray actually needs — a `org.kde.StatusNotifierWatcher` owner on the session bus, and a pystray backend that can reach it — injecting PyGObject into Serena's isolated `uv` tool venv first, since without it pystray silently binds its XEmbed backend and the icon is never drawn. Both true pins `tray_manager`; either false pins `browser`, leaving the dashboard reachable by asking Claude to open it or by visiting the port (D46).
+
 **Opt-outs:** `CLAUDE_STACK_NO_SERENA_INIT=1` (global) or a `.serena-skip` file in the repo root (per repo). Uninstall by removing the `SessionStart` entry from `settings.json`.
 
 ### 6.4 Other subcommands
@@ -228,7 +230,7 @@ Why the language set is derived rather than delegated to Serena's own detection,
 | Routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
 | Run the installer | `stack-init` | `.\stack-init.ps1` |
 
-Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). The SessionStart hooks are registered as `powershell -NoProfile …`, i.e. Windows PowerShell 5.1, whose `-Encoding utf8` prepends a BOM — so serena-autoinit writes `project.yml` through an explicit no-BOM encoder, keeping it byte-identical to the POSIX variant's output rather than relying on YAML parsers tolerating a BOM (§6.3). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell. Windows configures Serena's dashboard with `tray_manager`; the Unix installer leaves it manually reachable because desktop tray support is environment-dependent and untested.
+Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). The SessionStart hooks are registered as `powershell -NoProfile …`, i.e. Windows PowerShell 5.1, whose `-Encoding utf8` prepends a BOM — so serena-autoinit writes `project.yml` through an explicit no-BOM encoder, keeping it byte-identical to the POSIX variant's output rather than relying on YAML parsers tolerating a BOM (§6.3). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell. Windows configures Serena's dashboard with `tray_manager` unconditionally, which Serena documents as fully supported there; the Unix installer reaches the same end state but has to *earn* it per desktop (D46).
 
 ### 6.x Subagents
 

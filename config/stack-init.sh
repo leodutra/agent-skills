@@ -226,21 +226,103 @@ install_uv() {
   have uv || warn "uv install failed — Serena will not be able to launch"
 }
 
+# Serena runs from an ISOLATED uv tool venv, so it cannot see a system-installed
+# python-gobject. Without PyGObject inside that venv, pystray silently picks its
+# _xorg backend (XEmbed), which no Wayland bar hosts and which even modern X11
+# panels dropped — the tray icon is then simply never drawn, with no error
+# anywhere. Injecting pygobject switches pystray to _appindicator, the
+# StatusNotifierItem backend every current bar does host. Best-effort: pygobject
+# is a source build (needs gobject-introspection headers), and a failure just
+# means the browser interface below instead of a tray.
+serena_python() {
+  local d rel esc
+  have uv || return 1
+  esc="$(printf '\033')"
+  d="$(NO_COLOR=1 uv tool dir 2>/dev/null | tr -d '\r' | head -1 | sed "s/${esc}\[[0-9;]*m//g")"
+  [ -n "$d" ] || return 1
+  for rel in serena-agent/bin/python serena-agent/Scripts/python.exe; do
+    [ -x "$d/$rel" ] && { printf '%s' "$d/$rel"; return 0; }
+  done
+  return 1
+}
+
+ensure_serena_tray_deps() {
+  [ "$(uname -s)" = Linux ] || return 0   # macOS pystray is native (_darwin)
+  local py; py="$(serena_python)" || return 0
+  "$py" -c 'import gi' >/dev/null 2>&1 && return 0
+  have uv || return 0
+  say "  adding pygobject to serena's venv (AppIndicator tray backend)"
+  # `uv pip install --python <that venv>`, NOT `uv tool install --with pygobject`.
+  # The latter re-resolves serena from git and would silently UPGRADE it as a
+  # side effect of a step that only means to configure a dashboard - and
+  # install_global deliberately skips reinstalling a serena that is already
+  # present. The cost is that `uv tool upgrade serena-agent` drops the addition;
+  # that is self-healing, since the next `stack-init global` puts it back.
+  uv pip install --python "$py" pygobject >/dev/null 2>&1 \
+    || warn "pygobject install failed (needs gobject-introspection headers) - no serena tray icon, dashboard still reachable manually"
+}
+
+# True only when a global tray icon can ACTUALLY appear on this desktop. Both
+# halves are required and neither implies the other: a bar can be hosting a
+# StatusNotifier tray while pystray still resolves to a backend that cannot talk
+# to it, and vice versa. Guessing from $XDG_CURRENT_DESKTOP would be wrong on
+# both counts — ask the session bus and ask pystray.
+serena_tray_supported() {
+  local py; py="$(serena_python)" || return 1
+  case "$(uname -s)" in
+    Darwin) ;;
+    Linux)
+      have busctl || return 1
+      busctl --user list 2>/dev/null | grep -q 'org\.kde\.StatusNotifierWatcher' || return 1
+      ;;
+    *) return 1 ;;
+  esac
+  # pystray binds its backend at import time; _xorg (XEmbed) and _dummy cannot
+  # reach an SNI host, so anything outside this set is a dead icon.
+  "$py" -c 'import pystray,sys
+sys.exit(0 if pystray.Icon.__module__.rsplit(".",1)[-1] in ("_appindicator","_gtk","_darwin") else 1)' \
+    >/dev/null 2>&1
+}
+
+# Sets `key: value` on a serena_config.yml key that already exists (Serena writes
+# every key, commented prose plus a bare `key:` for the unset ones). Prints
+# nothing; returns 0 if the file changed.
+set_serena_yaml_key() {
+  local cfg="$1" key="$2" val="$3"
+  grep -q "^$key: *$val\$" "$cfg" && return 1
+  sed -i "s|^$key:.*|$key: $val|" "$cfg"
+  return 0
+}
+
 set_serena_dashboard_config() {
-  # Dashboard stays enabled but no longer auto-opens a browser tab per
-  # session; it can still be reached manually (tool call or localhost:24282).
-  # No tray_manager here (unlike the ps1 installer) — Linux tray support is
-  # desktop-environment dependent and untested.
-  local cfg="$HOME/.serena/serena_config.yml"
+  # Two settings, one goal: never a dashboard window per Claude session. Serena
+  # runs one instance per session, each on its own port, so open_on_launch=true
+  # means a browser tab per session — the thing this turns off.
+  #
+  # The interface is then pinned rather than left empty. Empty means "platform
+  # default", and Serena's Linux default is `browser`, which offers NO way back
+  # to a dashboard once auto-open is off except typing a localhost port. When the
+  # desktop can host a tray (the check above, not a guess), tray_manager gives
+  # the same affordance the ps1 installer gets on Windows: ONE global icon whose
+  # menu lists every running instance. When it cannot, `browser` is pinned
+  # explicitly so a future change to Serena's platform default cannot quietly
+  # reintroduce per-session windows.
+  local cfg="$HOME/.serena/serena_config.yml" iface changed=0
   if [ ! -f "$cfg" ]; then
     say "  serena_config.yml not found (Serena writes it on first launch) — rerun global later to apply dashboard settings"
     return
   fi
-  if grep -q '^web_dashboard_open_on_launch: false' "$cfg"; then
-    say "  serena dashboard settings already applied"
+  ensure_serena_tray_deps
+  if serena_tray_supported; then iface=tray_manager; else iface=browser; fi
+  set_serena_yaml_key "$cfg" web_dashboard_open_on_launch false && changed=1
+  set_serena_yaml_key "$cfg" web_dashboard_interface "$iface" && changed=1
+  if [ "$changed" = 0 ]; then
+    say "  serena dashboard settings already applied (interface: $iface)"
+  elif [ "$iface" = tray_manager ]; then
+    say "  serena dashboard: auto-open off; tray_manager icon lists all instances"
   else
-    sed -i 's/^web_dashboard_open_on_launch:.*/web_dashboard_open_on_launch: false/' "$cfg"
-    say "  serena dashboard: auto-open off (still reachable manually)"
+    say "  serena dashboard: auto-open off; no tray host on this desktop, so it stays"
+    say "  reachable manually (ask Claude to open it, or localhost:24282)"
   fi
 }
 
@@ -774,6 +856,19 @@ if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "
 fi
 CLAUDE_STACK_SHIM=1
 export CLAUDE_STACK_SHIM
+
+# Pin the proxy to CACHE mode. `headroom wrap` forwards HEADROOM_MODE to the
+# proxy it spawns (cli/wrap.py), and the two modes trade against each other:
+# cache freezes prior turns so the provider's prefix cache keeps hitting, token
+# rewrites history for a few hundred more compressed tokens and busts a cache
+# read worth tens of thousands - the exact economics D37 left unbenchmarked but
+# which the proxy log makes visible per request (CACHE-BUST / cache_hit_pct).
+# Cache is headroom's own default today, so this is a PIN, not a change: it
+# holds if that default ever flips. `:-` keeps it a floor rather than a policy,
+# matching set_global_env_var - HEADROOM_MODE=token in the environment still
+# wins for anyone who wants to trade cache hits for compression.
+HEADROOM_MODE=${HEADROOM_MODE:-cache}
+export HEADROOM_MODE
 
 # --no-tokensave is probed HERE, at launch, rather than baked in at install:
 # newer headroom builds its own "tokensave" code graph by default, which the

@@ -788,6 +788,15 @@ $bypass = $env:CLAUDE_NO_HEADROOM -or $env:CLAUDE_STACK_SHIM -or
 if ($bypass) { & $real.Source @args; exit $LASTEXITCODE }
 $env:CLAUDE_STACK_SHIM = '1'
 
+# Pin the proxy to CACHE mode. `headroom wrap` forwards HEADROOM_MODE to the
+# proxy it spawns, and the two modes trade against each other: cache freezes
+# prior turns so the provider's prefix cache keeps hitting, token rewrites
+# history for a few hundred more compressed tokens and busts a cache read worth
+# tens of thousands. Cache is headroom's own default today, so this is a PIN,
+# not a change: it holds if that default ever flips. A value already in the
+# environment wins, matching Set-GlobalEnvVar - a floor, not a policy.
+if (-not $env:HEADROOM_MODE) { $env:HEADROOM_MODE = 'cache' }
+
 # --no-tokensave is probed HERE, at launch, rather than baked in at install:
 # newer headroom builds its own "tokensave" code graph by default, which the
 # stack's decisions log forbids as a duplicate of graphify. An install-time
@@ -860,6 +869,11 @@ fi
 CLAUDE_STACK_SHIM=1
 export CLAUDE_STACK_SHIM
 
+# Pin the proxy to CACHE mode (see claude.ps1 for why). A value already in the
+# environment wins - a floor, not a policy.
+HEADROOM_MODE=${HEADROOM_MODE:-cache}
+export HEADROOM_MODE
+
 # --no-tokensave is probed HERE, at launch, rather than baked in at install -
 # an install-time answer went stale the moment headroom was upgraded, silently
 # restoring the duplicate code graph the flag exists to suppress. Cache key is
@@ -908,9 +922,11 @@ exec headroom wrap claude "$@"
 function Set-SerenaDashboardConfig {
   # Dashboards stay enabled (one per session, own port each) but no longer
   # auto-open a browser tab per Claude session; the global tray icon
-  # (tray_manager) lists every running instance instead. tray_manager is
-  # tested on Windows only, which is why the sh installer keeps Serena's
-  # stock dashboard behavior.
+  # (tray_manager) lists every running instance instead. Unconditional here
+  # because Serena documents tray_manager as fully supported on Windows. The
+  # sh installer reaches the same end state but has to EARN it: it probes the
+  # session bus for a StatusNotifier host and asks pystray which backend it
+  # bound, falling back to a pinned `browser` when either answer says no.
   $cfg = Join-Path $env:USERPROFILE '.serena\serena_config.yml'
   if (-not (Test-Path $cfg)) {
     Say "  serena_config.yml not found (Serena writes it on first launch) - rerun global later to apply dashboard settings"

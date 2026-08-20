@@ -59,6 +59,8 @@ with its correction next to it, is the point.
 | [D43](#d43) | Condensed contract refreshed by hook, user-global scope only | 2.4 | Active — narrows D19 |
 | [D44](#d44) | `--no-tokensave` probed at launch, cached on headroom's version | 2.4 | Active — narrows D26 |
 | [D45](#d45) | `BACKLOG.md` as the fourth document | 2.4 | Active — extends D36 |
+| [D46](#d46) | Serena's dashboard interface is pinned, and a tray is earned not assumed | 2.4.1 | Active — narrows D33 |
+| [D47](#d47) | The shim pins Headroom to cache mode | 2.4.1 | Active — narrows D25 |
 
 ---
 
@@ -895,3 +897,91 @@ as one.
 **Why it is not a fourth source of truth.** It states only what is wrong, the
 evidence, and what "done" looks like. Every "why" it would otherwise carry is the
 decision that closes it. The file is the queue; `DECISIONS.md` remains the record.
+
+<a id="d46"></a>
+## D46 — Serena's dashboard interface is pinned, and a tray is earned not assumed
+
+**Version:** 2.4.1 · **Status:** Active — narrows [D33](#d33)
+
+Serena starts one instance per Claude session, each on its own port, and ships
+`web_dashboard_open_on_launch: true`. With D33's autoinit hook making Serena
+useful in *every* repo, that default turned into a browser tab per session. Both
+installers already set it to `false`. That half was right and is unchanged.
+
+The other half was not. `web_dashboard_interface` was left empty on Unix, which
+means "platform default" — a value Serena chooses and may change. The comment
+justifying it said Linux tray support was "environment-dependent and untested",
+which was true of the *guess* nobody had made, not of the question: on this
+platform the answer is directly observable, and turned out to be yes.
+
+**Decision:** pin the interface on both platforms. Windows pins `tray_manager`
+unconditionally — Serena documents it as fully supported there. Unix pins it only
+after confirming the two independent conditions a tray actually needs, because
+neither implies the other:
+
+1. a `org.kde.StatusNotifierWatcher` owner on the session bus (`busctl --user`), and
+2. a pystray backend that can talk to one — `_appindicator`, `_gtk` or `_darwin`,
+   asked of pystray directly rather than inferred.
+
+Condition 2 also has to be *created*, not just measured: Serena runs from an
+isolated `uv` tool venv that cannot see a system `python-gobject`, so pystray
+falls back to `_xorg` (XEmbed), which no current bar hosts and which fails by
+drawing nothing at all. The installer injects `pygobject` into that venv first,
+best-effort, via `uv pip install --python <that venv>` rather than
+`uv tool install --with` — the latter re-resolves Serena from git and would
+silently upgrade it as a side effect of configuring a dashboard. When either
+condition stays false, the pin is `browser`.
+
+**Why pin `browser` rather than leave it empty.** Empty is not a neutral value,
+it is a deferral to a default that can move — which is how the per-session tabs
+appeared in the first place. A recorded `browser` fails visibly if Serena changes
+its mind; an empty key fails by quietly reopening windows.
+
+**Why not detect from `$XDG_CURRENT_DESKTOP`.** It answers neither question. A
+bar can host an SNI tray while pystray still cannot reach it, and the desktop
+name says nothing about what is inside Serena's venv. Both facts are cheap to
+observe directly, so observing them is strictly better than a table of desktop
+names that would need maintaining.
+
+**What this costs.** A source build of `pygobject` (needs
+`gobject-introspection` headers) at install time on Linux, and two subprocesses
+in the dashboard step. Both are best-effort: every failure path lands on
+`browser`, which is exactly the behaviour this decision replaces.
+
+<a id="d47"></a>
+## D47 — The shim pins Headroom to cache mode
+
+**Version:** 2.4.1 · **Status:** Active — narrows [D25](#d25)
+
+Headroom's proxy has two optimization modes. `token` rewrites prior turns for
+maximum compression; `cache` freezes them so the provider's prefix cache keeps
+hitting. They trade directly against each other, and the trade is lopsided in a
+Claude Code session: a proxy log line from this repo shows one request saving
+1,205 tokens of compression while busting a 44,900-token cache read.
+
+That is D20's cache-economics question, which D37 declined to benchmark and D41
+restated as a ratio you can read off a single session. What neither noticed is
+that the *mode* was never pinned. It was inherited — currently `cache` by
+default, but a default the stack neither states nor holds.
+
+**Decision:** the shim exports `HEADROOM_MODE=cache` before delegating, which
+`headroom wrap` forwards to the proxy it spawns. This is a pin, not a change: it
+matches today's default and keeps matching if that default moves. Written with
+`:-` (POSIX) / an emptiness test (PowerShell) so an explicit `HEADROOM_MODE` in
+the environment still wins — a floor, not a policy, the same rule
+`set_global_env_var` follows for `MCP_TIMEOUT`.
+
+**Why the shim and not `settings.json`.** `env` in `settings.json` reaches
+Claude Code, not the proxy process `headroom wrap` starts. The shim is the only
+place that is in both processes' ancestry.
+
+**Why not `--mode cache` on the command line.** `headroom wrap claude` forwards
+every unrecognised flag to `claude`; `--mode` is a `headroom proxy` flag, so
+passing it there hands it to the wrong program. The env var is the supported
+route, and `wrap` forwards it deliberately.
+
+**What this costs.** Nothing at present — it selects the mode already in effect.
+Its value is entirely in the failure it forecloses: an upstream default flip
+silently trading this stack's cache hits for a few hundred compressed tokens,
+with D41's ratio as the only thing that would ever notice.
+

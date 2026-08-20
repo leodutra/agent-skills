@@ -6,6 +6,21 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 2.4.1
+
+Two inherited defaults become pinned decisions. Both were already correct today;
+neither was held by anything.
+
+- **Fix** Serena's dashboard no longer depends on a platform default. `web_dashboard_interface`
+  is pinned on both installers — `tray_manager` on Windows, and on Unix only after
+  probing the session bus for a StatusNotifier host *and* asking pystray which
+  backend it bound, with `pygobject` injected into Serena's isolated `uv` venv
+  first (without it pystray binds XEmbed and the icon is never drawn). Either
+  probe failing pins `browser`. [D46](DECISIONS.md#d46) (narrows [D33](DECISIONS.md#d33))
+- **Add** the claude shim exports `HEADROOM_MODE=cache`, which `headroom wrap`
+  forwards to the proxy. A pin, not a change — it matches today's default and
+  survives a flip of it. An explicit `HEADROOM_MODE` still wins. [D47](DECISIONS.md#d47) (narrows [D25](DECISIONS.md#d25))
+
 ## 2.4
 
 - **Add** `gauntlet-loop` as a globally deployed standalone skill; it is
