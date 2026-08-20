@@ -8,6 +8,9 @@ Fix entries with no `D<n>` are defect repairs that changed no decision.
 
 ## 2.4
 
+- **Add** `gauntlet-loop` as a globally deployed standalone skill; it is
+  catalogued in the root README and reported by both installers' `verify`.
+
 Backlog-clearing release: the six open defects in the decision set are closed,
 four of them by declining or affirming rather than by building. Two gates that
 could never fire are now decisions; one standing check that was circular is now

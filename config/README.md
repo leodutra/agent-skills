@@ -59,9 +59,11 @@ On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground trut
 
 ## Extra tools (outside the contract)
 
-The global installer also sets up two tools that are *not* part of the routing contract and never appear in it — the "only the parts that move tokens" claim above applies to the contract, not to what the installer ships. Both install non-fatally: their failure never blocks the stack.
+The global installer also sets up three extras that are *not* part of the routing contract and never appear in it — the "only the parts that move tokens" claim above applies to the contract, not to what the installer ships. Their installation is non-fatal: failure never blocks the stack.
 
-For each, the installer also mirrors its whole skill directory from [`skills/<name>/`](../skills/) (SKILL.md plus any supporting files) to `~/.claude/skills/` — without that, Claude has the binary on PATH but nothing ever surfaces it. The repo copies are the canonical source and work as ordinary standalone skills in any setup; stack-init deploys them verbatim, repo-relative (which is why the script must run from — or be symlinked into — the checkout), and the deployed copies are fully managed: overwritten on every run, stale files removed. `verify` reports both skills.
+For each, the installer also mirrors its whole skill directory from [`skills/<name>/`](../skills/) (SKILL.md plus any supporting files) to `~/.claude/skills/` — without that, the skill never surfaces globally. The repo copies are the canonical source and work as ordinary standalone skills in any setup; stack-init deploys them verbatim, repo-relative (which is why the script must run from — or be symlinked into — the checkout), and the deployed copies are fully managed: overwritten on every run, stale files removed. `verify` reports all three skills.
+
+**gauntlet-loop** — turns a goal into a paste-ready prompt that makes a separate builder and harsh critic compare the work against a concrete reference until it wins. It has no external binary and is available as a standalone skill; stack-init only deploys its canonical copy.
 
 **opensrc** (`npm install -g opensrc`) — fetches the exact installed version of any dependency's source (npm/PyPI/crates.io/GitHub; version auto-detected from the lockfile) into a global cache at `~/.opensrc/` and prints its path (`opensrc path zod`). It answers the one question the four tools can't: "what does this dependency actually do." Zero per-repo state — nothing gitignored, nothing per-worktree; the cache is shared by every checkout. Usage guidance lives in the [`opensrc` skill](../skills/opensrc/SKILL.md), not the contract.
 

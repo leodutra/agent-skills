@@ -142,7 +142,7 @@ function Get-Contract {
   return (Read-Text $p).TrimEnd()
 }
 
-# Skills for the extras (opensrc, worktrunk). graphify deploys its own via
+# Skills for the extras (gauntlet-loop, opensrc, worktrunk). graphify deploys its own via
 # `graphify install`; these two ship none, and without a SKILL.md in
 # $ClaudeDir\skills Claude has the binaries on PATH but nothing ever surfaces
 # them - the skill description is what makes the agent reach for the tool.
@@ -1117,11 +1117,12 @@ claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && gra
     Warn "worktrunk unavailable - parallel-worktree support skipped (stack unaffected)"
   }
 
-  Say "Extras' skills -> $ClaudeDir\skills (opensrc, worktrunk)"
+  Say "Extras' skills -> $ClaudeDir\skills (gauntlet-loop, opensrc, worktrunk)"
   # Deployed unconditionally (even if a binary install above failed - both are
   # global tools the user may add later, and the worktrunk skill itself covers
   # offering the install) and idempotently: overwritten every run, like the
   # contract. See Install-ExtraSkill for source resolution.
+  Install-ExtraSkill 'gauntlet-loop'
   Install-ExtraSkill 'opensrc'
   Install-ExtraSkill 'worktrunk'
 
@@ -1282,6 +1283,7 @@ function Invoke-Verify {
   Write-RowHave 'opensrc' 'opensrc' 'OK (context tool - outside the contract)' 'NOT installed (optional)'
   Write-RowSkill 'opensrc'
   Write-RowSkill 'worktrunk'
+  Write-RowSkill 'gauntlet-loop'
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Row 'contract' "OK ($ClaudeMd)" }
   else { Write-Row 'contract' 'MISSING' }
   if (Test-InGitRepo) {

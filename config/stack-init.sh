@@ -111,7 +111,7 @@ print_contract_file() {
 print_contract()           { print_contract_file contract.md; }
 print_contract_condensed() { print_contract_file contract-condensed.md; }
 
-# Skills for the extras (opensrc, worktrunk). graphify deploys its own via
+# Skills for the extras (gauntlet-loop, opensrc, worktrunk). graphify deploys its own via
 # `graphify install`; these two ship none, and without a SKILL.md in
 # $CLAUDE_DIR/skills Claude has the binaries on PATH but nothing ever surfaces
 # them — the skill description is what makes the agent reach for the tool.
@@ -998,11 +998,12 @@ WTHOOK
     warn "worktrunk unavailable — parallel-worktree support skipped (stack unaffected)"
   fi
 
-  say "Extras' skills -> $CLAUDE_DIR/skills (opensrc, worktrunk)"
+  say "Extras' skills -> $CLAUDE_DIR/skills (gauntlet-loop, opensrc, worktrunk)"
   # Deployed unconditionally (even if a binary install above failed — both are
   # global tools the user may add later, and the worktrunk skill itself covers
   # offering the install) and idempotently: overwritten every run, like the
   # contract. See install_extra_skill for source resolution.
+  install_extra_skill gauntlet-loop
   install_extra_skill opensrc
   install_extra_skill worktrunk
 
@@ -1126,6 +1127,7 @@ verify() {
   row_have opensrc "opensrc" "OK (context tool — outside the contract)" "NOT installed (optional)"
   row_skill opensrc
   row_skill worktrunk
+  row_skill gauntlet-loop
   if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null
   then row contract "OK ($CLAUDE_MD)"; else row contract "MISSING"; fi
   if in_git_repo; then
