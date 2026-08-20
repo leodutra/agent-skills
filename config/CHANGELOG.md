@@ -19,6 +19,14 @@ Fix entries with no `D<n>` are defect repairs that changed no decision.
 - **Fix** §2.4 gains boundary 6, recording *both* shim-pinned proxy knobs and the
   fact that neither binds a reused proxy. The `HEADROOM_MODE` pin shipped in
   2.4.1 had reached `DECISIONS.md` and this file but never the spec.
+- **Fix** the bust attribution in D49 was under-determined. Headroom's
+  tool-search deferral is recomputed every turn but delivered only on canonical
+  turns, so the tools array — first in Anthropic's cache prefix — flips with the
+  latch; deferral and latching are perfectly collinear across all seven
+  multi-request sessions, and the "natural control" D49 cited had deferral off
+  entirely. `HEADROOM_TOOL_SEARCH` stays on (no symptom, 13,647 measured
+  tokens/request at stake); switching it off is recorded as the isolating
+  experiment. [D50](DECISIONS.md#d50) (corrects [D49](DECISIONS.md#d49))
 - **Fix** §7's cache-bust entry is no longer "unmeasured": it now carries the
   measured mechanism (a one-way `canonical`→`passthrough` latch once a signed
   thinking block enters history), its price, the proxy-log commands that detect

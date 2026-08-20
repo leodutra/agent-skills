@@ -62,7 +62,8 @@ with its correction next to it, is the point.
 | [D46](#d46) | Serena's dashboard interface is pinned, and a tray is earned not assumed | 2.4.1 | Active — narrows D33 |
 | [D47](#d47) | The shim pins Headroom to cache mode | 2.4.1 | Active — narrows D25 |
 | [D48](#d48) | Domain skills deploy per-repo, never globally | 2.5 | Active |
-| [D49](#d49) | The shim pins Headroom to lossless (no-CCR) mode | 2.5 | Active — narrows D47; supplies D37's missing measurement |
+| [D49](#d49) | The shim pins Headroom to lossless (no-CCR) mode | 2.5 | Active — narrows D47; supplies D37's missing measurement; cause corrected by D50 |
+| [D50](#d50) | Tool-search deferral is confounded with the latch; flag left on | 2.5 | Active — corrects the attribution in D49 |
 
 ---
 
@@ -1042,7 +1043,9 @@ derivable from file extensions the way serena-autoinit's language list is.
 ## D49 — The shim pins Headroom to lossless (no-CCR) mode
 
 **Version:** 2.5 · **Status:** Active — narrows [D47](#d47); supplies the
-measurement [D37](#d37) declined to produce
+measurement [D37](#d37) declined to produce. **Its attribution of the busts to
+the passthrough latch is corrected by [D50](#d50)** — the pin stands, the stated
+cause was under-determined.
 
 §2.4 boundary 5 and [D41](#d41) both rest on a claim nobody had measured: that
 CCR's `headroom_retrieve` tool injection busts the prefix cache. One proxy log —
@@ -1115,3 +1118,72 @@ split above is a natural control, not a designed one, and n is 6 multi-request
 sessions. The crash chain is the firmer half: it was read directly out of
 `select_outbound_body` and `handlers/anthropic.py`, and reproduced twice in the
 log. §8 remains the procedure that would settle the economics.
+
+
+<a id="d50"></a>
+
+## D50 — Tool-search deferral is confounded with the latch; the flag stays on
+
+**Version:** 2.5 · **Status:** Active — corrects the stated cause in [D49](#d49)
+
+[D49](#d49) named the `canonical`→`passthrough` latch as the mechanism behind the
+four cache busts, and offered the latched-vs-unlatched session split as a natural
+control. Cross-tabulating Headroom's tool-search deferral against that split
+shows the control does not hold: deferral and latching are **perfectly
+collinear** across all seven multi-request sessions in the log.
+
+| session | n | canonical | passthrough | deferral | busts |
+| --- | --- | --- | --- | --- | --- |
+| 5d458473 | 5 | 0 | 5 | 0/5 | 0 |
+| 25965f20 | 2 | 2 | 0 | 0/2 | 0 |
+| 8cd218eb | 7 | 7 | 0 | 0/7 | 0 |
+| 56f5b82a | 10 | 2 | 8 | 10/10 | 1 |
+| f87549d3 | 9 | 3 | 6 | 9/9 | 1 |
+| ea012082 | 9 | 2 | 7 | 9/9 | 1 |
+| 09bf119a | 3 | 1 | 2 | 3/3 | 1 |
+
+Every session that deferred busted; no session that did not defer busted. That is
+the *same* 4/0 split the latch produces, so this log cannot separate them. D49's
+claim that the two all-canonical zero-bust sessions were a control is wrong on
+its own terms — **they had deferral off entirely** (0/7 and 0/2), so they
+controlled for nothing.
+
+**Why deferral flips at all.** It is computed on every turn — 23 passthrough
+turns logged the transform — but only *delivered* on canonical turns, because
+passthrough discards the mutated body. The wire's tools array therefore alternates
+in lockstep with `source`. The latch is the trigger; the deferral is the payload.
+
+**Why the payload may be the expensive half.** Anthropic renders the cache prefix
+`tools` → `system` → `messages`. The tools array is **first**, so changing it
+invalidates the entire prefix; compression changes message content and
+invalidates only from that point on. On mechanism, the deferral flip is the more
+destructive of the two flipping mutations, not the lesser one — which inverts the
+emphasis D49 gave them.
+
+**Decision:** `HEADROOM_TOOL_SEARCH` is **left at its default (on)**, and D49's
+pin stands unchanged — the crash chain it fixes was traced in source and is
+independent of all of this. What changes is the record: the bust *cause* is
+downgraded from "the latch" to "the latch and the deferral flip, not separable in
+this data", and turning the deferral off becomes a **named experiment** rather
+than a rejected option.
+
+**Why not switch it off now.** There is no symptom to treat: the global ratio is
+0.791 against D41's "well above 0.5". Switching it off would trade 13,647
+measured tokens of schema per request for a hypothetical cache benefit — and
+after the first turn that schema sits in the cached prefix at ~0.1× read, so the
+saving it delivers is real while the benefit is not yet demonstrated.
+
+**The experiment, when a symptom appears.** `HEADROOM_TOOL_SEARCH=0` removes the
+tools-array flip while leaving the compression flip intact. If busts vanish, the
+deferral was the expensive half; if they persist, the latch was. This is cheaper
+and sharper than §8's full matched-pair benchmark because it isolates one
+variable rather than comparing two whole sessions — §8 remains the only thing
+that produces an effective-cost number.
+
+**Settled in passing: deferral is not duplicated work.** `inject_tool_search_deferral`
+returns the tools array untouched when the client already sends a
+`tool_search_tool_*` entry (`helpers.py`, "client already uses tool search —
+leave it alone") or when there are fewer than 12 tools. With Claude Code's own
+`ENABLE_TOOL_SEARCH=true` active, both back-off branches are observable in this
+log — the three zero-deferral sessions. Headroom yields to the client's tool
+search by construction, so the two never both defer the same tool.
