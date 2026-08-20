@@ -8,6 +8,22 @@ Fix entries with no `D<n>` are defect repairs that changed no decision.
 
 ## 2.5
 
+- **Add** the claude shim exports `HEADROOM_LOSSLESS=1`, which sets
+  `ccr_inject_tool=False` in the proxy — dropping the injected `headroom_retrieve`
+  tool, its retrieval markers, and the buffered-stream conversion that was
+  turning streaming turns into `API returned an empty or malformed response
+  (HTTP 200)`. Compression is kept (lossless compaction + marker-free
+  SmartCrusher); `--no-ccr` was rejected because it compresses lossily with no
+  recovery path. An explicit `HEADROOM_LOSSLESS` still wins.
+  [D49](DECISIONS.md#d49) (narrows [D47](DECISIONS.md#d47))
+- **Fix** §2.4 gains boundary 6, recording *both* shim-pinned proxy knobs and the
+  fact that neither binds a reused proxy. The `HEADROOM_MODE` pin shipped in
+  2.4.1 had reached `DECISIONS.md` and this file but never the spec.
+- **Fix** §7's cache-bust entry is no longer "unmeasured": it now carries the
+  measured mechanism (a one-way `canonical`→`passthrough` latch once a signed
+  thinking block enters history), its price, the proxy-log commands that detect
+  it, and a warning that D41's ratio read 0.791 — healthy — through the very
+  window in which four busts destroyed 155,045 cached tokens.
 - **Add** `skills` subcommand on both installers: lists the repo's deployable
   skills, or deploys named ones into the CURRENT repo's `.claude/skills/` —
   symlink on Unix / junction on Windows by default (stays current with the

@@ -50,7 +50,7 @@ with its correction next to it, is the point.
 | [D34](#d34) | Serena's language set derived from tracked files | 2.3.3 | Active |
 | [D35](#d35) | `graphify claude install`'s hook is active, not a no-op | 2.3.3 | Active — corrects D5 |
 | [D36](#d36) | Spec split into spec / decisions / changelog | 2.3.3 | Active — enforcement narrowed by D38 |
-| [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20; standing check made executable by D41 |
+| [D37](#d37) | Cache-economics benchmark declined; Headroom provisional | 2.3.3 | Active — narrows D20; standing check made executable by D41; partly answered by D49 |
 | [D38](#d38) | Mechanical doc-drift checking declined | 2.3.3 | Premise corrected, partly reversed by D42 — narrows D36 |
 | [D39](#d39) | Serena tool-surface audit declined | 2.4 | Active — declines D23 |
 | [D40](#d40) | Headroom stays default-on despite being the unverified layer | 2.4 | Active — affirms D25 |
@@ -62,6 +62,7 @@ with its correction next to it, is the point.
 | [D46](#d46) | Serena's dashboard interface is pinned, and a tray is earned not assumed | 2.4.1 | Active — narrows D33 |
 | [D47](#d47) | The shim pins Headroom to cache mode | 2.4.1 | Active — narrows D25 |
 | [D48](#d48) | Domain skills deploy per-repo, never globally | 2.5 | Active |
+| [D49](#d49) | The shim pins Headroom to lossless (no-CCR) mode | 2.5 | Active — narrows D47; supplies D37's missing measurement |
 
 ---
 
@@ -604,7 +605,8 @@ split therefore relies on instead.
 ## D37 — Cache-economics benchmark declined; Headroom retained provisionally
 
 **Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20); its standing check
-made executable by [D41](#d41)
+made executable by [D41](#d41); the declined benchmark partly answered from
+observational proxy-log evidence by [D49](#d49)
 
 D20 said Headroom is "retained only as long as the cache-economics benchmark
 shows it's net-positive on effective cost." That benchmark has never been run,
@@ -1033,3 +1035,83 @@ same-named skill is never clobbered.
 there is no SessionStart hook auto-linking skills by project type, on purpose:
 which domain method applies to a repo is a judgment call, not something
 derivable from file extensions the way serena-autoinit's language list is.
+
+
+<a id="d49"></a>
+
+## D49 — The shim pins Headroom to lossless (no-CCR) mode
+
+**Version:** 2.5 · **Status:** Active — narrows [D47](#d47); supplies the
+measurement [D37](#d37) declined to produce
+
+§2.4 boundary 5 and [D41](#d41) both rest on a claim nobody had measured: that
+CCR's `headroom_retrieve` tool injection busts the prefix cache. One proxy log —
+43 forwarded requests across 11 sessions — now carries direct evidence, and it
+found a second failure the spec did not know about.
+
+**What the log shows.** Headroom decides per request whether to forward its own
+compressed bytes (`source=canonical`) or the client's original bytes
+(`source=passthrough`). `select_outbound_body` checks for signed thinking blocks
+*before* it checks whether the body was mutated, so once a thinking block enters
+the history every mutation is silently discarded. The per-session pattern is not
+alternation but a one-way latch:
+
+    session 56f5b82a:  C C P P P P P P P P
+    session f87549d3:  C C C P P P P P P
+    session ea012082:  C C P P P P P P P
+    session 09bf119a:  C P P
+
+23 of 43 requests were marked `body_mutated=true source=passthrough` — compression
+computed, reported in `headroom savings`, and thrown away before the wire. All
+four sessions that latched recorded exactly one `CACHE-BUST`; the two
+multi-request sessions that never latched recorded none. The model is constant
+within every session, so a model switch is not the cause.
+
+**The price of the four busts.** 155,045 cached tokens lost against 5,538 tokens
+of compression gained on those same turns. Priced at the standard multipliers —
+reads ~0.1×, 5-minute writes 1.25×, so a bust costs 1.15× base on the re-written
+prefix — that is ≈ $0.98 (139,906 Opus tokens at $5/MTok, 15,139 Fable at
+$10/MTok) against the $0.069 of compression Headroom claims for the entire log.
+
+**The second failure.** CCR also converts a streaming request to a buffered
+`stream:false` upstream call whenever the injected tool is present. The
+passthrough above then forwards the untouched `stream:true` bytes anyway, so the
+upstream returns SSE to a handler parsing JSON: zero events reach the client, the
+200 is stored in the response cache, and Claude Code's non-streaming retry is
+served that cached event-stream body — surfacing as `API returned an empty or
+malformed response (HTTP 200)`. That is a hard session failure, not an economics
+question, and it only fires when the tool is injected.
+
+**Decision:** the shim exports `HEADROOM_LOSSLESS=1`. That sets
+`ccr_inject_tool=False` (`proxy/server.py`), which drops the injected tool, the
+retrieval markers, and the buffered-stream conversion with them, while keeping
+compression — format-native lossless compaction plus marker-free SmartCrusher.
+`:-` / an emptiness test keeps it a floor, as [D47](#d47) established for
+`HEADROOM_MODE`; `HEADROOM_LOSSLESS=0` restores CCR for a launch.
+
+**Why not `--no-ccr`.** It drops the same tool but makes compression lossy with
+no recovery path. Trading silent unrecoverable content loss for a cache fix is
+not a trade this stack makes.
+
+**Why an env var and not a flag.** `wrap` forwards only a fixed set of flags to
+the proxy it spawns (`--mode`, `--learn`, `--memory`, …) and builds that
+process's environment with `os.environ.copy()`. `HEADROOM_LOSSLESS` is read from
+the inherited environment by both the click option and `proxy/server.py`, so
+exporting it is the supported route. **It therefore binds only a proxy the launch
+actually starts** — `wrap` reuses a running proxy, and its mismatch check covers
+`memory` / `learn` / `code_graph`, not CCR or mode. [D47](#d47) has the same
+latent gap and did not name it. Verify with a fresh proxy, not a reused one.
+
+**What this does not fix.** The canonical→passthrough latch is upstream and
+survives the pin: compression still stops mid-session, and its reported savings
+are still overstated for every latched turn. The pin removes the tool-array
+mutation — the frontmost and most cache-hostile of the three, and the one §7
+already named — and removes the crash. It does not make Headroom's compression
+hold for a full session.
+
+**Confidence.** Observational, from ordinary sessions; not the matched wrapped /
+bare pair [D37](#d37) declined and §8 still describes. The latched-vs-unlatched
+split above is a natural control, not a designed one, and n is 6 multi-request
+sessions. The crash chain is the firmer half: it was read directly out of
+`select_outbound_body` and `handlers/anthropic.py`, and reproduced twice in the
+log. §8 remains the procedure that would settle the economics.

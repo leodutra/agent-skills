@@ -874,6 +874,28 @@ export CLAUDE_STACK_SHIM
 HEADROOM_MODE=${HEADROOM_MODE:-cache}
 export HEADROOM_MODE
 
+# Pin the proxy to LOSSLESS (no-CCR) mode. CCR injects a `headroom_retrieve`
+# tool definition into the outgoing tools array - the §7 cache-bust contributor,
+# named there since 2.3 and never actually switched off. It has a second cost
+# the doc did not know about: on a streaming request headroom decides to buffer
+# the turn as stream:false, but the signed-thinking byte-passthrough in
+# select_outbound_body forwards the client's ORIGINAL stream:true bytes, so the
+# upstream answers SSE to a caller parsing JSON. The turn yields zero events,
+# then the 200 is stored in the response cache and replayed - event-stream
+# content-type and all - to Claude Code's non-streaming retry, which reports
+# "empty or malformed response (HTTP 200)".
+# --lossless keeps compression (format-native lossless compaction plus
+# marker-free SmartCrusher) while setting ccr_inject_tool=False, which drops the
+# tool, the marker, and that whole failure chain. --no-ccr also drops the tool
+# but makes compression lossy with NO recovery path, which is why it is not the
+# pin. Unlike HEADROOM_MODE this is read from the inherited environment rather
+# than forwarded as a flag (`wrap` builds the proxy's env with os.environ.copy),
+# so it only binds a proxy this launch STARTS - `wrap` reuses a running proxy
+# and its mismatch check covers memory/learn/code_graph, not CCR. `:-` keeps it
+# a floor: HEADROOM_LOSSLESS=0 restores CCR for a launch.
+HEADROOM_LOSSLESS=${HEADROOM_LOSSLESS:-1}
+export HEADROOM_LOSSLESS
+
 # --no-tokensave is probed HERE, at launch, rather than baked in at install:
 # newer headroom builds its own "tokensave" code graph by default, which the
 # decisions log forbids as a duplicate of graphify. An install-time answer went

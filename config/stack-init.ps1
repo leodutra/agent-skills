@@ -801,6 +801,21 @@ $env:CLAUDE_STACK_SHIM = '1'
 # environment wins, matching Set-GlobalEnvVar - a floor, not a policy.
 if (-not $env:HEADROOM_MODE) { $env:HEADROOM_MODE = 'cache' }
 
+# Pin the proxy to LOSSLESS (no-CCR) mode. CCR injects a `headroom_retrieve`
+# tool definition into the outgoing tools array - the cache-bust contributor the
+# spec has named since 2.3 and never switched off - and on a streaming request
+# it also drives headroom to buffer the turn as stream:false while the
+# signed-thinking byte-passthrough still forwards the client's original
+# stream:true bytes, so the upstream answers SSE to a caller parsing JSON. The
+# turn yields zero events and the cached 200 is replayed to the non-streaming
+# retry as "empty or malformed response". --lossless keeps compression while
+# setting ccr_inject_tool=False; --no-ccr also drops the tool but makes
+# compression lossy with no recovery path, so it is not the pin. This one is
+# read from the inherited environment, not forwarded as a flag, so it binds only
+# a proxy this launch starts - `wrap` reuses a running proxy without checking
+# CCR. A value already in the environment wins: HEADROOM_LOSSLESS=0 restores CCR.
+if (-not $env:HEADROOM_LOSSLESS) { $env:HEADROOM_LOSSLESS = '1' }
+
 # --no-tokensave is probed HERE, at launch, rather than baked in at install:
 # newer headroom builds its own "tokensave" code graph by default, which the
 # stack's decisions log forbids as a duplicate of graphify. An install-time
@@ -877,6 +892,11 @@ export CLAUDE_STACK_SHIM
 # environment wins - a floor, not a policy.
 HEADROOM_MODE=${HEADROOM_MODE:-cache}
 export HEADROOM_MODE
+
+# Pin the proxy to LOSSLESS (no-CCR) mode (see claude.ps1 for why). Binds only a
+# proxy this launch starts. A value already in the environment wins.
+HEADROOM_LOSSLESS=${HEADROOM_LOSSLESS:-1}
+export HEADROOM_LOSSLESS
 
 # --no-tokensave is probed HERE, at launch, rather than baked in at install -
 # an install-time answer went stale the moment headroom was upgraded, silently
