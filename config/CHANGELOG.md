@@ -6,6 +6,43 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 3.0
+
+The stack stops intercepting and starts instructing. Three of the four tools are
+removed; what remains is one opt-in tool and one instruction-injecting plugin.
+
+- **Remove** Headroom and RTK. Headroom went on measurement: of 448,564 tokens it
+  reported saving, 113,267 (25.3%) reached the wire, and four prefix-cache busts
+  destroyed 155,045 cached tokens against 5,538 saved (≈$0.98 vs $0.069). RTK went
+  on absence of evidence: its 60–90% claims carried no citation, and on the
+  reference machine it was installed but inert (binary on PATH, no hook
+  registered, no snapshot ever taken). [D51](DECISIONS.md#d51)
+- **Remove** graphify, and with it every piece of per-repo state the stack had:
+  `graphify-out/`, the graph-autobuild SessionStart hook, the four git refresh
+  hooks, the worktrunk `post-start` hook, `.graphify-skip`,
+  `CLAUDE_STACK_NO_AUTOBUILD`, and the graph-vs-LSP precedence spec. Orientation
+  has no successor and none is planned. [D52](DECISIONS.md#d52)
+- **Change** Serena is registered but no longer enabled by default. Turn it on
+  with `/mcp` for refactor, test-writing, and architecture work on larger
+  projects; leave it off for quick queries, small repos, and greenfield. The
+  ~4×-on-cheap-lookups and ~24K-manifest figures behind this are external and
+  flagged unverified. [D53](DECISIONS.md#d53)
+- **Add** ponytail as a default-on Claude Code plugin (marketplace
+  `DietrichGebert/ponytail`, plugin `ponytail@ponytail`), installed by
+  `stack-init` via the `claude plugin` CLI. Injects a minimal-code-discipline
+  ruleset at session start. Requires `node` on the non-interactive PATH; without
+  it the activation stays quiet rather than erroring. [D54](DECISIONS.md#d54)
+- **Remove** `stack-init init` (built a graph that no longer exists) and
+  `stack-init stats` (reported `rtk gain` and `headroom savings`), retiring
+  [D29](DECISIONS.md#d29).
+- **Change** contract rule 1 is now the guard that Serena may not be loaded,
+  replacing the conditional that guarded against a missing graph. Rules 2–4 are
+  scoped to enabled sessions; rule 6 records that orientation has no owner.
+- **Fix** D3's stated reason is corrected: it justified disabling Serena's shell
+  tool partly because MCP calls bypassed RTK's hook. With RTK gone that half is
+  dead; the decision stands on duplicate-tool routing alone.
+  [D53](DECISIONS.md#d53)
+
 ## 2.5
 
 - **Add** the claude shim exports `HEADROOM_LOSSLESS=1`, which sets
@@ -16,7 +53,7 @@ Fix entries with no `D<n>` are defect repairs that changed no decision.
   SmartCrusher); `--no-ccr` was rejected because it compresses lossily with no
   recovery path. An explicit `HEADROOM_LOSSLESS` still wins.
   [D49](DECISIONS.md#d49) (narrows [D47](DECISIONS.md#d47))
-- **Fix** §2.4 gains boundary 6, recording *both* shim-pinned proxy knobs and the
+- **Fix** the Headroom section gains boundary 6, recording *both* shim-pinned proxy knobs and the
   fact that neither binds a reused proxy. The `HEADROOM_MODE` pin shipped in
   2.4.1 had reached `DECISIONS.md` and this file but never the spec.
 - **Fix** the bust attribution in D49 was under-determined. Headroom's
@@ -108,13 +145,13 @@ shipped scripts, plus a hook that had been shipping undocumented.
 - **Fix** `headroom stats` → `headroom savings` in the cache-bust symptom and the
   benchmark procedure; the subcommand has never existed. [D29](DECISIONS.md#d29)
 - **Add** failure mode "Serena registered but never activated (silent)".
-- **Change** §2.4 boundary 5 no longer conditions Headroom on a benchmark nobody
+- **Change** the Headroom section's boundary 5 no longer conditions Headroom on a benchmark nobody
   runs: retained on wire-token evidence, cache economics recorded as unverified,
   status provisional and monitored. [D37](DECISIONS.md#d37) (narrows [D20](DECISIONS.md#d20))
 - **Change** spec split into spec / `DECISIONS.md` / `CHANGELOG.md`; enforced by
   review, not tooling. [D36](DECISIONS.md#d36), [D38](DECISIONS.md#d38)
 - **Change** spec sections renumbered: Serena autoinit is §6.3; Windows §6.5;
-  optional MCP server §6.6; verification §8.
+  optional graphify MCP server; verification §8.
 - **Fix** `README.md` file table said the decisions log runs D1–D37; D38 exists.
 
 ## 2.3.2

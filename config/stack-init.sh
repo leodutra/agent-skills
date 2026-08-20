@@ -1,49 +1,47 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  Claude Code Context Stack  —  global installer + per-repo init  (Linux/macOS)
+#  Claude Code Context Stack  —  global installer  (Linux/macOS)
 # =============================================================================
 #
 #  WHAT THIS IS
-#  Four tools that cut the token cost of working in a real codebase with Claude
-#  Code, plus the routing rules that make Claude actually use them. Nothing else
-#  — no spec/ADR/worklog layer. Each tool kills one source of wasted context:
+#  A routing contract plus two components, built on one rule learned the hard
+#  way: eliminate waste at its source, never compress downstream.
 #
-#    graphify  structure   one-time codebase graph (tree-sitter, local).
-#                          Kills ORIENTATION cost — answers "what connects X to
-#                          Y / blast radius / how is this organized" without the
-#                          agent reading dozens of files to find out.
-#    Serena    symbols     LSP over MCP (rust-analyzer / tsserver / pyright).
-#                          Kills RETRIEVAL+EDIT cost — exact symbol defs, refs,
-#                          implementations, diagnostics, and symbol-level edits
-#                          instead of whole-file dumps and grep walls.
-#    RTK       output      Bash PreToolUse hook that compresses command output
-#                          60-90% before it reaches the window. Kills TOOL-OUTPUT
-#                          noise (cargo test ~92%, git status ~81%). Invisible.
-#    Headroom  wire        Local proxy (`headroom wrap claude`) that recompresses
-#                          whatever still reaches the API after the three layers
-#                          above — file dumps, growing history. Second pass, not
-#                          a replacement for any of them.
+#    Serena    symbols    LSP over MCP (rust-analyzer / tsserver / pyright).
+#                         Kills RETRIEVAL+EDIT cost — exact symbol defs, refs,
+#                         diagnostics and symbol-level edits instead of
+#                         whole-file dumps and grep walls.
+#                         OPT-IN: registered but DISABLED. Its tool manifest is
+#                         a fixed per-session tax and it loses on cheap lookups,
+#                         so you turn it on with /mcp for refactor, test-writing
+#                         and architecture work on bigger repos (D53).
+#    ponytail  discipline Claude Code plugin (skill + SessionStart hook) that
+#                         injects a minimal-code ruleset. Default-on. Kills code
+#                         that never needed writing. Intercepts nothing — its
+#                         whole mechanism is text reaching the model (D54).
 #
-#  DESIGN PRINCIPLE: one question per layer, no layer answers another's.
-#    architecture/cross-module -> graphify   |   specific symbols -> Serena
-#    compile/type diagnostics   -> Serena     |   execute anything -> Bash (RTK)
-#    everything left over at the wire -> Headroom (catch-all, not a router)
-#  PRECEDENCE on conflict: LSP (Serena, live ground truth) > graph (can be stale).
+#  REMOVED IN 3.0: graphify, RTK and Headroom. Headroom went on measurement —
+#  only 25% of the tokens it reported saving ever reached the wire, and four
+#  prefix-cache busts cost more than everything it saved (D49, D50, D51). RTK
+#  went because its numbers were never checked and it was inert in practice
+#  (D51). graphify went with all per-repo state (D52). Orientation and
+#  tool-output noise are now explicitly UNOWNED — that is the honest state, not
+#  a gap to paper over.
+#
+#  DESIGN PRINCIPLE: prefer instructing over intercepting. Every layer removed
+#  in 3.0 sat in a path (before the shell, before the API, on disk) and each
+#  broke in a way that was a property of being there.
 #
 #  WHAT IS GLOBAL vs PER-REPO
-#    Global (run once): RTK hook, Serena at user scope + serena-autoinit
-#      SessionStart hook (Serena does NOT activate from cwd on its own — it
-#      needs a .serena/project.yml, which that hook writes per checkout),
-#      graphify install + graph-autobuild SessionStart hook, Headroom
-#      install + claude shim, and the routing contract in ~/.claude/CLAUDE.md.
-#    Per-repo: nothing required — the first session inside any git repo builds
-#      its graph in the background. `init` remains for building one eagerly (and
-#      for the tracked-file extras autobuild never touches: .gitignore,
-#      .claude/agents contract injection).
+#    Global (run once): Serena at user scope (registered, disabled) +
+#      serena-autoinit SessionStart hook (Serena does NOT activate from cwd on
+#      its own — it needs a .serena/project.yml, which that hook writes per
+#      checkout), the ponytail plugin, and the routing contract in
+#      ~/.claude/CLAUDE.md.
+#    Per-repo: nothing. 3.0 holds no per-repo state and installs no git hooks.
 #
 #  USAGE
 #    stack-init            # or: stack-init global    -> global install (once)
-#    stack-init init       # inside a repo   -> build graph + hooks eagerly
 #    stack-init skills     # list this repo's deployable skills and where each is
 #    stack-init skills <name>...  # inside a repo -> symlink domain skills into
 #                          # .claude/skills/ (--copy for a committable copy);
@@ -53,22 +51,16 @@
 #                          # decision reference resolves (maintenance, not install)
 #    stack-init contract   # print the routing contract it installs
 #    stack-init contract --condensed  # print the short form injected into agents
-#    stack-init stats      # append + print a usage snapshot (rtk/headroom)
 #    stack-init help       # or -h / --help -> print this banner
 #
 #  The contract text itself is NOT in this script: it lives in contract.md and
 #  contract-condensed.md next to it, which stack-init.ps1 reads too, so the two
 #  installers cannot drift on the one artifact they both write.
 #
-#  AFTER GLOBAL INSTALL: open a NEW shell. Bare `claude` then launches through
-#  Headroom automatically via a shim (CLAUDE_NO_HEADROOM=1 bypasses it for one
-#  run), and the first session in any git repo autobuilds its graph in the
-#  background (opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file
-#  in the repo root).
-#
-#  PREREQS: git, claude (Claude Code CLI), python3 (settings.json merges), plus
-#  cargo/pip/uv for the tool installs. A language server per language
-#  (rust-analyzer via `rustup component add rust-analyzer`, etc.).
+#  PREREQS: git, claude (Claude Code CLI), python3 (settings.json merges), node
+#  (ponytail's hooks; must be on the NON-INTERACTIVE shell's PATH), uv (Serena).
+#  A language server per language (rust-analyzer via
+#  `rustup component add rust-analyzer`, etc.).
 # =============================================================================
 set -euo pipefail
 
@@ -115,8 +107,8 @@ print_contract_file() {
 print_contract()           { print_contract_file contract.md; }
 print_contract_condensed() { print_contract_file contract-condensed.md; }
 
-# Skills for the extras (gauntlet-loop, opensrc, worktrunk). graphify deploys its own via
-# `graphify install`; these two ship none, and without a SKILL.md in
+# Skills for the extras (gauntlet-loop, opensrc, worktrunk). These ship none of
+# their own, and without a SKILL.md in
 # $CLAUDE_DIR/skills Claude has the binaries on PATH but nothing ever surfaces
 # them — the skill description is what makes the agent reach for the tool.
 # Canonical copies live in skills/<name>/ in the agent-skills repo (SKILL.md
@@ -199,7 +191,6 @@ check_deps() {
   # of here.
   for d in git claude python3; do have "$d" || { err "missing required: $d"; miss=1; }; done
   have cargo || warn "cargo not found — needed to install RTK (Arch: pacman -S rust / rustup)"
-  have pip   || warn "pip not found — needed to install graphify"
   [ "$miss" = 0 ] || { err "install the required tools above, then re-run"; exit 1; }
 }
 
@@ -385,7 +376,6 @@ PYEOF
 
 register_sessionstart_hook() {
   # Adds a SessionStart command hook to global settings.json (idempotent).
-  # Prints rtk-hook-present / rtk-hook-missing for callers that care.
   edit_settings '
 hook_cmd = sys.argv[2]
 hooks = data.setdefault("hooks", {})
@@ -393,8 +383,6 @@ starts = hooks.setdefault("SessionStart", [])
 if not any(h.get("command") == hook_cmd for entry in starts for h in entry.get("hooks", [])):
     starts.append({"hooks": [{"type": "command", "command": hook_cmd}]})
 save()
-rtk_present = any("rtk" in str(h) for h in hooks.get("PreToolUse", []))
-print("rtk-hook-present" if rtk_present else "rtk-hook-missing")
 ' "$1"
 }
 
@@ -411,169 +399,6 @@ else:
     save()
     print("  settings.json env.%s = %s" % (name, value))
 ' "$1" "$2"
-}
-
-install_headroom_check() {
-  mkdir -p "$CLAUDE_DIR/hooks"
-  cat > "$CLAUDE_DIR/hooks/headroom-check.sh" <<'HOOK'
-#!/usr/bin/env bash
-# claude-context-stack: detect a bare (unwrapped) Claude Code launch
-url="${ANTHROPIC_BASE_URL:-}"
-case "$url" in
-  *127.0.0.1*|*localhost*) exit 0 ;;
-esac
-printf '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"NOTE: Headroom proxy not active this session (bare launch). Wire-level compression off; RTK/Serena/graphify unaffected."}}'
-exit 0
-HOOK
-  chmod +x "$CLAUDE_DIR/hooks/headroom-check.sh"
-
-  local result
-  result="$(register_sessionstart_hook "bash \"$CLAUDE_DIR/hooks/headroom-check.sh\"")"
-  if [ "$result" = "rtk-hook-present" ]; then
-    say "  SessionStart headroom-check hook installed; RTK PreToolUse hook still present"
-  else
-    warn "settings.json written but RTK's Bash hook wasn't found afterward ($result) — check $CLAUDE_DIR/settings.json manually"
-  fi
-}
-
-write_graph_autobuild_hook() {
-  # Replaces per-repo `init` for the common case: a SessionStart hook that, in
-  # any git repo, builds a missing graph in the background and refreshes an
-  # existing one (incremental, content-hash cached). All side effects stay
-  # under .git/ (hooks, info/exclude, lock) — it never mutates tracked files,
-  # which is why it writes .git/info/exclude rather than .gitignore and does
-  # NOT inject the condensed contract into repo .claude/agents/. Run `init`
-  # for the eager/tracked-file variant.
-  mkdir -p "$CLAUDE_DIR/hooks"
-  cat > "$GRAPH_AUTOBUILD_HOOK" <<'HOOK'
-#!/bin/sh
-# claude-context-stack: per-repo graph autobuild/refresh at session start.
-# Opt out: CLAUDE_STACK_NO_AUTOBUILD=1, or a .graphify-skip file in the repo
-# root. Remove the SessionStart entry in settings.json to uninstall.
-# Modes: (none) session start, --build background first build, --hooks install
-# this checkout's git hooks and exit (what `stack-init init` calls).
-top=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
-[ -n "$top" ] || exit 0
-cd "$top" || exit 0
-gd=$(git rev-parse --git-dir 2>/dev/null) || exit 0
-cgd=$(git rev-parse --git-common-dir 2>/dev/null)
-[ -n "$cgd" ] || cgd=$gd
-lock="$gd/claude-stack-autobuild.lock"
-
-# Points graphify's post-commit hook at an interpreter that can actually import
-# graphify, by writing the override file the hook reads when its baked-in pin is
-# dead. NO_COLOR plus the SGR strip are load-bearing: uv colourises even when
-# redirected, and the hook allowlists this file's contents against
-# [a-zA-Z0-9/_.@:-], so one stray escape byte makes it discard the override.
-repair_graphify_python() {
-  _pin="$top/graphify-out/.graphify_python"
-  if [ -f "$_pin" ]; then
-    _cur=$(tr -d ' \t\r\n' < "$_pin" 2>/dev/null)
-    if [ -n "$_cur" ] && [ -x "$_cur" ]; then return 0; fi
-  fi
-  _esc=$(printf '\033')
-  _ud=$(NO_COLOR=1 uv tool dir 2>/dev/null | tr -d '\r' | head -1 | sed "s/${_esc}\[[0-9;]*m//g")
-  [ -n "$_ud" ] || return 0
-  for _rel in graphifyy/bin/python graphifyy/Scripts/python.exe; do
-    _cand="$_ud/$_rel"
-    [ -x "$_cand" ] || continue
-    "$_cand" -c 'import graphify' >/dev/null 2>&1 || continue
-    mkdir -p "$(dirname "$_pin")"
-    printf '%s' "$_cand" > "$_pin"
-    return 0
-  done
-  return 0
-}
-
-# Repo-local git hooks that keep the graph fresh. Idempotent, and deliberately
-# NOT confined to the first build: a repo whose graph predates this logic hits
-# the fast path below and returns early, so it would never acquire the refresh
-# hooks and would keep a stale post-commit pin forever.
-ensure_repo_hooks() {
-  hooks_dir="$cgd/hooks"
-  mkdir -p "$hooks_dir"
-  # post-commit is graphify's own hook. Install it when absent. When it exists
-  # but the interpreter it pinned at install time has gone away (interpreter
-  # uninstalled, pip -> uv tool migration), a plain re-install is NOT a repair:
-  # graphify matches its own marker, reports "already installed" and leaves the
-  # dead pin, so every commit silently fails to rebuild the graph. `hook
-  # uninstall` + `hook install` does re-pin, but uninstall deletes .gitattributes
-  # when the merge driver is its only entry - too destructive to run unattended
-  # at session start. Repair via graphify's documented second detection path
-  # instead. Only POSIX pins are probed here; a Windows pin is the .ps1
-  # variant's business.
-  _pc="$hooks_dir/post-commit"
-  if [ ! -f "$_pc" ] || ! grep -q 'graphify-hook-start' "$_pc" 2>/dev/null; then
-    graphify hook install >/dev/null 2>&1
-  else
-    _pin=$(sed -n "s/^_PINNED='\(.*\)'\$/\1/p" "$_pc" 2>/dev/null | head -1)
-    case "$_pin" in
-      /*) [ -x "$_pin" ] || repair_graphify_python ;;
-    esac
-  fi
-  write_hook() {
-    p="$hooks_dir/$1"
-    if [ -f "$p" ] && grep -q 'claude-context-stack:' "$p" 2>/dev/null; then return 0; fi
-    if [ -f "$p" ]; then printf '\n%s\n' "$2" >> "$p"; else printf '#!/bin/sh\n%s\n' "$2" > "$p"; fi
-    chmod +x "$p"
-  }
-  write_hook post-checkout '# claude-context-stack: refresh graph on branch switch (not file checkout)
-if [ "$3" = "1" ] && command -v graphify >/dev/null 2>&1 && [ -d graphify-out ]; then
-  ( graphify update . >/dev/null 2>&1 & )
-fi'
-  write_hook post-merge '# claude-context-stack: refresh graph after merge/pull
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
-  write_hook post-rewrite '# claude-context-stack: refresh graph after rebase
-command -v graphify >/dev/null 2>&1 && [ -d graphify-out ] && graphify update . >/dev/null 2>&1 || true'
-  return 0
-}
-
-if [ "${1:-}" = "--hooks" ]; then
-  # `stack-init init` delegating here is what keeps ONE copy of the hook bodies.
-  ensure_repo_hooks
-  exit 0
-fi
-
-if [ "${1:-}" = "--build" ]; then
-  # Background worker: the actual first build. Everything it writes lives
-  # under .git/ - never a tracked file (no .gitignore, no .claude/agents).
-  trap 'rm -rf "$lock"' EXIT
-  graphify . >/dev/null 2>&1
-  ensure_repo_hooks
-  mkdir -p "$cgd/info"
-  grep -q '^graphify-out/' "$cgd/info/exclude" 2>/dev/null || printf '\ngraphify-out/\n' >> "$cgd/info/exclude"
-  exit 0
-fi
-
-[ -n "${CLAUDE_STACK_NO_AUTOBUILD:-}" ] && exit 0
-[ -f .graphify-skip ] && exit 0
-command -v graphify >/dev/null 2>&1 || exit 0
-
-if [ -d graphify-out ]; then
-  # Backfill for repos whose graph predates this hook logic, and self-heal for a
-  # dead post-commit pin. Both checks are file tests that no-op once satisfied.
-  ensure_repo_hooks
-  ( graphify update . >/dev/null 2>&1 & )
-  exit 0
-fi
-
-if ! mkdir "$lock" 2>/dev/null; then
-  # a build is (or was) running; treat locks older than 60 min as stale
-  [ -n "$(find "$lock" -maxdepth 0 -mmin +60 2>/dev/null)" ] || exit 0
-  rm -rf "$lock"
-  mkdir "$lock" 2>/dev/null || exit 0
-fi
-( nohup sh "$0" --build >/dev/null 2>&1 & )
-printf '%s' '{"hookSpecificOutput":{"hookEventName":"SessionStart","additionalContext":"graphify: no graph in this repo yet - the stack is building one in the background (first build can take a while on big repos). Orient normally until graphify-out/ appears; do not run graphify . yourself."}}'
-exit 0
-HOOK
-  chmod +x "$GRAPH_AUTOBUILD_HOOK"
-}
-
-install_graph_autobuild() {
-  write_graph_autobuild_hook
-  register_sessionstart_hook "bash \"$GRAPH_AUTOBUILD_HOOK\"" >/dev/null
-  say "  SessionStart graph-autobuild hook installed (opt out: CLAUDE_STACK_NO_AUTOBUILD=1 or .graphify-skip)"
 }
 
 install_serena_autoinit() {
@@ -757,6 +582,34 @@ HOOK
   say "  SessionStart serena-autoinit hook installed (opt out: CLAUDE_STACK_NO_SERENA_INIT=1 or .serena-skip)"
 }
 
+install_ponytail() {
+  # ponytail ships as a Claude Code plugin from a GitHub-backed marketplace.
+  # `claude plugin` drives both steps non-interactively, which is the only
+  # reason an installer can do this at all — the /plugin slash commands cannot
+  # be scripted, and interactively they must be sent as two SEPARATE prompts.
+  #
+  # Non-fatal throughout (D32): ponytail is instructions, and a session without
+  # them is a worse session, never a broken one.
+  if ! have node; then
+    warn "node not on PATH — ponytail's lifecycle hooks need it. Its skills still"
+    warn "  work; the always-on activation just stays quiet instead of erroring."
+    warn "  nvm/Nix users: it must be on the NON-INTERACTIVE shell's PATH."
+  fi
+  if claude plugin list 2>/dev/null | grep -qi ponytail; then
+    say "  ponytail already installed — skipped"
+    return 0
+  fi
+  claude plugin marketplace add DietrichGebert/ponytail >/dev/null 2>&1 \
+    || warn "could not add the ponytail marketplace — skipping plugin install"
+  if claude plugin install ponytail@ponytail >/dev/null 2>&1; then
+    say "  ponytail installed (minimal-code ruleset injected at session start)"
+  else
+    warn "claude plugin install ponytail@ponytail failed — install it by hand:"
+    warn "  /plugin marketplace add DietrichGebert/ponytail"
+    warn "  /plugin install ponytail@ponytail      (two SEPARATE prompts)"
+  fi
+}
+
 install_contract_refresh() {
   # The condensed contract was written into agent files ONLY at install time, so
   # editing contract-condensed.md left every deployed copy stale until somebody
@@ -815,125 +668,6 @@ HOOK
   say "  SessionStart contract-refresh hook installed (~/.claude/agents only; opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1)"
 }
 
-install_claude_shim() {
-  # Shadows bare `claude` so it launches through Headroom automatically. The
-  # self-recursion hazard that made shadowing dangerous (headroom re-resolving
-  # 'claude' back to the shim - `headroom wrap` only accepts tool names, so
-  # re-resolution is unavoidable) is bounded by construction: the shim exports
-  # a re-entry guard (CLAUDE_STACK_SHIM) before delegating, so when headroom's
-  # PATH search lands back on the shim, that second entry execs the REAL
-  # binary (which the shim resolves itself, skipping its own directory) -
-  # exactly one bounce, never a loop. An already-wrapped session (localhost
-  # ANTHROPIC_BASE_URL) is never double-wrapped. Headroom missing or
-  # CLAUDE_NO_HEADROOM=1 falls through to the real binary - a broken shim
-  # never blocks a session.
-  # --no-tokensave is probed by the shim at LAUNCH, not here - see the comment
-  # at the probe itself for why an install-time answer could not stay correct.
-  local bin_dir="$CLAUDE_DIR/stack-bin" rc line
-  mkdir -p "$bin_dir"
-  cat > "$bin_dir/claude" <<'SHIM'
-#!/bin/sh
-# claude-context-stack: auto-wrap claude with Headroom (managed by stack-init).
-# CLAUDE_NO_HEADROOM=1 skips wrapping for one launch; delete this file (and
-# its PATH entry) to remove the shim entirely.
-self_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd -P)
-real=
-old_ifs=$IFS
-IFS=:
-for d in $PATH; do
-  [ -n "$d" ] || continue
-  [ "$(CDPATH= cd -- "$d" 2>/dev/null && pwd -P)" = "$self_dir" ] && continue
-  for n in claude claude.exe claude.cmd; do
-    if [ -f "$d/$n" ] && [ -x "$d/$n" ]; then real="$d/$n"; break 2; fi
-  done
-done
-IFS=$old_ifs
-if [ -z "$real" ]; then
-  echo "claude shim: real claude binary not found on PATH" >&2
-  exit 127
-fi
-wrapped=
-case "${ANTHROPIC_BASE_URL:-}" in *127.0.0.1*|*localhost*) wrapped=1 ;; esac
-if [ -n "${CLAUDE_NO_HEADROOM:-}" ] || [ -n "${CLAUDE_STACK_SHIM:-}" ] || [ -n "$wrapped" ] \
-   || ! command -v headroom >/dev/null 2>&1; then
-  exec "$real" "$@"
-fi
-CLAUDE_STACK_SHIM=1
-export CLAUDE_STACK_SHIM
-
-# Pin the proxy to CACHE mode. `headroom wrap` forwards HEADROOM_MODE to the
-# proxy it spawns (cli/wrap.py), and the two modes trade against each other:
-# cache freezes prior turns so the provider's prefix cache keeps hitting, token
-# rewrites history for a few hundred more compressed tokens and busts a cache
-# read worth tens of thousands - the exact economics D37 left unbenchmarked but
-# which the proxy log makes visible per request (CACHE-BUST / cache_hit_pct).
-# Cache is headroom's own default today, so this is a PIN, not a change: it
-# holds if that default ever flips. `:-` keeps it a floor rather than a policy,
-# matching set_global_env_var - HEADROOM_MODE=token in the environment still
-# wins for anyone who wants to trade cache hits for compression.
-HEADROOM_MODE=${HEADROOM_MODE:-cache}
-export HEADROOM_MODE
-
-# Pin the proxy to LOSSLESS (no-CCR) mode. CCR injects a `headroom_retrieve`
-# tool definition into the outgoing tools array - the §7 cache-bust contributor,
-# named there since 2.3 and never actually switched off. It has a second cost
-# the doc did not know about: on a streaming request headroom decides to buffer
-# the turn as stream:false, but the signed-thinking byte-passthrough in
-# select_outbound_body forwards the client's ORIGINAL stream:true bytes, so the
-# upstream answers SSE to a caller parsing JSON. The turn yields zero events,
-# then the 200 is stored in the response cache and replayed - event-stream
-# content-type and all - to Claude Code's non-streaming retry, which reports
-# "empty or malformed response (HTTP 200)".
-# --lossless keeps compression (format-native lossless compaction plus
-# marker-free SmartCrusher) while setting ccr_inject_tool=False, which drops the
-# tool, the marker, and that whole failure chain. --no-ccr also drops the tool
-# but makes compression lossy with NO recovery path, which is why it is not the
-# pin. Unlike HEADROOM_MODE this is read from the inherited environment rather
-# than forwarded as a flag (`wrap` builds the proxy's env with os.environ.copy),
-# so it only binds a proxy this launch STARTS - `wrap` reuses a running proxy
-# and its mismatch check covers memory/learn/code_graph, not CCR. `:-` keeps it
-# a floor: HEADROOM_LOSSLESS=0 restores CCR for a launch.
-HEADROOM_LOSSLESS=${HEADROOM_LOSSLESS:-1}
-export HEADROOM_LOSSLESS
-
-# --no-tokensave is probed HERE, at launch, rather than baked in at install:
-# newer headroom builds its own "tokensave" code graph by default, which the
-# decisions log forbids as a duplicate of graphify. An install-time answer went
-# stale the moment headroom was upgraded - silently restoring the very thing the
-# flag suppresses - and the mitigation was an instruction to re-run the
-# installer, which nobody does. The cache key is headroom's version, so an
-# upgrade re-probes exactly once and every later launch is a file read. Any
-# failure falls back to passing no flag, which is what older headroom builds
-# (which have no such flag) need anyway.
-flags=
-ver=$(headroom --version 2>/dev/null | tr -cd '0-9A-Za-z.-')
-if [ -n "$ver" ]; then
-  cache="$self_dir/.tokensave-$ver"
-  if [ -f "$cache" ]; then
-    read -r flags < "$cache" 2>/dev/null || flags=
-  else
-    headroom wrap claude --help 2>/dev/null | grep -q -- '--no-tokensave' \
-      && flags=--no-tokensave
-    # One cache file at a time: drop prior versions' answers so an upgrade
-    # cycle can't leave the directory accumulating stale entries.
-    rm -f "$self_dir"/.tokensave-* 2>/dev/null
-    printf '%s\n' "$flags" > "$cache" 2>/dev/null || true
-  fi
-fi
-[ -n "$flags" ] && exec headroom wrap claude "$flags" "$@"
-exec headroom wrap claude "$@"
-SHIM
-  chmod +x "$bin_dir/claude"
-  say "  shim written -> $bin_dir/claude"
-  line="export PATH=\"$bin_dir:\$PATH\"  # claude-context-stack shim"
-  for rc in "$HOME/.profile" "$HOME/.bashrc" "$HOME/.zshrc"; do
-    grep -q 'claude-context-stack shim' "$rc" 2>/dev/null && continue
-    printf '\n%s\n' "$line" >> "$rc"
-  done
-  say "  PATH prepend added to .profile/.bashrc/.zshrc (open a NEW shell to pick it up)"
-  case ":$PATH:" in *":$bin_dir:"*) ;; *) PATH="$bin_dir:$PATH" ;; esac
-}
-
 install_global() {
   check_deps
   # Every optional install below is non-fatal on purpose. `set -e` turns both a
@@ -941,20 +675,8 @@ install_global() {
   # to take out everything after it — including the routing contract written at
   # the very end, the one step that is the whole point of the script. check_deps
   # only WARNS about cargo/pip, so "warn, then die anyway" was the old behavior.
-  say "RTK — output compression (global Bash hook)"
-  if have rtk; then say "  rtk present ($(rtk --version 2>/dev/null))"
-  elif have cargo; then
-    say "  installing rtk"
-    cargo install --git https://github.com/rtk-ai/rtk || warn "cargo install rtk failed"
-  fi
-  if have rtk; then
-    rtk init -g && say "  rtk init -g (PreToolUse Bash hook registered)" \
-      || warn "rtk init -g failed — output compression off"
-  else warn "rtk not on PATH — output compression off (install cargo, then re-run)"; fi
-
-  # One health-check pass, reused by the Serena and Headroom steps below:
-  # `claude mcp list` spawns every registered server and waits on it, so
-  # calling it twice doubles the slowest step in this function.
+  # One health-check pass: `claude mcp list` spawns every registered server and
+  # waits on it, so calling it twice doubles the slowest step in this function.
   local mcp_list serena_line
   mcp_list="$(claude mcp list 2>/dev/null)"
 
@@ -992,6 +714,16 @@ install_global() {
     claude mcp add --scope user serena -- serena start-mcp-server --context claude-code
     say "  serena registered at user scope (--context claude-code: no shell/read tools)"
   fi
+  # Registered but NOT enabled (D53). Serena's tool manifest is a fixed
+  # per-session tax whether or not a symbol tool is ever called, and it loses on
+  # cheap lookups. Leaving it off makes enabling it a deliberate `/mcp` step for
+  # the sessions that actually want it. Non-fatal: an older `claude` without
+  # `mcp disable` just leaves it enabled, which is the pre-3.0 behaviour.
+  if claude mcp disable serena >/dev/null 2>&1; then
+    say "  serena DISABLED by default — enable per session with /mcp (D53)"
+  else
+    warn "could not disable serena (older claude?) — it will load in every session"
+  fi
   # Safety net for a genuinely cold first launch (uv tool run, LSP download):
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   set_global_env_var MCP_TIMEOUT 120000
@@ -1000,60 +732,8 @@ install_global() {
   say "serena autoinit — per-checkout project, automated (SessionStart hook)"
   install_serena_autoinit
 
-  say "graphify — codebase knowledge graph"
-  if ! have graphify; then
-    say "  installing graphify (PyPI package: graphifyy, double-y)"
-    if have uv;    then uv tool install 'graphifyy[all]' || warn "graphify install failed"
-    elif have pip; then pip install 'graphifyy[all]'     || warn "graphify install failed"
-    else warn "neither uv nor pip found — skipping graphify install"; fi
-  fi
-  if have graphify; then
-    graphify install >/dev/null 2>&1 && say "  /graphify skill installed (global)" \
-      || warn "graphify install (skill deploy) failed"
-  else warn "graphify not on PATH — the graph layer stays off; contract rule 1 degrades to normal orientation"; fi
-  # Deliberately NOT running `graphify claude install` here: it targets the
-  # CLAUDE.md / .claude/settings.json in the CURRENT DIRECTORY, not this
-  # script's global $CLAUDE_MD - wrong layer for a global install step. Its
-  # PreToolUse Bash/Read/Glob hook also fires unconditionally on every
-  # matching call (confirmed active, not a no-op) - noisier than contract
-  # rule 1 below, which scopes graphify to architecture questions only. Wire
-  # this into init_project instead if per-repo defense-in-depth is wanted.
-
-  say "graph autobuild — per-repo init, automated (SessionStart hook)"
-  install_graph_autobuild
-
-  say "Headroom — proxy-layer compression (final pass before the API)"
-  if have headroom; then say "  headroom present ($(headroom --version 2>/dev/null))"
-  else
-    say "  installing headroom (PyPI package: headroom-ai)"
-    if have uv;    then uv tool install 'headroom-ai[all]' || warn "headroom install failed"
-    elif have pip; then pip install 'headroom-ai[all]'     || warn "headroom install failed"
-    else warn "neither uv nor pip found — skipping headroom install"; fi
-  fi
-  # Headroom integrates at the WIRE (the shim below), never as an MCP server.
-  # A `headroom mcp serve` registration is not part of this stack and current
-  # headroom-ai builds crash on its startup (AttributeError: 'Server' object
-  # has no attribute 'list_tools'), so each session pays ~3s for a connection
-  # that always fails, in every workspace. Drop a stray one.
-  if printf '%s\n' "$mcp_list" | grep -qi '^headroom[: ]'; then
-    claude mcp remove --scope user headroom >/dev/null 2>&1
-    say "  removed stray headroom MCP registration (wire proxy is the integration, not MCP)"
-  fi
-  say "  shadowing bare 'claude' with a recursion-safe shim (see install_claude_shim"
-  say "  for how the old self-recursion hazard is closed)"
-  install_claude_shim
-  # The shim supersedes the 2.2 clw/hclaude/claudew wrapper - remove any of
-  # ours a previous version wrote. Manual fallback is `headroom wrap claude`.
-  for old in clw hclaude claudew; do
-    if [ -f "$HOME/.local/bin/$old" ] && grep -q 'headroom wrap claude' "$HOME/.local/bin/$old" 2>/dev/null; then
-      rm -f "$HOME/.local/bin/$old"
-      say "  removed obsolete wrapper: $old (the shim replaces it)"
-    fi
-  done
-  install_headroom_check
-  # Deliberately not passing --code-graph (would build a second structure graph,
-  # duplicating graphify - rule 1 below already owns that question) or --memory
-  # (this stack manages no intent/memory layer by design, see decisions log).
+  say "ponytail — minimal-code discipline (Claude Code plugin, default-on)"
+  install_ponytail
 
   say "opensrc — dependency source fetcher (context tool, OUTSIDE the routing contract)"
   # Also not a routing layer: it answers one question the four tools can't —
@@ -1071,15 +751,15 @@ install_global() {
   say "worktrunk — parallel worktrees (workflow tool, OUTSIDE the routing contract)"
   # Not a token layer and deliberately absent from the contract below — it routes
   # nothing. It manages worktree lifecycle so parallel agents/tasks each get their
-  # own checkout. One rule makes worktrees indistinguishable from any checkout:
-  # the global post-start hook below re-runs the stack's per-checkout init
-  # (graphify graph + rebuild hook) in every new worktree, but only for repos
-  # whose primary checkout opted in (graphify-out/ exists). Every step here is
-  # non-fatal: a worktrunk failure must never block the token stack. Bare `wt`
-  # is fine here (unlike stack-init.ps1's Windows detection): brew and cargo
-  # both install the binary as plain `wt` on this platform, and there's no
-  # Windows-Terminal-style collision to dodge — `git-wt` is only a defensive
-  # fallback, not the primary name.
+  # own checkout. Every step is non-fatal: a worktrunk failure must never block
+  # the stack. Bare `wt` is fine here (unlike stack-init.ps1's Windows detection):
+  # brew and cargo both install the binary as plain `wt` on this platform, and
+  # there is no Windows-Terminal-style collision to dodge.
+  #
+  # 3.0 writes NO post-start hook. It existed to replicate graphify's per-repo
+  # graph and rebuild hook into each new worktree; graphify is gone (D52) and the
+  # only per-checkout state left is .serena/project.yml, which serena-autoinit
+  # already writes at every session start in whatever checkout you open.
   if have wt || have git-wt; then say "  worktrunk present"
   else
     say "  installing worktrunk"
@@ -1090,30 +770,13 @@ install_global() {
   if [ -n "$WT_BIN" ]; then
     "$WT_BIN" config shell install \
       || warn "shell integration failed — run '$WT_BIN config shell install' manually"
-    WT_CFG_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/worktrunk"
-    WT_CFG="$WT_CFG_DIR/config.toml"
-    mkdir -p "$WT_CFG_DIR"; touch "$WT_CFG"
-    if grep -q 'claude-context-stack' "$WT_CFG"; then
-      say "  post-start hook already present — skipped"
-    elif grep -Eq '^[[:space:]]*(\[\[?post-start|post-start[[:space:]]*=)' "$WT_CFG"; then
-      # Appending a second [post-start] table would make the whole TOML invalid
-      # and break worktrunk entirely — never do it. Ask for a manual merge.
-      warn "config.toml already defines post-start — add this line to it manually:"
-      warn "claude-context-stack = \"[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install && cp -n '{{ primary_worktree_path }}/graphify-out/.graphify_python' graphify-out/ 2>/dev/null || true\""
-    else
-      cat >> "$WT_CFG" <<'WTHOOK'
-
-# claude-context-stack: replicate the stack's per-checkout state (graphify graph,
-# post-commit rebuild hook, interpreter pin) into every new worktree, only where
-# the primary checkout was stack-inited. The .graphify_python copy matters
-# because the post-commit hook is SHARED across worktrees but reads its override
-# relative to cwd - without it a new worktree's first commit warns instead of
-# rebuilding, until a Claude session's autobuild hook repairs it.
-# Delete this block to opt out.
-[post-start]
-claude-context-stack = "[ -d '{{ primary_worktree_path }}/graphify-out' ] && graphify . && graphify hook install && cp -n '{{ primary_worktree_path }}/graphify-out/.graphify_python' graphify-out/ 2>/dev/null || true"
-WTHOOK
-      say "  global post-start hook written -> $WT_CFG"
+    # Remove the graphify post-start hook a pre-3.0 install wrote, if it is ours.
+    WT_CFG="${XDG_CONFIG_HOME:-$HOME/.config}/worktrunk/config.toml"
+    if [ -f "$WT_CFG" ] && grep -q 'claude-context-stack' "$WT_CFG"; then
+      tmp="$(mktemp)"
+      awk '/^# claude-context-stack: replicate/{s=1} s&&/^claude-context-stack = /{s=0;next} !s' \
+        "$WT_CFG" > "$tmp" && mv "$tmp" "$WT_CFG"
+      say "  removed obsolete graphify post-start hook from $WT_CFG (D52)"
     fi
   else
     warn "worktrunk unavailable — parallel-worktree support skipped (stack unaffected)"
@@ -1147,35 +810,9 @@ WTHOOK
   install_contract_refresh
 
   have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
-  echo; say "Global install done. Open a NEW shell so the claude shim takes effect."
-  say "No per-repo step needed — the first session in any git repo autobuilds its"
-  say "graph ('$(basename "$0") init' still works for an eager build)."
-}
-
-init_project() {
-  in_git_repo || { err "run from a git repo (no git repo here)"; exit 1; }
-  have graphify || { err "graphify not installed — run '$(basename "$0") global' first"; exit 1; }
-  # Everything below is repo-ROOT state: `graphify .` from a subdirectory would
-  # build a graph of that subdirectory alone and drop .gitignore there, while
-  # the autobuild hook (which cd's to the top level) builds the real one — two
-  # graphs, one repo. Match the hook and move to the top first.
-  local top
-  top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
-  [ -n "$top" ] && { cd "$top" && say "repo root: $top"; }
-  say "building knowledge graph (graphify .)"; graphify .
-  # Delegated, not reimplemented: the SessionStart hook owns the only copy of
-  # this repo's hook bodies, so `init` picks up the post-commit pin repair too.
-  say "installing git hooks (post-commit + checkout/merge/rewrite refresh)"
-  write_graph_autobuild_hook
-  sh "$GRAPH_AUTOBUILD_HOOK" --hooks
-  if ! { [ -f .gitignore ] && grep -q '^graphify-out/' .gitignore; }; then
-    printf '\n# Claude context-stack knowledge graph\ngraphify-out/\n' >> .gitignore
-    say "gitignored graphify-out/"
-  fi
-  say "Condensed contract -> subagent files (.claude/agents/)"
-  inject_condensed_contract ".claude/agents"
-  echo; say "Repo ready. First Claude session: let Serena onboard, then ask one"
-  say "architecture question and confirm it reads the graph instead of grepping."
+  echo; say "Global install done. No new shell needed and no per-repo step."
+  say "Serena is registered but OFF — enable it per session with /mcp (D53)."
+  say "ponytail is on by default; run '$(basename "$0") verify' to confirm both."
 }
 
 # Per-repo skill deployment (`skills`). The global install deploys exactly
@@ -1297,33 +934,6 @@ deploy_repo_skills() {
   [ "$fail" = 0 ] || exit 1
 }
 
-stats() {
-  local dir="$CLAUDE_DIR/stack-stats" ts snap rtk_out headroom_out
-  mkdir -p "$dir"
-  ts="$(date -u +%Y%m%dT%H%M%SZ)"
-  snap="$dir/$ts.json"
-  # `headroom savings`, not `headroom stats` - the latter has never been a
-  # headroom subcommand, so every snapshot ever taken recorded a usage error
-  # instead of the numbers. (`headroom memory stats` exists and is a different
-  # thing: memory-store counts, not compression savings.)
-  if have rtk; then rtk_out="$(rtk gain 2>&1 || true)"; else rtk_out="rtk not on PATH"; fi
-  if have headroom; then headroom_out="$(headroom savings 2>&1 || true)"; else headroom_out="headroom not installed"; fi
-  python3 - "$snap" "$ts" "$rtk_out" "$headroom_out" <<'PYEOF'
-import json, sys
-path, ts, rtk_out, headroom_out = sys.argv[1:5]
-with open(path, 'w') as f:
-    json.dump({'date': ts, 'rtk_gain': rtk_out, 'headroom_stats': headroom_out}, f, indent=2)
-PYEOF
-  say "  snapshot written -> $snap"
-  local snaps
-  snaps="$(ls -1 "$dir"/*.json 2>/dev/null | sort | tail -2)"
-  [ -z "$snaps" ] && return
-  say "  last two snapshots:"
-  echo "$snaps" | while IFS= read -r f; do
-    echo "--- $f ---"; cat "$f"
-  done
-}
-
 # One aligned printf for every verify line. The hand-spaced echo pairs it
 # replaces spelled each label twice (once per branch) and had drifted to three
 # different column widths, so adding a longer label silently misaligned a row.
@@ -1342,24 +952,19 @@ row_hook() {
 
 verify() {
   say "verifying"
-  if have rtk; then row rtk "OK ($(rtk --version 2>/dev/null))"; else row rtk "NOT ON PATH"; fi
-  # Read the registered hook, do NOT shell out to `rtk gain`: it exits 0 whether
-  # or not a hook exists (it merely prints a warning), so the old check reported
-  # "active" for an uninstalled hook. settings.json is the source of truth.
-  if grep -q '"PreToolUse"' "$CLAUDE_DIR/settings.json" 2>/dev/null &&
-     grep -q 'rtk' "$CLAUDE_DIR/settings.json" 2>/dev/null; then
-    row "rtk hook" "OK (PreToolUse Bash)"
-  else row "rtk hook" "NOT registered — run: rtk init -g"; fi
   if claude mcp list 2>/dev/null | grep -qi serena; then row "serena (mcp)" "OK (user scope)"
   else row "serena (mcp)" "NOT registered"; fi
-  row_have graphify "graphify" "OK" "NOT installed"
-  row_have headroom "headroom" "OK" "NOT installed"
-  if [ -x "$CLAUDE_DIR/stack-bin/claude" ]; then
-    if [ "$(command -v claude 2>/dev/null || true)" = "$CLAUDE_DIR/stack-bin/claude" ]
-    then row "claude shim" "OK (bare 'claude' auto-wraps through headroom)"
-    else row "claude shim" "installed but NOT first on PATH (open a new shell?)"; fi
-  else row "claude shim" "NOT installed"; fi
-  row_hook graph-autobuild "graph autobuild"
+  # Registered-but-disabled is the INTENDED state (D53), so report it as OK and
+  # flag the enabled case instead — the opposite of every other row here.
+  if claude mcp list 2>/dev/null | grep -i serena | grep -qi 'disabled'; then
+    row "serena state" "OK (disabled by default — /mcp to enable per session)"
+  else row "serena state" "ENABLED globally — D53 expects it off"; fi
+  if claude plugin list 2>/dev/null | grep -qi ponytail
+  then row ponytail "OK (plugin installed)"
+  else row ponytail "NOT installed — run: claude plugin install ponytail@ponytail"; fi
+  # ponytail's hooks are Node; without node the activation goes quiet rather
+  # than erroring, so a broken install is invisible from inside a session.
+  row_have node "node" "OK (ponytail hooks)" "MISSING — ponytail activation stays silent"
   row_hook serena-autoinit "serena autoinit"
   row_hook contract-refresh "contract refresh"
   if have wt || have git-wt; then row worktrunk "OK (workflow tool — outside the contract)"
@@ -1372,11 +977,9 @@ verify() {
   then row contract "OK ($CLAUDE_MD)"; else row contract "MISSING"; fi
   if in_git_repo; then
     # Everything below is PER CHECKOUT, and a linked worktree is a checkout like
-    # any other: it gets its own graph and its own Serena project, because both
-    # describe the code at THIS path. Only the hooks are shared — git supports
-    # one hooks dir per repo — which is fine, since the bodies are cwd-relative
-    # and so act on whichever worktree invoked them.
-    local gd cgd hooks_dir br refresh_hook refresh_hooks_ok=1
+    # any other: it gets its own Serena project, because that describes the code
+    # at THIS path.
+    local gd cgd br refresh_hook
     # Both paths can come back relative, and there is no portable absolute form
     # (--path-format needs git 2.31+), so normalise BOTH through `cd && pwd -P`.
     # Doing it to only one side would leave the comparison symlink-sensitive and
@@ -1388,18 +991,14 @@ verify() {
     [ -n "$cgd" ] || cgd="$gd"
     if [ -n "$gd" ] && [ "$gd" != "$cgd" ]; then
       br="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
-      row checkout "linked worktree ($br) — own graph + Serena project, shared hooks"
+      row checkout "linked worktree ($br) — own Serena project"
     else row checkout "primary"; fi
-    # Anchor on the repo ROOT, never cwd: graphify-out/ and .serena/ are written
-    # at the top level by the SessionStart hooks (which `cd "$top"` first), so
-    # cwd-relative tests reported "not built" / "none" for a fully wired repo
-    # whenever verify ran from a subdirectory.
+    # Anchor on the repo ROOT, never cwd: .serena/ is written at the top level
+    # by the SessionStart hook (which `cd "$top"` first), so cwd-relative tests
+    # reported "none" for a fully wired repo whenever verify ran from a subdir.
     local top
     top="$(git rev-parse --show-toplevel 2>/dev/null)" || top=""
     [ -n "$top" ] || top="$PWD"
-    if [ -f "$top/graphify-out/graph.json" ]
-    then row "graph (here)" "OK ($(du -h "$top/graphify-out/graph.json" | cut -f1))"
-    else row "graph (here)" "not built — autobuilds next session (or run: $(basename "$0") init)"; fi
     if [ -f "$top/.serena/project.yml" ]
     then row "serena project" "OK (.serena/project.yml)"
     else row "serena project" "none — autoinits next session"; fi
@@ -1413,14 +1012,18 @@ verify() {
     done
     if [ -n "$rskills" ]; then row "repo skills" "${rskills# }"
     else row "repo skills" "none (optional — deploy: $(basename "$0") skills <name>)"; fi
+    # 3.0 installs NO git hooks: the four graph-refresh hooks went with graphify
+    # (D52). Report any the stack left behind so an upgraded machine can be
+    # cleaned, rather than silently leaving dead hooks in every repo.
+    local hooks_dir stale=""
     hooks_dir="$(get_git_hooks_dir)"
     [ -n "$hooks_dir" ] || hooks_dir=".git/hooks"
-    if [ -f "$hooks_dir/post-commit" ]; then row post-commit "OK"; else row post-commit "none"; fi
-    for refresh_hook in post-checkout post-merge post-rewrite; do
-      grep -q 'claude-context-stack:' "$hooks_dir/$refresh_hook" 2>/dev/null || { refresh_hooks_ok=0; break; }
+    for refresh_hook in post-commit post-checkout post-merge post-rewrite; do
+      grep -q 'claude-context-stack:' "$hooks_dir/$refresh_hook" 2>/dev/null \
+        && stale="$stale $refresh_hook"
     done
-    if [ "$refresh_hooks_ok" = 1 ]; then row "graph refresh" "OK (checkout/merge/rewrite)"
-    else row "graph refresh" "MISSING (checkout/merge/rewrite)"; fi
+    if [ -n "$stale" ]; then row "stale hooks" "pre-3.0 graph hooks present:${stale} (safe to delete)"
+    else row "git hooks" "OK (none — 3.0 installs no git hooks)"; fi
   fi
 }
 
@@ -1507,17 +1110,15 @@ PYEOF
 
 case "${1:-global}" in
   global|"")  install_global ;;
-  init)       init_project ;;
   skills)     shift; deploy_repo_skills "$@" ;;
   # Not `[ ... ] && verify_docs || verify`: that idiom runs the full install
   # check as a "fallback" the moment --docs legitimately reports a broken
   # reference and exits non-zero.
   verify)     if [ "${2:-}" = "--docs" ]; then verify_docs; else verify; fi ;;
   contract)   [ "${2:-}" = "--condensed" ] && print_contract_condensed || print_contract ;;
-  stats)      stats ;;
   # Print the whole comment banner, however long it grows. The old fixed
   # '2,57p' range silently truncated it mid-sentence once the header moved -
   # by the time this was noticed it was cutting the PREREQS line off.
   -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|init|skills [--copy] [<name>...]|verify [--docs]|contract [--condensed]|stats|help]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|skills [--copy] [<name>...]|verify [--docs]|contract [--condensed]|help]"; exit 1 ;;
 esac

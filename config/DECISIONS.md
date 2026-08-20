@@ -64,6 +64,10 @@ with its correction next to it, is the point.
 | [D48](#d48) | Domain skills deploy per-repo, never globally | 2.5 | Active |
 | [D49](#d49) | The shim pins Headroom to lossless (no-CCR) mode | 2.5 | Active — narrows D47; supplies D37's missing measurement; cause corrected by D50 |
 | [D50](#d50) | Tool-search deferral is confounded with the latch; flag left on | 2.5 | Active — corrects the attribution in D49 |
+| [D51](#d51) | Headroom and RTK removed | 3.0 | Active — retires D13, D20, D25, D26, D29, D37, D40, D41, D44, D47, D49, D50 |
+| [D52](#d52) | graphify removed | 3.0 | Active — retires D5, D6, D7, D15, D21, D22, D24, D31, D35 |
+| [D53](#d53) | Serena descoped to per-session opt-in | 3.0 | Active — narrows D4, D11, D33, D34, D46; corrects D3's reason |
+| [D54](#d54) | ponytail added, default-on | 3.0 | Active |
 
 ---
 
@@ -93,6 +97,8 @@ one home: change behavior in the script, record reasoning here.
 
 **Version:** 2.0 · **Status:** Active
 
+**Reason corrected by [D53](#d53)** — the RTK half of this justification died with RTK ([D51](#d51)). The decision stands on the duplicate-tools half alone.
+
 Running Serena under the `claude-code` context (formerly `ide-assistant`) makes
 the RTK bypass impossible *structurally* rather than by instruction:
 `execute_shell_command` is simply not in the tool surface, so the agent cannot
@@ -105,6 +111,8 @@ Claude Code's own.
 ## D4 — Serena at user scope, no `--project`
 
 **Version:** 2.0 · **Status:** Active — **reason corrected by [D33](#d33)**
+
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
 
 > One registration serves every repo, activating from the session's cwd.
 > Per-repo memories stay in each repo's `.serena/`, so there's no cross-project
@@ -121,6 +129,8 @@ added to close the gap.
 
 **Version:** 2.0 · **Status:** Active — **reason corrected by [D35](#d35)**
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 > It would write a second, near-duplicate "read GRAPH_REPORT.md" directive into
 > the same global `CLAUDE.md` as the routing contract, and its Glob/Grep
 > PreToolUse hook is a no-op on Claude Code builds after the late-May-2026
@@ -135,6 +145,8 @@ is **wrong** — the hook is active. See D35.
 
 **Version:** 2.0 · **Status:** Active
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 Rebuilding on git events matches the graph's epistemic status (true as of the
 last rebuild), avoids rebuild thrash, and keeps staleness bounded and *known*
 rather than variable. Extended by D16 from post-commit alone to four hooks.
@@ -145,6 +157,8 @@ rather than variable. Extended by D16 from post-commit alone to four hooks.
 
 **Version:** 2.0 · **Status:** Active
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 CLI output flows through RTK's compression and costs zero standing tool
 definitions. An MCP query server adds value only if the agent measurably
 under-uses the graph, so it stays an opt-in escape hatch.
@@ -154,6 +168,8 @@ under-uses the graph, so it stays an opt-in escape hatch.
 ## D8 — Diagnostics from Serena, not compressed `cargo check`
 
 **Version:** 2.0 · **Status:** Active
+
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
 
 Structured LSP data is already minimal and involves no lossy heuristic.
 Compression belongs where output is noisy, not where it is already signal.
@@ -173,6 +189,8 @@ Compression belongs where output is noisy, not where it is already signal.
 
 **Version:** 2.0 · **Status:** Active
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 A first-class "inject into the prompt at position X" mode is an unshipped
 upstream proposal. Manual `$(rtk ...)` capture is the supported equivalent and
 keeps placement under the caller's control.
@@ -182,6 +200,8 @@ keeps placement under the caller's control.
 ## D11 — Serena launched from a pinned binary, not `uvx --from git+…`
 
 **Version:** 2.1 · **Status:** Active
+
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
 
 `uvx` re-resolves the git ref and rebuilds the package whenever uv's cache is
 cold, which overruns Claude Code's 30 s MCP startup limit and leaves the session
@@ -197,6 +217,8 @@ installer therefore also *migrates* an existing uvx-based registration (a bare
 
 **Version:** 2.1 · **Status:** Active
 
+**Retired by [D51](#d51) and [D52](#d52)** — Headroom and graphify are both out; the four-tool framing this established no longer describes the stack.
+
 graphify, Serena, and RTK each eliminate a waste source *at its origin*, but
 nothing among them was positioned to catch `Read`-tool file dumps or the
 conversation history's own growth, both of which still reach the API
@@ -208,6 +230,8 @@ output, never a substitute for it.
 ## D13 — Headroom's `--code-graph` / `--memory` never passed
 
 **Version:** 2.1 · **Status:** Active — extended by [D26](#d26)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 `--code-graph` would have Headroom build a second structure graph, directly
 duplicating graphify and reopening the layer-bleed problem the stack exists to
@@ -234,6 +258,8 @@ resolves the real binary on a given shell.
 
 **Version:** 2.2 · **Status:** Active
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 2.1.1's rule 6 forbade the graph outright for any uncommitted work, assuming the
 graph is inherently commit-bound. It isn't: it is bound to the *last rebuild*,
 and `graphify update .` is incremental and content-hash cached — cheap. So an
@@ -246,6 +272,8 @@ uncommitted work still route to Serena, never the graph.
 ## D16 — Four refresh hooks; staleness bounded to one git operation
 
 **Version:** 2.2 · **Status:** Active
+
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
 
 `post-commit` alone left the graph stale with no bound after any other
 working-tree-moving operation. Added `post-checkout` (branch switches only,
@@ -278,6 +306,8 @@ no profile mutation, and no self-recursion because it doesn't shadow `claude`.
 
 **Version:** 2.2 · **Status:** Active (constraint)
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 `cc` shadows the system C compiler and breaks `cargo`/`gcc` toolchains that
 resolve it on PATH. The constraint outlives the wrapper (removed in D25) and
 binds anything future that shadows a command name.
@@ -302,6 +332,8 @@ under `~/.claude/agents/` and `.claude/agents/`.
 
 **Version:** 2.2 · **Status:** **Narrowed by [D37](#d37)** — the gate was never run
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 Wire-level compression can bust Anthropic's prompt cache even while shrinking
 wire tokens: recompressing history changes the bytes the API sees turn to turn,
 and fewer wire tokens can still mean *more* money once cache misses are priced
@@ -315,6 +347,8 @@ usage pattern, the finding is recorded here rather than silently ignored.
 
 **Version:** 2.2 · **Status:** Active (rejection)
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 Keeping the graph "live" by patching it every turn would be a standing token
 cost on *every* turn, and would duplicate graphify's own parser in a second, ad
 hoc form. D15's on-demand refresh gets the same correctness for a cost paid only
@@ -325,6 +359,8 @@ when an uncommitted architectural question is actually asked.
 ## D22 — Rejected: folding graphify into Serena's MCP server
 
 **Version:** 2.2 · **Status:** Active (rejection)
+
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
 
 It would optimize subprocess launch latency (hundreds of ms) inside a workflow
 dominated by inference latency (seconds); move graph output out from under RTK's
@@ -351,6 +387,8 @@ gated on real usage data that does not exist yet.
 
 **Version:** 2.3 · **Status:** Active
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 The graph is irreducibly per-repo *state*, but the per-repo *step* was not
 irreducible: a global SessionStart hook can detect "git repo, no graph" and build
 it in the background. Two costs were weighed. First-session surprise (minutes of
@@ -369,6 +407,8 @@ tracked-file conveniences stay in `stack-init init`, where a human asked for the
 
 **Version:** 2.3 · **Status:** Active — supersedes [D17](#d17), [D14](#d14); default-on
 affirmed by [D40](#d40)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 Shadowing `claude` itself is now done deliberately, with D14's recursion hazard
 bounded by construction instead of avoided by naming. An absolute-path handoff
@@ -394,6 +434,8 @@ SessionStart headroom-check catches those at runtime.
 
 **Version:** 2.3 · **Status:** Active — extends [D13](#d13); probe moved to launch
 by [D44](#d44)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 Upstream renamed and promoted the code-graph feature: newer headroom builds its
 own "tokensave" code graph *by default*. An upstream default change does not
@@ -435,6 +477,8 @@ what the autobuild hook already did.
 
 **Version:** 2.3.1 · **Status:** Active
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 `headroom stats` has never been a headroom subcommand, so every snapshot ever
 taken recorded a usage error instead of the numbers. (`headroom memory stats`
 exists and is a different thing: memory-store counts, not compression savings.)
@@ -461,6 +505,8 @@ as ANSI. A normative text quoted in three places drifts; this one already had.
 
 **Version:** 2.3.2 · **Status:** Active
 
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
+
 `init` carried its own copy of the `post-checkout`/`post-merge`/`post-rewrite`
 bodies and called `graphify hook install` directly, so it never gained the
 dead-interpreter pin repair the SessionStart hook grew. The generated hook now
@@ -484,6 +530,8 @@ what the Windows side already did.
 ## D33 — Serena does not self-activate; serena-autoinit hook added
 
 **Version:** 2.3.3 · **Status:** Active — **corrects [D4](#d4)**
+
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
 
 D4 justified the bare user-scope registration with "Serena activates the project
 from the session's cwd, so one registration serves every repo." That is false.
@@ -530,6 +578,8 @@ exists to avoid.
 
 **Version:** 2.3.3 · **Status:** Active
 
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
+
 Delegating language detection to Serena is not safe to build a contract on. On
 this repo — 21 markdown files, one `.sh`, one `.ps1` — its auto-detection selected
 `powershell` **alone**, after which every other file answered "path is ignored" /
@@ -560,6 +610,8 @@ stack's marker is left alone permanently, so hand edits survive every session.
 ## D35 — `graphify claude install`'s hook is active, not a no-op
 
 **Version:** 2.3.3 · **Status:** Active — **corrects [D5](#d5)**
+
+**Retired by [D52](#d52)** — graphify is no longer in the stack.
 
 D5 dropped `graphify claude install` partly on the claim that its Glob/Grep
 PreToolUse hook "is a no-op on Claude Code builds after the late-May-2026
@@ -608,6 +660,8 @@ split therefore relies on instead.
 **Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20); its standing check
 made executable by [D41](#d41); the declined benchmark partly answered from
 observational proxy-log evidence by [D49](#d49)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 D20 said Headroom is "retained only as long as the cache-economics benchmark
 shows it's net-positive on effective cost." That benchmark has never been run,
@@ -679,6 +733,8 @@ layer, not a standalone script.
 
 **Version:** 2.4 · **Status:** Active — declines [D23](#d23)
 
+**Revived as a live question by [D53](#d53)** — this declined the tool-surface audit as unwarranted while Serena was always-on. A slimmed tool subset is now the named follow-on for cutting the per-session manifest tax.
+
 D23 deferred the audit "gated on real usage data" from `stack-init stats`
 snapshots. `stats` records exactly two fields, `rtk gain` and `headroom savings`,
 and nothing anywhere in the stack counts Serena tool invocations. The gate could
@@ -709,6 +765,8 @@ cached prefix, not a per-turn one.
 ## D40 — Headroom stays default-on despite being the unverified layer
 
 **Version:** 2.4 · **Status:** Active — affirms [D25](#d25)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 Raised as a defect: D25 leaves the stack's largest machine footprint — rc-file
 PATH lines, a registry PATH prepend and three shim files on Windows, a re-entry
@@ -749,6 +807,8 @@ both platforms, so removal is one edit per rc file plus a directory.
 ## D41 — The cache-bust symptom restated as a single-session ratio
 
 **Version:** 2.4 · **Status:** Active — repairs the standing check in [D37](#d37)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 D37 declined the cache-economics benchmark and substituted "watch the §7 symptom
 in ordinary use." §7 defined that symptom as `cache_read_input_tokens` collapsing
@@ -855,6 +915,8 @@ added session-start latency is negligible.
 
 **Version:** 2.4 · **Status:** Active — narrows [D26](#d26)
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 D26 probes the flag once at install time and bakes the answer into the shim,
 mitigated by the instruction "re-run `stack-init global` after upgrading
 headroom." Nobody re-runs it. Upgrade headroom and the baked flag silently stops
@@ -907,6 +969,8 @@ decision that closes it. The file is the queue; `DECISIONS.md` remains the recor
 
 **Version:** 2.4.1 · **Status:** Active — narrows [D33](#d33)
 
+**Narrowed by [D53](#d53)** — Serena is registered but no longer globally enabled, so this applies only to a session that turns it on.
+
 Serena starts one instance per Claude session, each on its own port, and ships
 `web_dashboard_open_on_launch: true`. With D33's autoinit hook making Serena
 useful in *every* repo, that default turned into a browser tab per session. Both
@@ -956,6 +1020,8 @@ in the dashboard step. Both are best-effort: every failure path lands on
 ## D47 — The shim pins Headroom to cache mode
 
 **Version:** 2.4.1 · **Status:** Active — narrows [D25](#d25)
+
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
 
 Headroom's proxy has two optimization modes. `token` rewrites prior turns for
 maximum compression; `cache` freezes them so the provider's prefix cache keeps
@@ -1047,6 +1113,8 @@ measurement [D37](#d37) declined to produce. **Its attribution of the busts to
 the passthrough latch is corrected by [D50](#d50)** — the pin stands, the stated
 cause was under-determined.
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 §2.4 boundary 5 and [D41](#d41) both rest on a claim nobody had measured: that
 CCR's `headroom_retrieve` tool injection busts the prefix cache. One proxy log —
 43 forwarded requests across 11 sessions — now carries direct evidence, and it
@@ -1126,6 +1194,8 @@ log. §8 remains the procedure that would settle the economics.
 
 **Version:** 2.5 · **Status:** Active — corrects the stated cause in [D49](#d49)
 
+**Retired by [D51](#d51)** — the layer this governs is no longer in the stack.
+
 [D49](#d49) named the `canonical`→`passthrough` latch as the mechanism behind the
 four cache busts, and offered the latched-vs-unlatched session split as a natural
 control. Cross-tabulating Headroom's tool-search deferral against that split
@@ -1187,3 +1257,193 @@ leave it alone") or when there are fewer than 12 tools. With Claude Code's own
 `ENABLE_TOOL_SEARCH=true` active, both back-off branches are observable in this
 log — the three zero-deferral sessions. Headroom yields to the client's tool
 search by construction, so the two never both defer the same tool.
+
+
+<a id="d51"></a>
+
+## D51 — Headroom and RTK removed
+
+**Version:** 3.0 · **Status:** Active — removes [D12](#d12) (Headroom half) and
+[D10](#d10); retires [D13](#d13), [D20](#d20), [D25](#d25), [D26](#d26),
+[D29](#d29), [D37](#d37), [D40](#d40), [D41](#d41), [D44](#d44), [D47](#d47),
+[D49](#d49), [D50](#d50)
+
+Both wire/output compression layers leave the stack. The two removals rest on
+different evidence and the difference is worth keeping.
+
+**Headroom — removed on measurement.** [D49](#d49) and [D50](#d50) measured what
+[D37](#d37) declined to: of 448,564 tokens Headroom reported saving, **113,267
+(25.3%) reached the wire** — the rest was computed, logged into `headroom
+savings`, and then discarded by the signed-thinking passthrough latch. In the
+same window four prefix-cache busts destroyed 155,045 cached tokens against
+5,538 saved on those turns (≈$0.98 against $0.069). It also caused a hard
+session failure: CCR's buffered-stream conversion returned SSE to a caller
+parsing JSON, surfacing as `API returned an empty or malformed response (HTTP
+200)`. [D49](#d49)'s pin fixed that crash and is now moot — the layer it
+configured is gone.
+
+**RTK — removed on absence of evidence.** No measurement was ever taken. §2.3's
+"60–90%", "`cargo test` ~92%", "`git status` ~81%" carried no `D<n>` and no
+cited source — the stack's *unhedged* numbers were its *unverified* ones, while
+Headroom's carried an explicit "unverified" flag and turned out overstated. On
+the reference machine RTK was installed but **inert**: the binary was on PATH
+with no `settings.json` and therefore no `Bash` PreToolUse hook, and no
+`stack-stats` snapshot had ever been taken. This is not a finding that RTK is
+harmful; it is a decision to stop carrying a layer whose benefit was asserted,
+never checked, and not in force.
+
+**The general lesson.** Elimination at the source beats compression downstream.
+A layer that rewrites bytes already in the request competes with the provider's
+prefix cache, and loses badly when it does — the cache is worth ~10× the
+compression on any prefix that would otherwise be read. And a layer that reports
+its own savings cannot be trusted without an independent check: Headroom's
+number was inflated ~4× and nothing in the stack would have noticed, because
+[D41](#d41)'s ratio read a healthy 0.791 straight through the damage.
+
+**What this costs.** `Read`-tool file dumps and growing conversation history now
+reach the API uncompressed — the gap [D12](#d12) added Headroom to close.
+Bash output arrives in full. Both are accepted: the measured price of the
+compression was higher than the waste it removed, and keeping output small
+becomes a routing choice (§4 rule 5) rather than a layer.
+
+<a id="d52"></a>
+
+## D52 — graphify removed
+
+**Version:** 3.0 · **Status:** Active — removes [D12](#d12) (graphify half),
+[D5](#d5), [D6](#d6), [D7](#d7), [D15](#d15), [D21](#d21), [D22](#d22),
+[D24](#d24), [D31](#d31), [D35](#d35)
+
+graphify leaves the stack with the compression layers. Unlike [D51](#d51) this
+is not an evidence finding — the graph answered its question well — it is a
+scope decision about what the stack is willing to maintain.
+
+**What goes with it.** graphify was the stack's only source of **per-repo
+state**, and nearly all of the stack's machinery existed to keep that state
+fresh: the graph itself (`graphify-out/`), the graph-autobuild SessionStart hook
+([D24](#d24)), four git refresh hooks bounding staleness to one working-tree
+operation ([D16](#d16)), the worktrunk `post-start` hook that re-ran per-checkout
+init in new worktrees, `.graphify-skip`, `CLAUDE_STACK_NO_AUTOBUILD`, the
+`stack-init init` subcommand, and the precedence rule (§5) that existed solely to
+arbitrate graph-vs-LSP disagreement. All of it is deleted. The staleness model
+([D6](#d6), [D16](#d16)) has nothing left to describe.
+
+**What this costs.** Cold orientation on an unfamiliar repo returns to reading
+and grepping — the single most expensive operation the stack was built to fix,
+and the one [D12](#d12) rated most valuable. This is the largest capability the
+stack has ever given up, and it is given up deliberately: the orientation win
+was real, but it was purchased with every piece of per-repo state and every hook
+the stack maintained, and those were where its defects lived ([D27](#d27),
+[D30](#d30), [D31](#d31), [D32](#d32), [D35](#d35) are all repairs of that
+machinery).
+
+**No successor.** Nothing in 3.0 answers "what connects X to Y". §1's
+orientation row becomes unowned. That is the honest state, not a gap to be
+quietly filled by telling the agent to grep more carefully.
+
+<a id="d53"></a>
+
+## D53 — Serena descoped to per-session opt-in
+
+**Version:** 3.0 · **Status:** Active — narrows [D4](#d4), [D11](#d11),
+[D33](#d33), [D34](#d34), [D46](#d46); [D3](#d3)'s stated reason corrected
+
+Serena stays in the stack but stops being globally enabled. It is installed and
+registered, and **left off** until a session needs it.
+
+**Why.** Its cost profile is not flat. It is reported to lose on cheap lookups
+(~4× the cost of just answering) and to win on deep modification work in large
+codebases, and its tool manifest is a **fixed per-session tax** (~24K tokens)
+paid by every session whether or not a single symbol tool is called. A layer
+with that shape should not be default-on; it should be reached for.
+
+**Provenance.** The ~4× and ~24K figures are **external and unverified here** —
+they come from the maintainer's source, not from a measurement taken in this
+repo. Recorded as the reason because they are the reason, and flagged because
+[D51](#d51) is a standing lesson about carrying unchecked numbers. The manifest
+figure is directly measurable and should be measured.
+
+**Decision:** register Serena but do not enable it globally. Turn it on with
+`/mcp` for refactor, test-writing, and architecture sessions on larger projects;
+leave it off for quick queries, small repos, and greenfield prototypes.
+A slimmed tool subset is the follow-on that would cut the manifest tax for the
+sessions that *do* enable it.
+
+**[D3](#d3)'s reason is now half wrong.** It justified disabling
+`execute_shell_command` on two grounds: duplicate tools confusing routing, and
+"MCP tool calls bypass RTK's Bash hook, so the agent could route tests around
+RTK". With RTK gone ([D51](#d51)) the second ground no longer exists. The
+decision stands on the first; the RTK half of its reasoning is dead, and §2.2's
+"the agent *can't* route around RTK" is deleted rather than reworded.
+
+**What this costs.** The routing contract can no longer assume Serena answers.
+Rules that route symbol questions to it become conditional — when it is off, the
+honest fallback is Claude Code's native tools, and the contract must say so
+instead of insisting on a tool that is not loaded. The serena-autoinit hook
+([D33](#d33)) still writes `.serena/project.yml` so an enabled session is
+immediately usable, which is the one piece of the old always-on machinery worth
+keeping.
+
+<a id="d54"></a>
+
+## D54 — ponytail added, default-on
+
+**Version:** 3.0 · **Status:** Active — first member of the stack that
+intercepts nothing
+
+ponytail joins as a Claude Code plugin: a skill plus a SessionStart hook
+(`hooks/ponytail-instructions.js`) that generates a minimal-code-discipline
+ruleset and injects it into session context at startup.
+
+**Install** (`claude plugin` drives it non-interactively, so the installer can):
+
+```
+claude plugin marketplace add DietrichGebert/ponytail
+claude plugin install ponytail@ponytail
+```
+
+Interactively the same thing is two *separate* prompts — `/plugin marketplace
+add DietrichGebert/ponytail`, then `/plugin install ponytail@ponytail`; sending
+them together does not work.
+
+**Node dependency, and why it is not a hard one.** The lifecycle hooks are
+Node.js, so `node` must be on the **non-interactive** shell's PATH (the trap for
+nvm and Nix users, where it often is not). If it is absent the skills still
+work — the always-on activation simply stays quiet rather than erroring on every
+prompt. A missing interpreter degrades the feature, never the session.
+
+**Why it fits 3.0 specifically.** Every layer this version removed sat *between*
+Claude and something else: RTK rewrote commands before the shell
+([D51](#d51)), Headroom proxied the API ([D51](#d51)), graphify maintained a
+derived artifact on disk ([D52](#d52)). Each failed in its own way, and each
+failure was a property of *being in the path*. ponytail is in no path. Its
+entire mechanism is text reaching the model — no process between Claude and the
+shell, no proxy between Claude Code and the API, nothing intercepting or
+transforming any data. 3.0's throughline is that the stack **stops intercepting
+and starts instructing**.
+
+That claim is testable, and its vendor tested it the hard way: the JetBrains
+benchmark did not run the plugin at all in its test arm — it called ponytail's
+own hook script to generate the ruleset, appended that text to the prompt
+byte-identically, and measured the effect. If the mechanism were anything other
+than instructions, that substitution could not have worked.
+
+**Why default-on.** The verdict was "if you install it and forget about it, you
+should be modestly better off", and the cost side is favourable in every
+direction: the ruleset is a small, stable block of text that sits in the cached
+prefix (pennies per turn), the measured downside on lean tasks was **zero rather
+than negative**, and no quality degradation was detected across 80 pairs. Bounded
+cost, asymmetric upside — the profile of something you leave on. Less code is
+also less to review, less to maintain, and less surface for the agent to break,
+which weighs more on a solo operation where the maintainer is the entire review
+pipeline.
+
+**Provenance.** The benchmark is the vendor's, not reproduced here — the same
+flag [D53](#d53) carries. It is stronger evidence than RTK ever had (a stated
+method and a null result on the downside, rather than an uncited percentage),
+and weaker than [D49](#d49)'s, which was measured on this machine.
+
+**The ruleset is ponytail's, not the contract's.** The minimal-code ladder ships
+inside the plugin and is injected by its hook. It is deliberately **not** copied
+into `contract.md`: one fact, one home ([D30](#d30)), and a copy here would drift
+from the plugin on its next release.

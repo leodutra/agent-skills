@@ -1,8 +1,8 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 2.4
+> **Version:** 3.0
 > **Status:** Active
-> **Scope:** Four tools that reduce the token cost of working in a real codebase with Claude Code — **graphify** (structure), **Serena** (symbols), **RTK** (output compression), **Headroom** (proxy-layer compression) — plus the global routing contract that makes Claude route the first three to the one thing each is best at. Headroom needs no routing decision; see §2.4. No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
+> **Scope:** Two components — **Serena** (LSP symbol tools, opt-in per session; D53) and **ponytail** (minimal-code discipline, default-on; D54) — plus the global routing contract. 3.0 removed graphify, RTK, and Headroom (D51, D52): the stack no longer intercepts anything, holds no per-repo state, and adds no compression layer. Orientation and tool-output noise are explicitly unowned (§2.3). No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-init.sh` (Linux/macOS) and `stack-init.ps1` (Windows). They are self-documenting and self-installing, and they are the source of truth for **behavior** (D2). This document is the source of truth for **what the stack is and how to operate it**.
 > **Rationale lives elsewhere.** Every "why" is a numbered decision in [`DECISIONS.md`](DECISIONS.md), cited here as `D<n>` and never restated. What changed and when is one line per change in [`CHANGELOG.md`](CHANGELOG.md). Three files, three jobs — the split and its enforcement are D36.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
@@ -11,114 +11,94 @@
 
 ## 1. Purpose and design principle
 
-Claude Code's effectiveness on a real codebase is bounded by context quality, not model intelligence. Context degrades from four uncontrolled sources of waste, and each tool eliminates exactly one:
+Claude Code's effectiveness on a real codebase is bounded by context quality, not model intelligence. Earlier versions of this stack tried to control that by owning four sources of waste at once. 3.0 owns far less, on purpose:
 
 | Waste source | What it looks like | Owned by |
 |---|---|---|
-| **Orientation** | Re-reading dozens of files to learn what connects to what | graphify |
-| **Retrieval & editing** | Whole-file dumps, grep walls, regex edits that miss aliased refs | Serena |
-| **Tool-output noise** | Thousands of tokens of passing-test boilerplate per `cargo test` | RTK |
-| **Wire-level residue** | Whatever still reaches the API after the three layers above act — `Read`-tool file dumps, growing conversation history | Headroom |
+| **Retrieval & editing** | Whole-file dumps, grep walls, regex edits that miss aliased refs | Serena — **only when enabled** (§2.1, D53) |
+| **Code that didn't need writing** | Wrappers, abstraction layers, "future-proofing" the task didn't ask for | ponytail (§2.2, D54) |
+| **Orientation** | Re-reading dozens of files to learn what connects to what | *unowned* since 3.0 (D52) |
+| **Tool-output noise** | Thousands of tokens of passing-test boilerplate per `cargo test` | *unowned* since 3.0 (D51) |
+| **Wire-level residue** | `Read`-tool file dumps, growing conversation history | *unowned* since 3.0 (D51) |
 
 Three design principles:
 
-**One question per layer; no layer answers another layer's question.** Most failure modes are *layer bleed* — the agent BFS-ing the graph for a symbol lookup, grepping for a symbol name, or running tests through an MCP shell that bypasses RTK. The configuration makes boundaries structural where possible (e.g. Serena's shell tool is simply not exposed) and instructional (the routing contract) where not. graphify and Serena chain rather than bleed on compound questions: for blast radius or fuzzy "where's the code for X" asks, graphify narrows a multi-module question to a neighborhood first, then Serena confirms the exact symbol or reference within it (§3) — two questions in sequence, each still answered by exactly the layer that owns it.
+**One question per layer; no layer answers another layer's question.** The classic failure mode is *layer bleed* — grepping for a symbol name while an LSP is loaded. With only one routing layer left, the surface for bleed is small, and the contract's job shifts from arbitrating between tools to knowing whether the one optional tool is even present (§4 rule 1).
 
-**Sources have tiers of truth.** The LSP is ground truth by construction — it is the compiler's live model. The graph is a deterministic but potentially stale *derivation* of committed code. When they disagree, the LSP wins and the graph is rebuilt (§5). This matters more once retrieval is cheap, not less: the cheaper a wrong answer is to obtain, the more explicitly its trust level must be marked.
+**Eliminate at the source; never compress downstream.** This is the lesson 3.0 was built on, and it was paid for. Serena and ponytail both remove waste where it originates — one by answering precisely instead of dumping, the other by not generating the code in the first place. The stack previously carried two downstream compressors, and measurement killed both: a layer that rewrites bytes already in the request competes with the provider's prefix cache and loses by roughly 10× when it does, and a layer that reports its own savings cannot be trusted without an independent check — one of them was inflating its number ~4× while every standing health check read green (D49, D50, D51).
 
-**Compression layers compose, they don't compete.** graphify, Serena, and RTK each *eliminate* a waste source at its origin — there's nothing left for a later layer to compress. Headroom sits one level further out, at the proxy boundary, and squeezes whatever the first three didn't already remove (§2.4). It is additive on top of RTK's output, not a second attempt at RTK's job: compressing already-compressed Bash output again is harmless and small, never required.
+**Prefer instructing over intercepting.** Every layer removed in 3.0 sat in a path: RTK before the shell, Headroom before the API, graphify on disk. Each broke in a way that was a property of *being there* — a mangled command, a poisoned response cache, a stale artifact trusted as current. ponytail is the counter-example and the template: its entire mechanism is text reaching the model, so its worst failure is that the text is unhelpful (D54).
 
-What this stack deliberately does **not** do: manage intent (specs, ADRs, roadmaps) or conventions. Those are valuable but they are not context *compression* — they are content, and earlier versions that scaffolded them added a maintenance surface that drifted. The stack is now only the four tools that move tokens, plus the contract.
+What this stack deliberately does **not** do: manage intent (specs, ADRs, roadmaps) or conventions. Those are valuable but they are not context *compression* — they are content, and earlier versions that scaffolded them added a maintenance surface that drifted. It also, since 3.0, does not carry per-repo state of any kind: no graph, no derived artifact, nothing to rebuild or invalidate.
 
 ---
 
 ## 2. Component roles and hard boundaries
 
-### 2.1 graphify — the map (structure)
+### 2.1 Serena — the eyes and hands (symbols), opt-in
 
-**Answers:** "What connects X to Y?", "What's the blast radius of touching Z?", "How is this codebase organized?", "Where do I start looking?"
+**Answers:** "Where is symbol S defined?", "Who references S?", "What's in this file?", "Does this file have errors?", and performs symbol-precise edits — **in sessions that enable it.**
 
-**Mechanism:** tree-sitter parses code locally (zero API calls) into a typed graph of files/functions/classes/tables with contain/import/invoke edges, persisted as `graphify-out/graph.json` plus a human/agent-readable `GRAPH_REPORT.md` (god nodes, communities, surprising connections). A content-hash cache makes rebuilds incremental.
-
-**Why it's in the stack:** it converts the most expensive operation in agentic coding — cold orientation on a large repo — into a one-time build plus cheap queries. Value is front-loaded: first sessions, unfamiliar areas, cross-module tracing, refactor-impact analysis.
-
-**Hard boundary:** graphify is NOT for targeted symbol lookup. A graph BFS can return ~1,500 tokens for a query Serena answers in a fraction of that. If the question names a specific symbol, it is not a graphify question.
-
-**Staleness model:** the graph is a build-time snapshot, kept fresh by git hooks (installed by the graph-autobuild hook or `stack-init init`; §6.2). It is correct as of the **last rebuild** (normally the last commit, because the rebuild hook fires post-commit) — never for uncommitted work-in-progress that hasn't triggered a rebuild. The agent must know this: **the graph trails the working tree.**
-
-### 2.2 Serena — the eyes and hands (symbols)
-
-**Answers:** "Where is symbol S defined?", "Who references S?", "What's in this file?", "Does this file have errors?", and performs symbol-precise edits.
-
-**Mechanism:** an MCP server wrapping real language servers (rust-analyzer, typescript-language-server, pyright) over LSP. No precomputed index of its own — it queries the live language server, so answers reflect the working tree *right now*, including uncommitted changes. **It answers nothing until a project is active:** the server is not cwd-aware and starts every session with no active project, so a per-checkout `.serena/project.yml` and an explicit `activate_project` call are both prerequisites, supplied by the serena-autoinit hook (§6.3). Confirmed tools include `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `get_diagnostics_for_file` / `get_diagnostics_for_symbol`, and symbol-level edits (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`).
+**Mechanism:** an MCP server wrapping real language servers (rust-analyzer, typescript-language-server, pyright) over LSP. No precomputed index of its own — it queries the live language server, so answers reflect the working tree *right now*, including uncommitted changes. **It answers nothing until a project is active:** the server is not cwd-aware and starts every session with no active project, so a per-checkout `.serena/project.yml` and an explicit `activate_project` call are both prerequisites; the serena-autoinit hook (§6.3) supplies the first so an enabled session is immediately usable. Confirmed tools include `find_symbol`, `find_referencing_symbols`, `get_symbols_overview`, `get_diagnostics_for_file` / `get_diagnostics_for_symbol`, and symbol-level edits (`replace_symbol_body`, `insert_after_symbol`, `insert_before_symbol`).
 
 **Why it's in the stack:** it is the only layer that provides ground truth. `find_referencing_symbols` returns actual call sites, not text matches — no false positives from comments, strings, or look-alike methods. `get_diagnostics_for_file` returns structured compile/type/lint state without running (or paying for) a full `cargo check` dump.
 
+**Why it is off by default (D53):** its cost profile is not flat. It is reported to lose on cheap lookups — roughly 4× the cost of simply answering — and to win on deep modification work in large codebases, while its tool manifest is a **fixed per-session tax** (~24K tokens) paid by every session whether or not one symbol tool is called. A layer shaped like that should be reached for, not inherited. Enable it with `/mcp` for refactor, test-writing, and architecture work on larger projects; leave it off for quick queries, small repos, and greenfield prototypes. Those two figures are **external and unverified here** (D53) — the manifest one is directly measurable and should be.
+
 **Hard boundaries (enforced by the `claude-code` context, formerly `ide-assistant`):**
 
-1. `execute_shell_command` is **disabled** by default in `claude-code` — keep it that way. MCP tool calls bypass RTK's Bash hook; if tests ran through Serena you'd pay full uncompressed output cost. All shell goes through Claude Code's native Bash.
+1. `execute_shell_command` is **disabled** by default in `claude-code` — keep it that way. Claude Code provides Bash natively, and a second shell tool splits execution across two surfaces for no gain. (Until 3.0 this rule carried a second justification — that MCP calls bypassed RTK's compression hook. RTK is gone, and with it that half of the reasoning; D3, D51, D53.)
 2. `read_file` / `search_for_pattern` are likewise disabled in `claude-code` — Claude Code provides those natively, and duplicate tools confuse routing.
 
-These are structural, not instructional: the tools simply aren't in Serena's surface, so the agent *can't* route around RTK.
+These are structural, not instructional: the tools simply aren't in Serena's surface.
 
-### 2.3 RTK — the filter (output compression)
+### 2.2 ponytail — minimal-code discipline (default-on)
 
-**Answers:** nothing. RTK is invisible plumbing. A PreToolUse hook (matcher: `Bash`) rewrites supported commands to their `rtk` equivalent before execution, and the model receives 60–90% fewer tokens of output. Failures, errors, diffs, and stack traces are preserved in full; compression targets boilerplate and pass-noise. `cargo test` compresses ~92%, `git status` ~81%.
+**Answers:** nothing. ponytail routes no question and holds no state. It is a Claude Code plugin — a skill plus a SessionStart hook (`hooks/ponytail-instructions.js`) that generates a minimal-code-discipline ruleset and injects it into the session at startup.
 
-**Why it's in the stack:** test/build/git/tooling output is the single largest uncontrolled token sink in a session. Over a session this is the difference between one context window and three.
+**Mechanism:** instructions reaching the model, and nothing else. No process sits between Claude and the shell; no proxy sits between Claude Code and the API; nothing intercepts or transforms any data. The ruleset itself lives in the plugin and is deliberately **not** copied into [`contract.md`](contract.md) — one fact, one home (D30), and a local copy would drift from the plugin on its next release.
 
-**Two usage modes:**
+**Why it's in the stack (D54):** every layer 3.0 removed sat *in a path* — RTK rewrote commands before the shell, Headroom proxied the API, graphify maintained a derived artifact on disk — and each failed in a way that was a property of being in that path. ponytail is in no path. 3.0's throughline is that the stack **stops intercepting and starts instructing.**
 
-- **Output mode (automatic, primary):** the PreToolUse hook. Zero workflow change.
-- **Input mode (manual):** call filters directly and capture stdout when assembling context on purpose — `rtk ls src/`, `rtk git log -n 20`, `rtk read path`, `rtk grep pattern`. Useful for session-start summaries or feeding compressed state to subagents. (A first-class "inject into prompt at position X" mode is an unshipped upstream feature request; manual capture is the supported path.)
+**Node dependency:** the lifecycle hooks are Node.js, so `node` must be on the **non-interactive** shell's PATH — the trap for nvm and Nix users. Without it the skills still work and the always-on activation simply stays quiet rather than erroring on every prompt. A missing interpreter degrades the feature, never the session.
 
-**Hard boundary:** RTK compresses output of ~100 known dev commands. It is not a semantic/prose compressor — it will not shrink markdown or arbitrary text. Don't ask it to.
+**Boundaries:** it is default-on because its cost is bounded (a small, stable text block that sits in the cached prefix) and its measured downside on lean tasks was zero rather than negative. That evidence is the vendor's and is not reproduced here (D54).
 
-### 2.4 Headroom — the safety net (wire-level compression)
+### 2.3 What the stack no longer owns
 
-**Answers:** nothing, like RTK. Headroom is the last thing that touches a request before it leaves the machine.
+Two waste sources have **no owner** in 3.0, and saying so plainly is the point:
 
-**Mechanism:** [chopratejas/headroom](https://github.com/chopratejas/headroom) (PyPI: `headroom-ai`) runs as a local proxy. Launching a session with `headroom wrap claude` starts the proxy, points Claude Code's API traffic at it (`ANTHROPIC_BASE_URL`), and recompresses whatever is in the outgoing request. Upstream's default makes that reversible by injecting a `headroom_retrieve` tool the model can call to redeem a marker; this stack pins the **lossless** mode instead, which compacts without emitting a marker and so never needs the round-trip — or the injected tool (boundary 6, D49). Unlike RTK's PreToolUse hook (fires per Bash command, before the result ever enters context), Headroom sits at the wire, after everything else has already shaped the context.
+- **Tool-output noise** — RTK compressed it until 3.0. Nothing does now; keeping it small is a routing choice (§4 rule 5), not a layer.
+- **Orientation** — graphify answered "what connects X to Y" until 3.0. Nothing does now; cold orientation is reading and searching again, and it is the most expensive thing the agent does. There is no successor and none is planned (D52).
 
-**Why it's in the stack:** the other three layers eliminate waste at its source, but two things still reach the API uncompressed by design: `Read`-tool file dumps (Serena's own `read_file` is structurally disabled, §2.2, so file content comes through Claude Code's native tool instead) and the conversation history itself, which only grows over a session. Headroom is the one layer positioned to catch both.
-
-**Hard boundaries:**
-
-1. Only engages when the session is launched through the proxy. Since 2.3 the claude shim (§6.1 step 4) makes that the default: any launch that resolves `claude` on PATH gets wrapped. A launch that dodges the shim — the binary invoked by absolute path, `CLAUDE_NO_HEADROOM=1`, or a shell that hasn't picked up the shim's PATH entry yet — skips the proxy entirely; RTK, Serena, and graphify are unaffected (they wire into the session, not the launch command), but Headroom contributes nothing. `stack-init verify` checks the shim wins PATH resolution; the SessionStart headroom-check flags an unwrapped live session (§7).
-2. `--code-graph` is deliberately never passed. It would have Headroom build its own structure graph, duplicating graphify and creating two disagreeing sources for the same question — exactly the layer bleed §1 exists to prevent.
-3. `--memory` is deliberately never passed. This stack manages no intent/memory layer by design (§1); that flag's scope is out of bounds here regardless of what it does upstream.
-4. Compression is additive on RTK's output, never a substitute for it — RTK runs first and is free to skip (it only rewrites ~100 known commands); Headroom runs second and compresses whatever's left, known commands or not.
-5. Headroom is retained on **wire-token evidence only; its cache economics are unverified** (D37). It measurably reduces outgoing tokens, and that is the whole of the case for it. Whether that translates into lower *effective cost* depends on prompt-cache behavior which has not been measured here — the benchmark that would settle it (§8) is documented and deliberately not run. So Headroom's status is **provisional and monitored**, not established: treat "Headroom saves money" as unproven. Monitored means one specific reading, taken inside an ordinary session with no baseline run: after ~10 turns, `cache_read / (cache_read + cache_creation)` from `/cost` should sit well above 0.5 and climb as history grows; near zero means the prefix cache is being busted every turn (§7, D41). Prefer a bare launch if it appears. This is the one layer in the stack whose net value rests on an open question, and it is default-on deliberately — the established half is what default-on delivers, and `CLAUDE_NO_HEADROOM=1` is the control for the unverified half (D40). Since 2.5 that question is no longer entirely open: proxy-log evidence prices four observed cache busts at ≈$0.98 against $0.069 of claimed compression, and identifies the mechanism (D49). It is observational, not the §8 benchmark, so boundary 5's "unverified" still stands — narrowed, not lifted.
-6. Two proxy knobs are **pinned by the shim**, not inherited: `HEADROOM_MODE=cache` (D47) and `HEADROOM_LOSSLESS=1` (D49). Both are floors — an explicit value in the environment still wins — but they are not the same kind of decision. `HEADROOM_MODE=cache` is a true pin: it matches today's upstream default and exists to hold if that default ever flips (D47). `HEADROOM_LOSSLESS=1` is a **change** — lossless defaults off — and it is the one that alters behaviour today: it sets `ccr_inject_tool=False`, which removes the injected `headroom_retrieve` tool from the outgoing tools array and, with it, the buffered-stream conversion that turns a streaming turn into an `empty or malformed response (HTTP 200)` (§7). **Neither pin binds a proxy the launch did not start** — `headroom wrap` reuses a running proxy and its feature-mismatch check covers `memory`/`learn`/`code_graph` only. After changing either, confirm no proxy is already listening on the port before relaunching.
+Wire-level residue (`Read`-tool dumps, growing history) is likewise unowned (D51).
 
 ---
 
 ## 3. `[AGENT]` Routing matrix
 
-Route every information need to exactly one layer.
+Route every information need to exactly one layer. **Rows naming Serena apply only when Serena's tools are actually loaded** — when they are not, the native tool is not a fallback, it is the answer.
 
 | Question shape | Route to | NOT to | Why |
 |---|---|---|---|
-| "How is this organized / what's the architecture?" | graphify (`GRAPH_REPORT.md`, `graphify query`) | reading files, grep | Orientation is precomputed; orienting by file-reading burns 10–50× the tokens |
-| "What connects A to B?" / "between these modules?" | graphify (`graphify path A B`) | grep, Serena | Multi-hop relationships are graph traversals; the LSP sees one hop at a time |
-| "Blast radius if I change X?" (module level) | graphify first, then Serena to confirm exact refs | grep | Graph gives community-level spread; LSP confirms precise call sites |
-| "Where is symbol S defined / who calls S?" | Serena (`find_symbol`, `find_referencing_symbols`) | graphify, grep | LSP is exact and current; the graph may be stale, grep has false positives |
+| "Where is symbol S defined / who calls S?" | Serena (`find_symbol`, `find_referencing_symbols`) | grep | LSP is exact and current; grep has false positives |
 | "What implements / uses this trait or type?" | Serena (`find_referencing_symbols`) | grep | Only the LSP resolves this correctly |
 | "What's in this file?" (structure, not content) | Serena (`get_symbols_overview`) | reading the whole file | An overview costs a fraction of a full read |
-| "Does this compile / what are the type errors?" | Serena (`get_diagnostics_for_file`) | running `cargo check` via Bash | Diagnostics are structured and already minimal; no compression heuristics involved |
+| "Does this compile / what are the type errors?" | Serena (`get_diagnostics_for_file`) | running `cargo check` via Bash | Diagnostics are structured and already minimal |
 | Editing a function/class body | Serena (`replace_symbol_body`, `insert_*_symbol`) | regex/string replace | Symbol-anchored edits don't hit comments, strings, or look-alike names |
 | Renaming / refactoring a symbol | Serena symbol-level edits | search-and-replace | Avoids missed aliased imports and false hits |
-| Running tests / builds / linters / git / docker | Bash (RTK compresses automatically) | any MCP shell tool; the PowerShell tool on Windows | The RTK hook matcher is `Bash` only, so both return uncompressed output |
-| Fuzzy "where's the code that handles ~concept~?" | graphify query first; Serena once a symbol name surfaces | reading many files | Graph narrows the neighborhood; LSP takes over at symbol granularity |
+| Any of the above, **Serena not enabled** | Claude Code's native Read/Grep/Glob/Edit | asking for Serena to be turned on | Off is the normal state, not a misconfiguration |
+| Running tests / builds / linters / git / docker | Bash | any MCP shell tool | Execution belongs on one surface |
+| "How is this organized / what connects A to B?" | reading and searching, kept scoped | — | Unowned since 3.0 (§2.3, D52); no tool answers it |
 
 **Tie-breakers:**
 
-- Question names a **specific symbol** → Serena, always.
-- Question spans **more than one module** or asks about *shape* → graphify first.
-- Question is about **uncommitted work-in-progress**: symbol-level → Serena (live), never graphify. Architectural → run `graphify update .` first (cheap, incremental), then query the graph as normal.
+- Serena's tools **absent** → use native tools and move on. Do not ask for it to be enabled.
+- Question names a **specific symbol** and Serena is on → Serena, always.
 - Anything that **executes** → Bash.
+- Orientation → scoped search. Budget it deliberately; nothing downstream will trim the result.
 
-Headroom doesn't appear in this matrix because it never routes a question — like RTK, it is invisible plumbing, not a layer the agent chooses to query. The only thing it requires of the human, not the agent, is launching the session correctly (§2.4, §7).
+ponytail doesn't appear in this matrix because it never routes a question — it injects instructions and is invisible to routing (§2.2).
 
 ---
 
@@ -128,73 +108,67 @@ The global installer writes this contract into `~/.claude/CLAUDE.md` between sen
 
 The text itself is **not reproduced here**. It lives in [`contract.md`](contract.md) — the single file both installers read and `stack-init contract` prints — and the condensed form injected into agent files is [`contract-condensed.md`](contract-condensed.md). One copy is deliberate: a normative text quoted in three places drifts, and this one had already started to (the two installers disagreed on punctuation while claiming to write the same block).
 
-The six rules in brief — 1 architecture/cross-module → graphify (conditional on a graph existing), 2 symbols → Serena, 3 diagnostics → Serena, 4 symbol-level edits → Serena, 5 anything that executes → Bash/RTK, 6 the graph reflects the last rebuild. Precedence on conflict: code/LSP (Serena) > graph (graphify).
+The six rules in brief — 1 Serena is opt-in and usually off, so check before routing to it, 2 symbols → Serena when enabled, 3 diagnostics → Serena when enabled, 4 symbol-level edits → Serena when enabled, 5 anything that executes → Bash, 6 orientation has no owner. Source of truth: the LSP when enabled (§5).
 
-Rule 1 is **conditional** because the contract is global and a graph may not exist *yet*: since 2.3 the graph-autobuild hook (§6.2) builds it in the background on a repo's first session, so the absent-branch is normally a transient state rather than a missing install step. Without the guard, the agent would be ordered to consult a graph that doesn't exist; with it, graph-less repos degrade gracefully while the build lands.
+Rule 1 is the **guard** the whole contract now hangs on. A global contract that ordered the agent to use tools which are usually not loaded would be wrong in most sessions, and the failure would be silent — the agent would either hallucinate the tools or treat their absence as breakage. Rule 1 makes "off" the documented normal state, which is what makes rules 2–4 safe to state unconditionally within it. This replaces 2.x's conditional rule 1, which guarded against a *graph* that might not exist yet (D52).
+
+ponytail's minimal-code ruleset is **not** part of this contract — it is injected separately by the plugin's own hook (§2.2, D30, D54).
 
 ---
 
-## 5. `[AGENT]` Precedence and divergence — the epistemic spec
+## 5. `[AGENT]` Source of truth
 
-Two sources can disagree. Tiered by how they acquire truth:
+3.0 has only one source of derived knowledge about the code, so the tiered precedence spec earlier versions carried has nothing left to arbitrate (D52).
 
-| Tier | Source | Epistemic status | Staleness |
-|---|---|---|---|
-| 1 | Serena / LSP | Ground truth — the compiler's live model | Never (live working tree) |
-| 2 | graphify graph | Deterministic derivation of the working tree as of the last rebuild | Trails the working tree by rebuild lag (bounded by hooks, §6.2) |
+When Serena is enabled, the LSP is **ground truth by construction** — it is the compiler's live model, reflecting the working tree right now including uncommitted changes. It is never stale. Nothing else in the stack derives, indexes, or caches a second model of the code, so there is no second tier and no conflict rule.
 
-**Rules:**
+When Serena is not enabled, the working tree read directly is the only source, with the ordinary caveat that a search result is evidence a string occurs, not evidence a symbol is used.
 
-1. Tier 2 vs tier 1 conflict → the graph is stale; trust the LSP and rebuild (`graphify update .`).
-2. For uncommitted symbol-level questions, the graph is silent or wrong by definition — use Serena. For uncommitted architectural questions, refresh with `graphify update .` first, then query the graph.
-3. The graph is for *shape* (what connects to what); the LSP is for *fact* (what a symbol is and where it's used). A graph edge is a hypothesis about a relationship; confirm specifics at tier 1 before acting on them.
-
-**Why precedence is explicit:** compression and cheap retrieval make every source easier to trust, including the stale one. Marking the trust order is the mitigation.
-
-**Staleness bound:** one working-tree-moving git operation (commit, checkout, merge, or rebase) — each has its own refresh hook (§6.2), so the graph is never more than one such operation behind.
+**What was removed and why it mattered:** until 3.0 the stack carried a precomputed graph whose whole epistemic risk was that it *trailed* the working tree, and §5 existed to say the LSP wins and the graph must be rebuilt. Removing graphify removes the staleness class entirely. That is a real simplification, not a bookkeeping one: the stack no longer has any way to be confidently wrong about code that has since changed.
 
 ---
 
 ## 6. Installation and operating model
 
-Most of the stack is either *configuration* (how tools behave — global by nature) or *state* (a derivation of one codebase — per-repo by nature). The split (Headroom's one exception is noted below the table):
+3.0 is almost entirely *configuration*. The only per-repo **state** left is Serena's `.serena/project.yml`, and it costs no per-repo step — a global SessionStart hook writes and maintains it (§6.3). The graph, its refresh hooks, and every other derived artifact are gone (D52).
 
-| | Global (once, ever) | Per-repo (autobuilt; `stack-init init` = eager) |
+| | Global (once, ever) | Per-repo |
 |---|---|---|
-| RTK | hook in `~/.claude/settings.json` (`rtk init -g`) | — |
-| Serena | MCP registration at **user scope**, serena-autoinit SessionStart hook | `.serena/project.yml` + the activation note (autoinit, §6.3); onboarding memories (auto, first session) |
-| graphify | `uv tool install graphifyy[all]`, `graphify install`, graph-autobuild SessionStart hook | `graphify .`, refresh hooks, `graphify-out/` — all autobuilt on first session |
-| Headroom | `uv tool install headroom-ai[all]` + claude shim | — |
+| Serena | MCP registration at **user scope**, left **disabled**; serena-autoinit SessionStart hook | `.serena/project.yml` + the activation note (autoinit, §6.3) |
+| ponytail | marketplace + plugin install (§6.2) | — |
 | Routing contract | `~/.claude/CLAUDE.md` (§4) | — |
 | Language servers | rust-analyzer / ts-ls / pyright — once per language | — |
 
-Two things are irreducibly per-repo *state*: the graph with its refresh hooks (there is no graph until a repo exists, and `.git/hooks` is per-repo by construction) and Serena's `.serena/project.yml` (its language-server set is derived from *this* checkout's files, and its path is what `activate_project` takes). Neither costs a per-repo *step*: a global SessionStart hook creates and maintains each — autobuild for the graph (§6.2), autoinit for the Serena project (§6.3). Headroom's activation axis (per-launch, §2.4) is likewise defaulted now: the claude shim wraps every launch that resolves `claude` on PATH, and only an explicit bypass (`CLAUDE_NO_HEADROOM=1`, an absolute-path invocation, or a shell that hasn't loaded the shim's PATH entry) skips it.
+Serena's registration is deliberately *installed but not enabled* (D53): the config exists so `/mcp` can turn it on in one step for the sessions that want it, and costs nothing in the sessions that don't.
 
 ### 6.1 Global install — `stack-init` (no args)
 
 Run once. The installer:
 
-1. **RTK** — `cargo install` if absent, then `rtk init -g` (global Bash PreToolUse hook).
-2. **Serena** — `uv tool install --from git+https://github.com/oraios/serena serena-agent`, then `claude mcp add --scope user serena -- serena start-mcp-server --context claude-code`. Three things about that command line are load-bearing:
+1. **Serena** — `uv tool install --from git+https://github.com/oraios/serena serena-agent`, then `claude mcp add --scope user serena -- serena start-mcp-server --context claude-code`, then **disables it** so it is off by default (D53). Three things about that command line are load-bearing:
 
-   - **No `--project` flag** (D4). The registration is shared by every checkout, so it must be repo-agnostic. It does **not** follow that Serena finds the project itself — it is not cwd-aware and starts with no active project (§2.2, D33). Activation is a separate mechanism, installed by this same step: the **serena-autoinit SessionStart hook** (§6.3).
-   - **`--context claude-code`** (the current name of the deprecated `ide-assistant`) is what disables the shell/read/search tools (§2.2, D3).
+   - **No `--project` flag** (D4). The registration is shared by every checkout, so it must be repo-agnostic. It does **not** follow that Serena finds the project itself — it is not cwd-aware and starts with no active project (§2.1, D33). Activation is a separate mechanism, installed by this same step: the **serena-autoinit SessionStart hook** (§6.3).
+   - **`--context claude-code`** (the current name of the deprecated `ide-assistant`) is what disables the shell/read/search tools (§2.1, D3).
    - **A pinned binary, never `uvx --from git+…`** (D11) — a cold uv cache otherwise costs the session Serena entirely, and silently. The installer also migrates an existing uvx-based registration and sets `env.MCP_TIMEOUT = 120000` in `settings.json` as a safety net for a genuinely cold first launch (LSP download).
-3. **graphify** — `uv tool install 'graphifyy[all]'` (PyPI package is `graphifyy`, double-y; `uv tool`/`pipx` over plain `pip` because PATH issues are the most common "command not found" cause), then `graphify install` for the `/graphify` skill, then registers the **graph-autobuild SessionStart hook** (§6.2) that makes per-repo init automatic. It deliberately does **not** run `graphify claude install` (D5, D35).
-4. **Headroom** — `uv tool install 'headroom-ai[all]'` (PyPI package is `headroom-ai`; same `uv tool` preference and reasoning as graphify). Installing it is necessary but not sufficient: it only takes effect for sessions launched through the proxy. So the installer shadows bare `claude` with a **recursion-safe shim** in `~/.claude/stack-bin`, prepended to PATH — on Unix via a marker-guarded line in `.profile`/`.bashrc`/`.zshrc`, on Windows via the user PATH in the registry with three shim files covering PowerShell/cmd/Git-Bash resolution. The shim bounds re-entry to exactly one bounce, never double-wraps an already-proxied session, and falls through to the real binary when headroom is missing or `CLAUDE_NO_HEADROOM=1` is set, so a broken shim can never block a session (D25). It passes `--no-tokensave` when the installed headroom advertises it, and exports two pinned proxy knobs — `HEADROOM_MODE=cache` (D47) and `HEADROOM_LOSSLESS=1` (D49) — as floors an explicit environment value overrides (§2.4 boundary 6). The probe runs at *launch*, not at install: the shim caches the answer keyed on `headroom --version`, so upgrading headroom re-probes on the next launch instead of silently keeping a flag that no longer matches the build (D26, D44). Shadowing `claude` by default is deliberate even though Headroom is the stack's one unverified layer — the reasoning, and the two alternatives rejected, are in D40. The 2.2 `clw`/`hclaude`/`claudew` wrapper is removed as superseded and the installer deletes any it previously wrote; where the shim's PATH entry doesn't win, `headroom wrap claude` is the manual fallback (§7).
-5. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent), injects the condensed form into `~/.claude/agents/*.md`, and registers the **contract-refresh SessionStart hook** (§6.x) that keeps those user-global copies in sync with `contract-condensed.md` without a re-install (D43).
+2. **ponytail** — see §6.2.
+3. **Routing contract** — writes §4 into `~/.claude/CLAUDE.md` between sentinel markers (idempotent), injects the condensed form into `~/.claude/agents/*.md`, and registers the **contract-refresh SessionStart hook** (§6.x) that keeps those user-global copies in sync with `contract-condensed.md` without a re-install (D43).
 
-Prereqs: `git`, `claude` (required); `cargo`, `uv`, `pip` (for the installs); a language server per language.
+Prereqs: `git`, `claude`, `node` (required — see §6.2); `uv` (for Serena); a language server per language.
 
-### 6.2 Per-repo graph — autobuilt at session start (or `stack-init init`, eager)
+### 6.2 ponytail — the plugin install
 
-Since 2.3 this is automatic. A global `SessionStart` hook (`~/.claude/hooks/graph-autobuild.sh` / `.ps1`, registered by `stack-init global`) runs at every session start inside a git repo: graph present → `graphify update .` in the background (incremental, content-hash cached, silent); graph absent → it takes a build lock (`.git/claude-stack-autobuild.lock`, mkdir-atomic, treated as stale after 60 minutes), starts `graphify .` plus the four refresh hooks below in the background, adds `graphify-out/` to `.git/info/exclude`, and injects a one-line session note that a build is underway. **Everything it writes stays under `.git/`** — a background job must never mutate tracked files, which is why it uses `info/exclude` rather than `.gitignore` and skips the `.claude/agents/` contract injection (D24). Worktree-aware: the lock lives in the worktree-private git dir (`--git-dir`), hooks and exclude in the shared one (`--git-common-dir`). Opt-outs: `CLAUDE_STACK_NO_AUTOBUILD=1` (global) or a `.graphify-skip` file in the repo root (per repo).
+ponytail ships as a Claude Code plugin from a GitHub-backed marketplace. The `claude plugin` CLI drives both steps non-interactively, which is what lets the installer do it:
 
-`stack-init init` remains as the eager variant — same graph and hooks, built in the foreground so it's ready immediately, plus the two tracked-file extras autobuild deliberately won't do: gitignoring `graphify-out/` in the repo's `.gitignore` (shareable with the team) and injecting the condensed contract into `.claude/agents/` (§6.x). Those belong in explicit, reviewable changes. A repo where neither ran still works (rule 1 is conditional).
+```
+claude plugin marketplace add DietrichGebert/ponytail
+claude plugin install ponytail@ponytail
+```
 
-**The four refresh hooks** (D16): `post-commit` (`graphify hook install`, incremental rebuild), `post-checkout` (branch switches only — `$3 = 1`, not per-file checkouts — backgrounded so switching isn't blocked), `post-merge`, and `post-rewrite` (fires once at the end of a rebase). All are written merge-not-clobber: an existing hook file without the stack's marker comment gets the refresh line appended rather than being overwritten.
+Interactively the same thing is **two separate prompts** — `/plugin marketplace add DietrichGebert/ponytail`, then `/plugin install ponytail@ponytail`. Sending both in one message does not work. In the Desktop app's Code tab the same commands work in the prompt box, or via **+ → Plugins → Add plugin**, with marketplaces managed from **Customize** in the sidebar.
 
-**Worktrees:** deliberately supported, not forbidden. The triggering worktree always self-refreshes correctly; siblings catch up on their next branch switch or via rule 6's on-demand refresh (§4). Residual accepted risk in D16.
+**`node` is a real prerequisite, with a soft failure.** The plugin's two lifecycle hooks are Node.js, so `node` must be on the **non-interactive** shell's PATH — not merely on an interactive one. This is the trap for nvm and Nix users, whose node often lives only in an interactive profile. If it is missing the skills still work; the always-on activation just stays quiet instead of erroring on every prompt. The installer checks for `node` and warns rather than aborting, matching D32 (an optional install never aborts the run).
+
+Nothing else is per-repo, per-launch, or stateful: the plugin injects its ruleset at session start and touches nothing on disk (§2.2, D54).
 
 ### 6.3 Per-checkout Serena project — autoinit at session start
 
@@ -204,7 +178,7 @@ Serena's user-scope registration is repo-agnostic by design (§6.1 step 2), whic
 2. **Writes `.serena/project.yml`** if there isn't one, carrying a `Generated by claude-context-stack (serena-autoinit)` header.
 3. **Repairs a config it didn't write** — one produced by Serena's own auto-detection — but only when that file's `language_servers` list actually *misses* a language present in this checkout, and never destructively: the original is copied to `project.yml.bak-<timestamp>` and the `project_name` it was registered under is preserved, so an intentionally renamed project doesn't silently change identity.
 4. **Leaves a marker-carrying file alone permanently**, so hand edits to a generated config survive every subsequent session.
-5. **Excludes `.serena/` via `.git/info/exclude`** in the *common* git dir — never a tracked `.gitignore`. Same rule the graph autobuild follows (§6.2): a background job must not mutate files the user would have to commit, and one entry in the common dir covers the main checkout and every worktree.
+5. **Excludes `.serena/` via `.git/info/exclude`** in the *common* git dir — never a tracked `.gitignore`. A background job must not mutate files the user would have to commit (D24), and one entry in the common dir covers the main checkout and every worktree.
 6. **Always ends by emitting the activation instruction** — a SessionStart `additionalContext` naming the project and its path, and stating that Serena starts with no active project so `activate_project` must be called before the first symbol query and again whenever a tool answers "No active project". This fires on every path through the hook — wrote, repaired, or found a good config already there — because writing `project.yml` does not activate it.
 
 Why the language set is derived rather than delegated to Serena's own detection, and why repair is gated on coverage rather than on the marker: D34. Why activation is a hook rather than a registration flag: D33.
@@ -219,11 +193,13 @@ Why the language set is derived rather than delegated to Serena's own detection,
 
 ### 6.4 Other subcommands
 
-`stack-init verify` checks the wiring (RTK on PATH and hook active, Serena registered, graphify installed, graph-autobuild, serena-autoinit and contract-refresh hooks registered, Headroom installed, claude shim first on PATH, contract present, and — in a repo — graph built, `.serena/project.yml` present, plus the post-commit and stack-owned refresh hooks installed; in a linked worktree it reports that the checkout carries its own graph and Serena project over shared hooks). It cannot check that a given session was actually launched wrapped — that's a per-launch choice, not an install-time state; the `SessionStart` headroom-check hook (§7) covers that gap at runtime instead. Nor can it confirm the agent actually *activated* the Serena project, which is likewise per-session; the autoinit hook's activation note (§6.3) is what covers that. Its repo-local checks resolve against `git rev-parse --show-toplevel`, not the current directory, so running it from a subdirectory (`config\`, as §6.5 suggests on Windows) reports the repo's real state rather than a false "not built". `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init verify --docs` checks this repo's own documentation rather than an installation: every `§` reference resolves to a real heading in this file, every `D<n>` citation resolves to an entry in `DECISIONS.md`. It is **Unix-only and deliberately not mirrored** in `stack-init.ps1` (D42) — it is a maintenance check for whoever edits the doc set, not something a user of the stack runs, and it is the one sanctioned exception to D2's equivalence rule, which still binds for everything that touches a user's machine. `stack-init stats` appends a dated usage snapshot for comparing stack versions (§8). `stack-init help` (also `-h`/`--help`) prints the command list — on Windows this is load-bearing rather than a courtesy, because an unrecognised flag would otherwise be swallowed as a remaining argument and leave the default `global` command to run a full unattended install.
+`stack-init verify` checks the wiring (Serena registered and **registered-but-disabled** as intended, serena-autoinit and contract-refresh hooks registered, ponytail marketplace added and plugin installed, `node` resolvable, contract present, and — in a repo — `.serena/project.yml` present; in a linked worktree it reports that the checkout carries its own Serena project over shared hooks). It cannot confirm the agent actually *activated* the Serena project, which is per-session; the autoinit hook's activation note (§6.3) covers that. Nor can it tell whether a given session chose to enable Serena at all — that is the point of D53, not a gap. Its repo-local checks resolve against `git rev-parse --show-toplevel`, not the current directory, so running it from a subdirectory (`config\`, as §6.5 suggests on Windows) reports the repo's real state. `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init verify --docs` checks this repo's own documentation rather than an installation: every `§` reference resolves to a real heading in this file, every `D<n>` citation resolves to an entry in `DECISIONS.md`. It is **Unix-only and deliberately not mirrored** in `stack-init.ps1` (D42) — it is a maintenance check for whoever edits the doc set, not something a user of the stack runs, and it is the one sanctioned exception to D2's equivalence rule, which still binds for everything that touches a user's machine. `stack-init help` (also `-h`/`--help`) prints the command list — on Windows this is load-bearing rather than a courtesy, because an unrecognised flag would otherwise be swallowed as a remaining argument and leave the default `global` command to run a full unattended install.
+
+`stack-init init` and `stack-init stats` are **gone** in 3.0. `init` existed to build a repo's graph eagerly and there is no graph (D52); `stats` reported `rtk gain` and `headroom savings` and both tools are gone (D51, retiring D29).
 
 ### 6.5 Windows
 
-`stack-init.ps1` is the Windows installer — the same `global` / `init` / `verify` / `contract` command surface and functional guarantees, equally idempotent. Platform-native integrations differ where necessary. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
+`stack-init.ps1` is the Windows installer — the same `global` / `verify` / `contract` command surface and functional guarantees, equally idempotent. Platform-native integrations differ where necessary. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
 
 | Concept | Unix | Windows (PowerShell) |
 |---|---|---|
@@ -231,60 +207,31 @@ Why the language set is derived rather than delegated to Serena's own detection,
 | Routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
 | Run the installer | `stack-init` | `.\stack-init.ps1` |
 
-Notes: `graphify hook install` writes a shell post-commit hook that runs via **Git for Windows'** bundled bash (a prerequisite). The SessionStart hooks are registered as `powershell -NoProfile …`, i.e. Windows PowerShell 5.1, whose `-Encoding utf8` prepends a BOM — so serena-autoinit writes `project.yml` through an explicit no-BOM encoder, keeping it byte-identical to the POSIX variant's output rather than relying on YAML parsers tolerating a BOM (§6.3). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Use `graphify .`, never `/graphify .` — the leading slash is a path separator in PowerShell. Windows configures Serena's dashboard with `tray_manager` unconditionally, which Serena documents as fully supported there; the Unix installer reaches the same end state but has to *earn* it per desktop (D46).
+Notes: the SessionStart hooks are registered as `powershell -NoProfile …`, i.e. Windows PowerShell 5.1, whose `-Encoding utf8` prepends a BOM — so serena-autoinit writes `project.yml` through an explicit no-BOM encoder, keeping it byte-identical to the POSIX variant's output rather than relying on YAML parsers tolerating a BOM (§6.3). First run may need `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned`. Windows configures Serena's dashboard with `tray_manager` unconditionally, which Serena documents as fully supported there; the Unix installer reaches the same end state but has to *earn* it per desktop (D46). ponytail's `node` prerequisite (§6.2) is checked the same way on both platforms.
 
 ### 6.x Subagents
 
-Task-tool subagents get a fresh context that does not load `~/.claude/CLAUDE.md`. RTK's `Bash` PreToolUse hook is settings-level and applies to every session including subagents' — it propagates automatically. Headroom's env (`ANTHROPIC_BASE_URL`) is inherited by child processes — it propagates automatically too. The routing contract is neither: it's prose injected into one specific file, so subagents never see it unless something puts it there.
+Task-tool subagents get a fresh context that does not load `~/.claude/CLAUDE.md`. The routing contract is prose injected into one specific file, so subagents never see it unless something puts it there. (Until 3.0 this section also noted that RTK's settings-level hook and Headroom's inherited env propagated automatically — both are gone, so the contract is now the *only* thing that needs propagating, and ponytail's SessionStart injection is a main-session mechanism.)
 
-Mitigation (D19): `stack-init global`/`init` inject a condensed form of the contract (rules 1, 2, 5, 6 plus the precedence line) into every `*.md` file under `~/.claude/agents/` and `.claude/agents/` respectively, between the same kind of sentinel markers used for `CLAUDE.md` (idempotent — re-running replaces the block, doesn't duplicate it). If neither directory has any agent files, the installer says so and does nothing. `stack-init contract --condensed` prints the same text for pasting into ad-hoc orchestrator prompts that spawn Task-tool subagents outside of a predefined agent file.
+Mitigation (D19): `stack-init global` injects a condensed form of the contract into every `*.md` file under `~/.claude/agents/`, between the same kind of sentinel markers used for `CLAUDE.md` (idempotent — re-running replaces the block, doesn't duplicate it). If the directory has no agent files, the installer says so and does nothing. `stack-init contract --condensed` prints the same text for pasting into ad-hoc orchestrator prompts that spawn Task-tool subagents outside of a predefined agent file.
 
-The user-global copies do not wait for the next install: a **contract-refresh SessionStart hook** re-injects `~/.claude/agents/*.md` at every session start, so editing `contract-condensed.md` propagates without re-running anything (D43). The hook stops there by design. `.claude/agents/` is tracked, and D24's rule — a background job never mutates files the user would have to commit — binds: the per-repo copies stay with `stack-init init`, where a human asked for them, and their staleness surfaces as a reviewable diff rather than silent drift.
-
-### 6.6 Optional — graphify MCP query server
-
-For graph queries as MCP tools instead of CLI calls, add a `graphify` server to `.mcp.json`. The CLI (`graphify query`, `graphify path` via Bash) is the leaner default — its output flows through RTK and it adds zero always-loaded tool definitions. Add the MCP server only if the agent under-uses the graph.
+The user-global copies do not wait for the next install: a **contract-refresh SessionStart hook** re-injects `~/.claude/agents/*.md` at every session start, so editing `contract-condensed.md` propagates without re-running anything (D43). The hook stops there by design: `.claude/agents/` is tracked, and a background job never mutates files the user would have to commit (D24). The per-repo copies are now written only by `stack-init skills`-style explicit commands or by hand, and their staleness surfaces as a reviewable diff rather than silent drift.
 
 ---
 
 ## 7. Guardrails and known failure modes
 
-**Layer bleed (most common).** Agent greps for a symbol, or graph-walks for a definition. Mitigation: the routing contract (§4). graphify's own PreToolUse hook (from `graphify claude install`) is *not* installed here — and not because it does nothing: it is **confirmed active** on current Claude Code and fires unconditionally on every matching Bash/Read/Glob call. It's excluded because it's unconditional where contract rule 1 is scoped to architecture questions, and because it targets the current directory's config rather than the global one (D5, D35). The contract is the mechanism, deliberately, not a hook.
+**Serena assumed present when it is off (the 3.0 failure mode).** The contract routes symbol work to Serena, and Serena is usually not enabled (D53). An agent that treats the missing tools as breakage will either hallucinate them or stall asking for them to be turned on. Mitigation: contract rule 1 makes "off" the documented normal state and names the native tools as the answer, not a fallback (§4). The symptom is an agent saying it *cannot* look up a symbol; the correct behaviour is to Grep and move on.
 
-**Stale graph trusted as current.** Graph reflects the last rebuild; agent reasons about mid-refactor code from it. Mitigation: precedence rule (§5) + the four refresh hooks (§6.2) bounding lag to one working-tree-moving git operation, plus rule 6's on-demand refresh before uncommitted architectural questions. `graphify update . --force` is now a fallback for anomalies (e.g. a hook failed to fire), not the primary mitigation.
+**Serena registered but never activated (silent).** The highest-cost failure in the stack for sessions that *do* enable it, because nothing reports it. Serena is not cwd-aware and starts every session with no active project; if the session never calls `activate_project`, every symbol tool answers "No active project", the model falls back to grep, and contract rule 2 is unenforceable with no error surfaced. A near-miss variant is just as quiet: a `project.yml` written by Serena's own auto-detection can list a language set that omits most of the checkout, and the tools then answer `Cannot extract symbols … Active language servers: [...]` per file. Mitigation: the serena-autoinit hook (§6.3) writes/repairs the config and re-states the activation instruction at every session start, and contract rule 2 tells the agent to call `activate_project` rather than treating "No active project" as a reason to grep. Diagnosing it: check the session-start note names this checkout, read `.serena/project.yml` — and remember that a repair needs a **new session** to take effect (§6.3), so re-running a Serena tool in the same session is not a valid test.
 
-**Over-compression eating a needed signal.** An RTK filter strips context the agent needed. Mitigation: RTK preserves failures in full and dumps raw output to disk on failure; run `rtk discover` periodically; verify the broken-test path once at setup. Don't pass secrets as CLI args — RTK's tracking DB stores full command strings for ~90 days.
+**ponytail silently inert.** The plugin's hooks are Node.js. With no `node` on the **non-interactive** shell's PATH the always-on activation stays quiet — by design, so it doesn't error on every prompt — which means a broken install and a working one look identical from inside a session. Mitigation: `stack-init verify` checks `node` resolves and that the plugin is installed (`claude plugin list`). The symptom is the absence of the minimal-code ruleset in context; `claude plugin details ponytail` shows the component inventory and projected token cost, which is the direct check.
 
-**Shell routing around RTK.** Any MCP tool that executes commands bypasses the Bash hook, and so does Claude Code's own **PowerShell** tool on Windows — `rtk init -g` registers the PreToolUse hook with matcher `Bash`, which does not match the separate `PowerShell` tool name. Mitigation for MCP is structural (`claude-code` exposes no Serena shell tool); for PowerShell it is instructional only (§4 rule 5), because RTK's rewriter targets POSIX command lines and pointing it at PowerShell risks mangling cmdlet pipelines. If you add another MCP server with an exec tool, decide its compression story explicitly.
+**Unowned waste, mistaken for a bug.** Orientation and tool-output noise have no owner (§2.3). An agent reading twenty files to orient, or a `cargo test` dumping thousands of tokens, is 3.0 working as specified — not a regression from 2.x. The mitigation is a routing choice: scope the search, prefer targeted commands. If that cost proves intolerable in practice, the answer is a new decision reversing D51/D52 on evidence, not a quietly reintroduced layer.
 
-**Serena registered but never activated (silent).** The highest-cost failure in the stack, because nothing reports it. Serena is not cwd-aware and starts every session with no active project; if the session never calls `activate_project`, every symbol tool answers "No active project", the model falls back to grep, and contract rule 2 is unenforceable with no error surfaced to the user — the same silent shape as an MCP launch that timed out. A near-miss variant is just as quiet: a `project.yml` written by Serena's own auto-detection can list a language set that omits most of the checkout, and the tools then answer `Cannot extract symbols … Active language servers: [...]` per file. Mitigation: the serena-autoinit hook (§6.3) writes/repairs the config and re-states the activation instruction at every session start, and contract rule 2 tells the agent to call `activate_project` on that path rather than treating "No active project" as a reason to grep. Diagnosing it: check the session-start note names this checkout, read `.serena/project.yml` — and remember that a repair needs a **new session** to take effect (§6.3), so re-running a Serena tool in the same session is not a valid test.
+**Subagent contract bleed.** Task-tool subagents get fresh contexts that don't include `~/.claude/CLAUDE.md`, so spawned agents can grep where volume is highest. In 3.0 the contract is the *only* thing that propagates by injection, so this is the whole of the mitigation (§6.x, D19, D43).
 
-**Hook integrity.** The only PreToolUse hook now is RTK's (`Bash`). If another tool's installer rewrites the hook array instead of merging, RTK's could be clobbered. After installing anything that touches `settings.json`, confirm the `Bash` → rtk hook is still present (`stack-init verify`).
-
-**Headroom silently inert.** Installed but the session launched unwrapped — everything still works, just without the wire-level compression. 2.2 added a habit-sized wrapper (`clw`) and detection via a `SessionStart` hook (`~/.claude/hooks/headroom-check.sh`/`.ps1`) that checks whether `ANTHROPIC_BASE_URL` points at a local proxy and, if not, injects a one-line `NOTE: Headroom proxy not active this session...` into context. 2.3 makes prevention the default: the claude shim (§6.1 step 4) wraps bare `claude` automatically, so the NOTE now effectively means "the shim was bypassed" — a shell that hasn't loaded the shim's PATH entry, an absolute-path launch, a launcher that spawns the binary without a PATH search (some IDE integrations), or an explicit `CLAUDE_NO_HEADROOM=1`. `stack-init verify` checks the shim wins PATH resolution at install time; the SessionStart hook is what catches a live unwrapped session.
-
-**Subagent layer bleed.** Task-tool subagents get fresh contexts that don't include `~/.claude/CLAUDE.md` — RTK's hook and Headroom's env both inherit automatically (they're settings-level / process-level), but the routing contract does not, so spawned agents can grep for symbols or orient by file-reading exactly where token volume is highest. Mitigation (§6.x "Subagents"): `stack-init global`/`init` inject a condensed form of the contract into every file under `~/.claude/agents/` and `.claude/agents/`, and the contract-refresh SessionStart hook keeps the `~/.claude/agents/` copies current between installs (D43); orchestrator prompts for ad-hoc Task calls should paste `stack-init contract --condensed` into the subagent prompt. The per-repo `.claude/agents/` copies refresh only on `stack-init init` — if `contract-condensed.md` changed since that repo was inited, those files are stale until it is re-run.
-
-**Compression that busts the prompt cache.** Headroom's wire-level rewriting is, by default, a prefix-cache invalidator: recompressing history changes the bytes the API sees turn to turn. A known contributor is CCR injecting a `headroom_retrieve` tool definition; changing the tool list between turns busts Anthropic's entire prefix cache regardless of what else changed. Since 2.5 that contributor is **switched off** by the lossless pin (§2.4 boundary 6, D49) rather than merely named. What the same investigation found is that it was not the only one, and not the largest: Headroom forwards its compressed bytes only until a signed thinking block enters the history, then latches to forwarding the client's original bytes for the rest of the session (`source=canonical` → `source=passthrough` in the proxy log). That one-way switch changes the forwarded prefix mid-session. Four such transitions cost 155,045 cached tokens against 5,538 tokens of compression — ≈$0.98 against $0.069. **The latch is upstream and the pin does not fix it**, so this failure mode is now *measured and partly mitigated*, not absent (D49). What the latch flips is not only compressed history: Headroom's tool-search deferral is recomputed every turn but delivered only on canonical turns, so the **tools array** — which Anthropic renders first in the cache prefix, ahead of `system` and `messages` — alternates too. Deferral and latching are perfectly collinear in the log, so which of the two actually drives the busts is *not* determined by this evidence (D50). The isolating test is `HEADROOM_TOOL_SEARCH=0`, which removes the tools flip and leaves the compression flip; it is deliberately not enabled while the ratio stays healthy.
-
-Symptom, readable inside a single session with no baseline run (D41). When the cache works, history is stable, so each turn reads a large cached prefix and creates only the new turn's delta — `cache_read_input_tokens` dominates and `cache_creation_input_tokens` stays small. When the prefix is being rewritten every turn, the cache never hits: `cache_creation_input_tokens` re-pays roughly the whole conversation each turn while `cache_read_input_tokens` stays flat near zero. So after ~10 turns, read off `/cost` (or OTEL metrics):
-
-```
-cache_read / (cache_read + cache_creation)
-```
-
-Healthy sessions sit well above 0.5 and climb as history grows. Near zero, with `cache_creation` tracking total conversation size rather than the last turn's, means the prefix cache is being busted — fewer wire tokens can still mean *more* money once cache misses are priced in, and `headroom savings` will report savings the whole time. (An earlier version of this entry defined the symptom as a collapse *relative to a bare session*, which required the matched run from step 1 of the benchmark D37 declined — so nothing was actually being watched.)
-
-**What the ratio does not catch.** It is an aggregate, so it detects *sustained* busting and is nearly blind to a handful of discrete ones. In the log behind D49 it read **0.791** — comfortably "healthy" by the threshold above — across the same window in which four busts destroyed 155,045 cached tokens. Treat a passing ratio as "not busting every turn", never as "not busting". The direct check is the proxy's own log, which names each event and its price:
-
-```
-grep -c CACHE-BUST ~/.headroom/logs/proxy.log     # discrete busts, with tokens_lost vs tokens_saved
-grep -o 'source=[a-z]*' ~/.headroom/logs/proxy.log | sort | uniq -c   # canonical vs passthrough mix
-```
-
-A high `passthrough` share on requests logged `body_mutated=true` means compression is being computed and discarded — `headroom savings` counts those as savings anyway, so its totals are an upper bound, not a measurement.
-
-Mitigation: take both readings periodically; confirm Headroom's CacheAligner is active; check the upstream CCR/tool-injection issue status. Escape hatch is running bare — RTK, Serena, and graphify are completely unaffected, since Headroom is the only optional-per-launch layer (§2.4). Run the §8 benchmark only if the ratio looks wrong and the effective-cost number is wanted.
+**Hook integrity.** The stack owns two SessionStart hooks (serena-autoinit, contract-refresh) and no PreToolUse hook at all — RTK's was the only one and it is gone (D51). If another tool's installer rewrites the hooks array instead of merging, the stack's could be clobbered. After installing anything that touches `settings.json`, re-run `stack-init verify`.
 
 ---
 
@@ -292,48 +239,39 @@ Mitigation: take both readings periodically; confirm Headroom's CacheAligner is 
 
 ```bash
 # Global
-rtk gain                                   # non-zero after a few Bash commands -> hook live
-claude mcp list | grep -i serena           # registered, no --project arg
-grep -q "Context routing" ~/.claude/CLAUDE.md   # contract present
-command -v graphify                        # installed and on PATH
-command -v headroom                        # installed and on PATH
+claude mcp list | grep -i serena             # registered, no --project arg
+claude mcp list | grep -i serena             # ...and NOT enabled by default (D53)
+claude plugin list | grep -i ponytail        # plugin installed
+command -v node                              # required by ponytail's hooks (§6.2)
+grep -q "Context routing" ~/.claude/CLAUDE.md  # contract present
 
-# Per repo (after the first session's autobuild/autoinit lands, or `stack-init init`)
-ls -l graphify-out/graph.json              # graph built
-cat .serena/project.yml                    # exists; language_servers covers this checkout's
-                                           # languages, a real language listed first
-git commit --allow-empty -m test && ls -l graphify-out/graph.json  # mtime advanced -> hook fires
-git switch -c stack-check && ls -l graphify-out/graph.json  # mtime advanced -> post-checkout fires
-git switch - && git branch -d stack-check
-git worktree add ../stack-check-wt && cd ../stack-check-wt && git commit --allow-empty -m test \
-  && ls -l graphify-out/graph.json  # THIS worktree's graph updates, not the primary checkout's
+# Per repo
+cat .serena/project.yml                      # exists; language_servers covers this
+                                             # checkout's languages, a real language first
 
 # Behavior, in a Claude session
-#  - architecture question  -> reads GRAPH_REPORT.md / runs graphify, does NOT grep
+#  - default session: Serena's tools are ABSENT and the agent uses native
+#    Read/Grep without asking for it to be enabled (contract rule 1)
+#  - the minimal-code ruleset is present in context at session start (ponytail)
 #  - session-start note names this checkout's Serena project + its path
-#  - "who calls <fn>"        -> activate_project on that path, then
-#                              find_referencing_symbols; does NOT grep, and does
-#                              NOT treat "No active project" as a reason to grep
-#  - get_diagnostics_for_file on a planted type error -> structured error, no file dump
+#  - after `/mcp` enables Serena: "who calls <fn>" -> activate_project on that
+#    path, then find_referencing_symbols; does NOT grep, and does NOT treat
+#    "No active project" as a reason to grep
+#  - get_diagnostics_for_file on a planted type error -> structured error, no dump
 #  - agent tool list shows NO serena execute_shell_command / read_file
-#  - one-time: break a test on purpose -> failure detail survives RTK compression
-#  - repo WITHOUT graphify-out/ -> session-start note says a build is underway;
-#    agent orients normally until the graph lands (no error, no manual step)
-#  - `claude` in a shell with the shim on PATH -> `headroom savings`/logs show traffic
-#    compressed and NO SessionStart Headroom NOTE (wrapped by default)
-#  - `CLAUDE_NO_HEADROOM=1 claude` (or an absolute-path launch) -> the NOTE about
-#    Headroom being inactive appears (shim bypassed - expected, not broken)
-#  - run `stack-init stats` once -> a dated snapshot file exists under
-#    ~/.claude/stack-stats/ and parses as JSON
-#  - after ~10 turns, `/cost`: cache_read/(cache_read+cache_creation) well above
-#    0.5 -> prompt cache is holding under Headroom (near zero = §7 cache bust)
+#  - an architecture question is answered by scoped reading/searching, and the
+#    agent does NOT claim a graph tool is missing (unowned since 3.0, §2.3)
+
+# Cost of the one optional layer (D53's unverified ~24K claim)
+claude plugin details ponytail               # component inventory + projected token cost
+#  Serena's manifest is measurable the same way: compare a session's tool-definition
+#  token count with Serena enabled vs disabled. D53 records that figure as external
+#  and unverified; measuring it is the open follow-on.
 
 # Editing the doc set (Unix only, D42)
-stack-init verify --docs                   # every § and D<n> reference resolves
+stack-init verify --docs                     # every § and D<n> reference resolves
 ```
 
-**Cache-economics benchmark — documented, NOT run (D37).** This is the procedure that would establish whether Headroom is net-positive on effective cost. It is recorded here so the question stays answerable, not because it is part of routine verification. Until someone runs it, §2.4 boundary 5 stands: Headroom is retained on wire-token evidence with its cache economics unverified. Routine monitoring is the single-session ratio in §7, which needs none of this; run the full procedure only if that ratio looks wrong, or before making Headroom non-optional:
+**No cache-economics benchmark.** 2.x carried one here — the procedure that would have settled whether Headroom was net-positive on effective cost (D37). It is gone with Headroom (D51). The question was ultimately answered without it: D49 and D50 measured the layer directly from its own proxy log, which is why the removal rests on evidence rather than on the matched-pair run nobody was ever going to do.
 
-1. Pick a fixed task shape — e.g. the same 10-turn session touching tests and edits — and run it twice against the same repo: once wrapped (bare `claude` through the shim), once bypassed (`CLAUDE_NO_HEADROOM=1 claude`).
-2. Compare, from API usage / `/cost` / OTEL metrics: `input_tokens`, `cache_creation_input_tokens`, `cache_read_input_tokens`, and effective cost for both runs, plus `headroom savings` for the wrapped run (`headroom stats` is not a subcommand).
-3. Acceptance: the wrapped run's *effective cost* must be ≤ the bare run's. If wire tokens dropped but cache reads collapsed, Headroom is net-negative for this usage pattern — the finding gets appended to `DECISIONS.md` (not silently ignored), and the recommendation becomes "prefer the bare launch" until the upstream cache-bust issue (§7) is resolved.
+**What 3.0 gives up on measuring, honestly.** Nothing in this checklist proves the stack is cheaper than no stack. It proves the pieces are installed and the routing behaves. That is a deliberate retreat from 2.x's posture, which claimed savings it could not substantiate — and in Headroom's case was overstating them ~4× while every standing check read green (D51).

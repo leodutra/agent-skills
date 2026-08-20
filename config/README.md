@@ -1,6 +1,6 @@
 # Claude Code Context Stack
 
-A pre-configured setup for Claude Code that cuts the token cost of working in a real codebase, using four tools and the routing rules that make Claude use each for the one thing it's best at: **graphify** (codebase knowledge graph — structure), **Serena** (LSP symbol tools via MCP — symbols), **RTK** (CLI output compression), **Headroom** (proxy-layer compression). Install the global layer once — that's the whole setup. A `claude` shim wraps every launch through Headroom, and the first session inside any git repo builds its graph in the background. Every project then gets identical routing behavior — graph for architecture, LSP for symbols, compressed Bash for execution, compressed wire traffic for whatever's left.
+A pre-configured setup for Claude Code, built on one rule: **eliminate waste at its source, never compress downstream.** Two components — **Serena** (LSP symbol tools via MCP, *opt-in per session*) and **ponytail** (minimal-code discipline, default-on) — plus a global routing contract. Install the global layer once; that's the whole setup, and there is no per-repo step. 3.0 removed graphify, RTK, and Headroom: the stack no longer intercepts anything and holds no per-repo state (D51, D52).
 
 No intent/docs layer: this stack is only the parts that move tokens, plus the global routing contract.
 
@@ -12,7 +12,7 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 | `DECISIONS.md` | Every "why", as numbered append-only decisions (D1–D48). A decision's body is never rewritten: when one is reversed or its stated reason turns out to be wrong, a new entry is appended and the old one gets a pointer. | When you want to know why something is the way it is — or before changing it. |
 | `CHANGELOG.md` | What changed and when, one terse line per change, each citing the decision it implements. | To see what moved between versions. |
 | `BACKLOG.md` | Open defects in the decision set, one item each, ordered by cost. Carries no rationale — closing an item means appending a decision and deleting the item, so the file empties itself. | Before starting work on the stack, and when a decision looks wrong. |
-| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack (including the claude shim and the graph-autobuild SessionStart hook); `init` builds a repo's graph eagerly; `skills` deploys the repo's domain skills into the current repo's `.claude/skills/` (D48); also `verify`, `verify --docs` (checks this repo's own `§`/`D<n>` references — Unix-only, D42) and `contract`. | `stack-init` once, ever. `init` only for eager builds. `skills` per repo, as needed. |
+| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack; `skills` deploys the repo's domain skills into the current repo's `.claude/skills/` (D48); also `verify`, `verify --docs` (checks this repo's own `§`/`D<n>` references — Unix-only, D42) and `contract`. | `stack-init` once, ever. `skills` per repo, as needed. |
 | `stack-init.ps1` | The Windows installer (PowerShell). Same command surface and functional guarantees, equally idempotent; platform-native integrations differ where necessary. | `.\stack-init.ps1` once, ever. |
 | `contract.md` / `contract-condensed.md` | The routing contract itself, as the installers write it: the full form into `~/.claude/CLAUDE.md`, the short form into every agent file. Both installers read these, so the two platforms cannot drift on the one artifact they both produce. ASCII-only — Windows PowerShell 5.1 decodes a BOM-less file as ANSI. | Edit here to change the contract; never edit the managed block in `CLAUDE.md`. |
 
@@ -22,24 +22,19 @@ Keep the scripts inside the repo (symlink onto PATH rather than copying) — the
 
 ```bash
 # 1. Global layer — once, ever
-#    Installs RTK (Bash hook) + Serena (user scope) + graphify + Headroom,
-#    writes the routing contract to ~/.claude/CLAUDE.md, shadows bare `claude`
-#    with a Headroom shim, and registers a SessionStart hook that autobuilds
-#    each repo's graph on first session.
+#    Registers Serena (user scope, left DISABLED), installs the ponytail
+#    plugin, writes the routing contract to ~/.claude/CLAUDE.md, and registers
+#    the serena-autoinit + contract-refresh SessionStart hooks.
 ln -s "$PWD/stack-init.sh" ~/.local/bin/stack-init          # symlink onto PATH
 #    (symlink, not copy — the script deploys skills/ from the repo next to it)
 stack-init                                                  # = stack-init global
 #   Windows: run  .\stack-init.ps1  from the repo's config\ directory
 
-# 2. Open a NEW shell (the shim's PATH entry has to load). That's it —
-#    every `claude` launch is wrapped, every repo self-initializes.
+# 2. That's it — there is no per-repo step and no new shell needed.
+#    Serena stays OFF until a session turns it on with /mcp (D53).
 
 # 3. Check the wiring any time
 stack-init verify
-
-# Optional: build a repo's graph eagerly instead of waiting for first session
-#   (also does the tracked-file extras autobuild won't: .gitignore, .claude/agents)
-cd /path/to/project && stack-init init
 
 # Optional: give a repo one of this repo's DOMAIN skills (they are never
 #   installed globally — every global skill's description costs every session
@@ -50,18 +45,18 @@ stack-init skills           # lists what's deployable and where each one is
 
 On Windows use PowerShell (`stack-init.ps1`), not cmd — see doc §6.5 for path translations and the Git-for-Windows requirement.
 
-Escape hatches: `CLAUDE_NO_HEADROOM=1 claude` launches unwrapped once; `CLAUDE_STACK_NO_AUTOBUILD=1` or a `.graphify-skip` file in a repo root disables graph autobuild there. The first session in a repo with no graph gets a session-start note that a build is running; the contract degrades gracefully until it lands.
+Escape hatches: `CLAUDE_STACK_NO_SERENA_INIT=1` (or a `.serena-skip` file in a repo root) disables the Serena project autoinit there. Serena itself is off unless a session turns it on with `/mcp` — that is the normal state, not a misconfiguration (D53).
 
 ## The one-line model
 
 | Tool | Owns | Never used for |
 |---|---|---|
-| graphify | orientation, cross-module structure, blast radius | symbol lookup |
-| Serena | symbol definitions/references, diagnostics, symbol-level edits | running anything |
-| RTK | compressing Bash output (invisible) | prose/markdown compression |
-| Headroom | compressing whatever still reaches the API — file dumps, history (invisible; the claude shim wraps every launch automatically) | replacing RTK, or building a second structure graph (`--code-graph` is never passed) |
+| Serena *(opt-in)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it |
+| ponytail *(always on)* | minimal-code discipline, injected at session start | routing any question |
 
-On conflict: **LSP (Serena) > graph (graphify)** — the LSP is live ground truth; the graph is a derivation that can trail the working tree, so trust the LSP and rebuild the graph (doc §5).
+Two waste sources are deliberately **unowned**: orientation (graphify's old job) and tool-output noise (RTK's). Nothing compresses wire traffic either. Keeping output small is a routing choice now — prefer targeted commands over ones that dump (D51, D52).
+
+Source of truth: the LSP when Serena is enabled. Nothing in the stack derives or caches a second model of the code, so there is no precedence conflict left to resolve (doc §5).
 
 ## Extra tools (outside the contract)
 
@@ -73,13 +68,12 @@ That global set is exactly three and does not grow: the repo's remaining skills 
 
 **gauntlet-loop** — turns a goal into a paste-ready prompt that makes a separate builder and harsh critic compare the work against a concrete reference until it wins. It has no external binary and is available as a standalone skill; stack-init only deploys its canonical copy.
 
-**opensrc** (`npm install -g opensrc`) — fetches the exact installed version of any dependency's source (npm/PyPI/crates.io/GitHub; version auto-detected from the lockfile) into a global cache at `~/.opensrc/` and prints its path (`opensrc path zod`). It answers the one question the four tools can't: "what does this dependency actually do." Zero per-repo state — nothing gitignored, nothing per-worktree; the cache is shared by every checkout. Usage guidance lives in the [`opensrc` skill](../skills/opensrc/SKILL.md), not the contract.
+**opensrc** (`npm install -g opensrc`) — fetches the exact installed version of any dependency's source (npm/PyPI/crates.io/GitHub; version auto-detected from the lockfile) into a global cache at `~/.opensrc/` and prints its path (`opensrc path zod`). It answers a question neither component covers: "what does this dependency actually do." Zero per-repo state — nothing gitignored, nothing per-worktree; the cache is shared by every checkout. Usage guidance lives in the [`opensrc` skill](../skills/opensrc/SKILL.md), not the contract.
 
 **worktrunk** (`wt`; `git-wt` on Windows) — a git-worktree manager for parallel agents/tasks. It moves no tokens and routes no questions; it only manages where checkouts live. `git-wt` and `git wt` are the same binary, not two names to pick between — git auto-discovers any `git-<name>` executable on PATH and exposes it as a `git <name>` subcommand. The Windows/Linux split is deliberate, not an inconsistency to fix: stock Win11 ships Windows Terminal's own `wt.exe`, so `stack-init.ps1` never trusts bare `wt` as evidence of worktrunk and only accepts `git-wt` (winget's install name) or a `.cargo\bin\wt.exe` found by explicit path; Linux/macOS have no such collision — brew and cargo both name the binary plainly `wt` — so `stack-init.sh` keeps bare `wt` first, matching what's actually installed there.
 
-Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. The installer writes a single user-global worktrunk `post-start` hook that re-runs the stack's per-checkout step (`graphify .` + rebuild hook) in every new worktree, only for repos whose primary checkout has `graphify-out/`. Un-inited repos are untouched; the contract degrades gracefully there exactly as it always did. RTK and Headroom are global and need nothing per-worktree. Serena does: a linked worktree is a separate checkout at its own path, so it gets its own `.serena/project.yml` (named `repo@branch`) from the serena-autoinit SessionStart hook — no manual step, but not "nothing" either (doc §6.3, D33).
+Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. Serena is the only component with per-worktree state: a linked worktree is a separate checkout at its own path, so it gets its own `.serena/project.yml` (named `repo@branch`) from the serena-autoinit SessionStart hook — no manual step, but not "nothing" either (doc §6.3, D33).
 
-`wt switch -x claude` resolves `claude` on PATH like any shell, so it hits the shim and gets wrapped like every other launch. (Before the shim existed this was a bare-launch gotcha; it isn't anymore.)
 
 ## Prerequisites
 
