@@ -22,7 +22,7 @@ This is a **defensive / AppSec** tool. Use it only on assets you **own or are au
 
 ## ROE template
 
-```
+```text
 RULES OF ENGAGEMENT — VULN GAUNTLET
 Effective: __________   Expires: __________
 Authorizing party (asset owner): _______________________  Signed: __________

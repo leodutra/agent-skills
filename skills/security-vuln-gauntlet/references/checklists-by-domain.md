@@ -9,7 +9,7 @@ For the HUNTER while digging and the VALIDATOR while verifying. Each entry gives
 **Sources:** query and path parameters, body (JSON/form/multipart), headers (Host, Referer, X-Forwarded-*, Cookie), uploads, WebSocket messages, and stored-then-used data (second order).
 
 | Vulnerability class | Typical sink | CWE | Non-destructive PoC |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | SQL Injection | string-concatenated SQL/ORM, `$where`, dynamic ORDER BY | CWE-89 | time-based `SLEEP`, `SELECT 1`; never read real tables |
 | XSS (reflected/stored/DOM) | `innerHTML`, unescaped templates, `dangerouslySetInnerHTML` | CWE-79 | payload that triggers `console.log` or a DOM change, not cookie theft |
 | OS Command Injection | `exec/system/child_process` | CWE-78 | read-only command such as `id` |
@@ -25,7 +25,7 @@ For the HUNTER while digging and the VALIDATOR while verifying. Each entry gives
 ### OWASP Top 10 (2021) → where to look
 
 | OWASP | Topic | Where to hunt | Typical CWE |
-|-------|-------|---------------|-------------|
+| ------- | ------- | --------------- | ------------- |
 | A01 | Broken Access Control | id-addressed endpoints, admin routes, IDOR/BOLA, forced browsing | CWE-862, CWE-639, CWE-284 |
 | A02 | Cryptographic Failures | hardcoded secrets, weak algorithms, TLS disabled, guessable tokens | CWE-798, CWE-327, CWE-311 |
 | A03 | Injection | SQL/NoSQL/OS command/LDAP/SSTI | CWE-89, CWE-78, CWE-79, CWE-94 |
@@ -59,7 +59,7 @@ For the HUNTER while digging and the VALIDATOR while verifying. Each entry gives
 **Sources:** path ids, JSON body (including extra fields), headers (Authorization, X-User-Id, tenant), GraphQL variables, gRPC messages.
 
 | Vulnerability class | Hot spot | OWASP API / CWE | Non-destructive PoC |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | BOLA / IDOR | resource accessed by id **without an ownership check** | API1 / CWE-639, CWE-862 | **two test accounts**: A reads or modifies B's canary record |
 | BFLA | admin/privileged endpoint with no role check | API5 / CWE-862 | a normal user invokes an admin function on a test resource |
 | Mass Assignment | whole body bound to the model (`role`, `isAdmin`, `balance`) | API6 / CWE-915 | send an extra field, observe privilege change on a test account |
@@ -73,7 +73,7 @@ For the HUNTER while digging and the VALIDATOR while verifying. Each entry gives
 
 ### Quick example — BOLA/IDOR (two-account PoC)
 
-```
+```text
 Endpoint: GET /api/v1/orders/{id}   (auth: regular user)
 Code (abridged): return db.orders.find(id)   // NO check that order.ownerId == currentUser
 HUNTER: suspects BOLA — sequential ids, no ownership check.
@@ -90,7 +90,7 @@ Fix: enforce ownership server side (order.ownerId == currentUser) or scope by te
 
 ### Quick example — a killed false positive (mass assignment)
 
-```
+```text
 HUNTER: suspects mass assignment on PATCH /api/v1/profile (sending "role":"admin").
 VALIDATOR: the serializer uses an allow-list DTO {name,email}; 'role' is dropped and never
   mapped onto the entity. PoC sending role=admin → role unchanged. ⇒ FALSE POSITIVE (blocked).
@@ -103,16 +103,19 @@ VALIDATOR: the serializer uses an allow-list DTO {name,email}; 'role' is dropped
 **Sources:** file input, network packets, stdin/argv, IPC, environment.
 **Sinks / bug classes:** out-of-bounds write (**CWE-787**), out-of-bounds read (**CWE-125**), use-after-free (**CWE-416**), double free, integer overflow leading to a bad allocation (**CWE-190**), format string (**CWE-134**), type confusion.
 
-**Process**
+### Process
+
 1. **Fuzz** in an approved lab (AFL++, libFuzzer) and collect crashes. Fuzzing is a heavy load — approved environments only, never production.
 2. **Triage the crash** with tooling (ASan output, exploitability heuristics): what kind of bug, read or write, is the address attacker-controlled?
 3. **Assess exploitability (the bar):** does the crash lead to **PC control** or a **write-what-where** primitive? Which mitigations (ASLR, DEP, CFG, stack canary) stand in the way?
 
-**Binary bar:** a **reproducible crash** plus a controllability analysis. Full weaponization is not required. Prioritize OOB write and UAF (commonly RCE) over NULL dereference (usually just DoS).
+### Binary bar
+
+A **reproducible crash** plus a controllability analysis. Full weaponization is not required. Prioritize OOB write and UAF (commonly RCE) over NULL dereference (usually just DoS).
 
 ### Quick example — crash triage
 
-```
+```text
 Fuzzing an image parser (lab) → crash.
 ASan: heap-buffer-overflow WRITE of size 4 at parse_chunk()+0x3c, past a 0x20 buffer,
   because chunk_len (attacker-controlled, from the file) is not validated before memcpy.
@@ -130,9 +133,12 @@ Typical false positive: a NULL dereference from an uninitialized pointer — usu
 
 ## 4) CLOUD / IaC / KUBERNETES (mapped to CIS Benchmarks)
 
-**Sources / artifacts:** Terraform, CloudFormation, Kubernetes manifests, IAM policies, buckets and ACLs, security groups, secret stores, container images.
+### Sources / artifacts
 
-**Bug classes and references**
+Terraform, CloudFormation, Kubernetes manifests, IAM policies, buckets and ACLs, security groups, secret stores, container images.
+
+### Bug classes and references
+
 - Overly broad IAM / privilege escalation (wildcard `*:*`, `iam:PassRole` plus role creation) → **CWE-269 / CWE-732**; CIS IAM.
 - Public storage (S3/blob) or loose ACLs → **CWE-732**; CIS Storage.
 - Secrets hardcoded in IaC, environment, or images → **CWE-798**; CIS Secrets.
@@ -144,7 +150,7 @@ Typical false positive: a NULL dereference from an uninitialized pointer — usu
 
 ### Quick example — IAM privilege escalation (safe PoC)
 
-```
+```text
 IaC grants the app role: { Action: ["iam:PassRole","lambda:CreateFunction",
   "lambda:InvokeFunction"], Resource:"*" }.
 HUNTER: privesc chain — PassRole an admin role plus create a Lambda using it → execute with
@@ -171,4 +177,4 @@ False positive: if a permission boundary or SCP denies PassRole, the chain break
 - **Never invent a CVE.** If there is no clear precedent, write "novel/uncertain".
 - Give severity with a CVSS vector where possible, and always state the preconditions.
 
-Sources: OWASP (https://owasp.org), OWASP API Security (https://owasp.org/API-Security/), CWE Top 25 (https://cwe.mitre.org/top25/), CIS Benchmarks (https://www.cisecurity.org/cis-benchmarks).
+Sources: [OWASP](https://owasp.org), [OWASP API Security](https://owasp.org/API-Security/), [CWE Top 25](https://cwe.mitre.org/top25/), [CIS Benchmarks](https://www.cisecurity.org/cis-benchmarks).

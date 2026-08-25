@@ -6,7 +6,7 @@
 
 An internal reporting app (lab). The suspicious endpoint:
 
-```
+```text
 GET /api/report?path=<report file name>
 Authorization: Bearer <regular user token>
 ```
@@ -29,7 +29,7 @@ Relevant hunting unit: "file-serving endpoints". `/api/report` reaches the files
 
 ### HUNTER #3 (clean context) — candidate
 
-```
+```text
 id: web-03
 location: routes/report.js:12  (GET /api/report)
 class: Path Traversal (CWE-22)
@@ -47,7 +47,7 @@ confidence: medium (unclear whether upstream middleware normalizes the path)
 2. **Taint:** `path.join('/srv/reports','../../etc/passwd')` resolves to `/etc/passwd`. `sendFile` is not root-constrained. No sanitizer.
 3. **PoC (non-destructive — reads a harmless marker file placed by the lab, never a real secret):**
 
-```
+```text
 GET /api/report?path=..%2f..%2fetc%2fhostname   HTTP/1.1
 Authorization: Bearer <test user token>
 
@@ -57,7 +57,8 @@ Authorization: Bearer <test user token>
 
 Observation: a file outside `/srv/reports` was read → escape confirmed. `/etc/shadow` and real data were not touched (least-impact rule).
 
-**Verdict: CONFIRMED**
+#### Verdict: CONFIRMED
+
 - CWE-22 (Path Traversal); OWASP A01 (Broken Access Control) / A05.
 - Severity: High (arbitrary file read with the process's privileges; suggested CVSS ~7.5, AV:N/PR:L/UI:N).
 - Precedent: path traversal in file-serving handlers is an extremely common, long-documented class — no need to cite a specific CVE, and never invent one.

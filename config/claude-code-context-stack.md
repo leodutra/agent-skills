@@ -14,7 +14,7 @@
 Claude Code's effectiveness on a real codebase is bounded by context quality, not model intelligence. Earlier versions of this stack tried to control that by owning four sources of waste at once. 3.0 owns far less, on purpose:
 
 | Waste source | What it looks like | Owned by |
-|---|---|---|
+| --- | --- | --- |
 | **Retrieval & editing** | Whole-file dumps, grep walls, regex edits that miss aliased refs | Serena — **only when enabled** (§2.1, D53) |
 | **Code that didn't need writing** | Wrappers, abstraction layers, "future-proofing" the task didn't ask for | ponytail (§2.2, D54) |
 | **Orientation** | Re-reading dozens of files to learn what connects to what | *unowned* since 3.0 (D52) |
@@ -82,7 +82,7 @@ Wire-level residue (`Read`-tool dumps, growing history) is likewise unowned (D51
 Route every information need to exactly one layer. **Rows naming Serena apply only when Serena's tools are actually loaded** — when they are not, the native tool is not a fallback, it is the answer.
 
 | Question shape | Route to | NOT to | Why |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | "Where is symbol S defined / who calls S?" | Serena (`find_symbol`, `find_referencing_symbols`) | grep | LSP is exact and current; grep has false positives |
 | "What implements / uses this trait or type?" | Serena (`find_referencing_symbols`) | grep | Only the LSP resolves this correctly |
 | "What's in this file?" (structure, not content) | Serena (`get_symbols_overview`) | reading the whole file | An overview costs a fraction of a full read |
@@ -135,7 +135,7 @@ When Serena is not enabled, the working tree read directly is the only source, w
 3.0 is almost entirely *configuration*. The only per-repo **state** left is Serena's `.serena/project.yml`, and it costs no per-repo step — a global SessionStart hook writes and maintains it (§6.3). The graph, its refresh hooks, and every other derived artifact are gone (D52).
 
 | | Global (once, ever) | Per-repo |
-|---|---|---|
+| --- | --- | --- |
 | Serena | MCP registration at **user scope**, left **disabled**; serena-autoinit SessionStart hook | `.serena/project.yml` + the activation note (autoinit, §6.3) |
 | ponytail | marketplace + plugin install (§6.2) | — |
 | Routing contract | `~/.claude/CLAUDE.md` (§4) | — |
@@ -161,7 +161,7 @@ Prereqs: `git`, `claude`, `node` (required — see §6.2); `uv` (for Serena); a 
 
 ponytail ships as a Claude Code plugin from a GitHub-backed marketplace. The `claude plugin` CLI drives both steps non-interactively, which is what lets the installer do it:
 
-```
+```sh
 claude plugin marketplace add DietrichGebert/ponytail
 claude plugin install ponytail@ponytail
 ```
@@ -204,7 +204,7 @@ Why the language set is derived rather than delegated to Serena's own detection,
 `stack-init.ps1` is the Windows installer — the same `global` / `verify` / `contract` command surface and functional guarantees, equally idempotent. Platform-native integrations differ where necessary. Use PowerShell, not `cmd`: the contract write needs here-strings; batch would force `^`-escaping of every `|`/`>`/`<`/`&`. If a `cmd.exe` entry point is required, wrap it (`@powershell -ExecutionPolicy Bypass -File "%~dp0stack-init.ps1" %*`).
 
 | Concept | Unix | Windows (PowerShell) |
-|---|---|---|
+| --- | --- | --- |
 | Claude config dir | `~/.claude/` | `$env:USERPROFILE\.claude\` |
 | Routing contract | `~/.claude/CLAUDE.md` | `$env:USERPROFILE\.claude\CLAUDE.md` |
 | Run the installer | `stack-init` | `.\stack-init.ps1` |

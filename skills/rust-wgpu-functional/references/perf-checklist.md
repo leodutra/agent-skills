@@ -11,6 +11,7 @@ Each section has a "check" (what to look for) and a "fix" (what to do).
 `HashMap::new()`, `.to_string()`, `.to_owned()`, `.clone()`, `format!()`.
 
 **Fix:**
+
 - Replace `Vec::new()` + push loop → `Vec::with_capacity(n)` or iterator `.collect()`
 - Replace per-frame `Vec::new()` → reuse a `Vec` via `.clear()` + `.extend()`
 - Replace `String` with `&str` when the string doesn't need ownership
@@ -27,22 +28,27 @@ during initialization or use pre-allocated pools.
 ## 2. Cache-Line Analysis
 
 **Check:** For data structures iterated in hot loops, calculate:
+
 - Struct size (`std::mem::size_of::<T>()`)
 - Fields accessed per iteration
 - Bytes touched vs bytes loaded per cache line (64 bytes on x86)
 
 **Fix:**
+
 - If accessing <50% of struct fields in a loop → SoA layout (see patterns.md §4)
 - If struct is >64 bytes and fully accessed → consider splitting hot/cold fields
 - Align frequently accessed data to cache line boundaries:
+
   ```rust
   #[repr(C, align(64))]
   struct CacheAligned<T>(T);
   ```
+
 - Sort arrays by access pattern (e.g., depth-sort for front-to-back rendering)
 - Prefer `Vec<T>` over `LinkedList<T>` — always. Linked lists are cache poison.
 
 **Hot/cold field split example:**
+
 ```rust
 // BEFORE: 96 bytes, but culling only needs bounding_sphere (16 bytes)
 struct Entity {
@@ -76,8 +82,10 @@ struct EntityStore {
 **Check:** Look for branches in inner loops — `if`, `match`, `?` on hot paths.
 
 **Fix:**
+
 - Sort input data to make branches predictable (all trues, then all falses)
 - Replace `if` with branchless arithmetic where possible:
+
   ```rust
   // Branchy
   let result = if condition { a } else { b };
@@ -86,7 +94,9 @@ struct EntityStore {
   let mask = condition as u32;
   let result = a * mask + b * (1 - mask);
   ```
+
 - Hoist loop-invariant branches outside the loop:
+
   ```rust
   // BEFORE: branch evaluated N times
   for item in items {
@@ -100,6 +110,7 @@ struct EntityStore {
       processor(item);
   }
   ```
+
 - Use enum dispatch instead of trait objects on hot paths (static dispatch
   eliminates the vtable branch)
 
@@ -111,6 +122,7 @@ struct EntityStore {
 Use `cargo asm` or `godbolt.org` to inspect the output.
 
 **Fix — help the compiler vectorize:**
+
 - Use `chunks_exact()` instead of `chunks()` (the remainder handling in
   `chunks()` can prevent vectorization)
 - Ensure loop bodies have no function calls that aren't `#[inline]`
@@ -122,6 +134,7 @@ Use `cargo asm` or `godbolt.org` to inspect the output.
   which auto-select SIMD backends
 
 **Example — helping auto-vectorization:**
+
 ```rust
 // This auto-vectorizes because:
 // 1. chunks_exact gives the compiler a known stride
@@ -146,12 +159,14 @@ fn apply_transform(positions: &mut [[f32; 4]], matrix: &[[f32; 4]; 4]) {
 ## 5. GPU-Specific Performance
 
 **Check:**
+
 - How many draw calls per frame? (target: <1000 for desktop, <200 for mobile)
 - How many bind group changes? (most expensive state change)
 - How many buffer uploads per frame?
 - What's the GPU buffer alignment? (`device.limits().min_uniform_buffer_offset_alignment`)
 
 **Fix:**
+
 - Batch draw calls by material/pipeline (sort by bind group to minimize switches)
 - Use instanced drawing for repeated geometry
 - Use dynamic offsets in uniform bind groups for per-object data instead of
@@ -163,12 +178,14 @@ fn apply_transform(positions: &mut [[f32; 4]], matrix: &[[f32; 4]; 4]) {
   `min_uniform_buffer_offset_alignment`
 
 **Verification:**
+
 - Measure compute, draw, and composite passes separately before claiming a GPU win
 - Prefer fixed camera bookmarks or deterministic scenes for before/after comparisons
 - If a change adds passes, verify reduced contention or shader work outweighs dispatch overhead
 - Treat timestamp ranges that do not wrap actual work as invalid data, not rough estimates
 
 **Bind group change minimization:**
+
 ```rust
 fn sort_draw_calls_for_gpu(calls: &mut [DrawCall]) {
     // Primary sort: pipeline (most expensive change)
@@ -189,7 +206,9 @@ fn sort_draw_calls_for_gpu(calls: &mut [DrawCall]) {
 **Check:** Is CPU work being done single-threaded that could be parallel?
 
 **Fix:**
+
 - Use `rayon` for data-parallel CPU work:
+
   ```rust
   use rayon::prelude::*;
 
@@ -198,6 +217,7 @@ fn sort_draw_calls_for_gpu(calls: &mut [DrawCall]) {
       .filter(|e| frustum.contains(&e.bounding_sphere))
       .collect();
   ```
+
 - Use `rayon` for parallel sort: `.par_sort_unstable_by()`
 - Pipeline GPU work ahead: submit command buffers while CPU prepares the next frame
 - Use double/triple buffering for uniform data to avoid GPU stalls
@@ -212,13 +232,16 @@ items, single-threaded is usually faster due to thread overhead.
 **Check:** Are there blocking calls on the render thread?
 
 **Fix:**
+
 - All file I/O, network, and asset loading goes on a separate thread/task
 - Use channels (`crossbeam::channel` or `tokio::sync::mpsc`) to communicate
   results back to the render thread
 - Asset loading pipeline:
-  ```
+
+  ```text
   [IO thread: read bytes] → channel → [CPU thread: decode/process] → channel → [Render thread: upload to GPU]
   ```
+
 - Never `pollster::block_on()` inside the event loop — use a dedicated async runtime
 - For buffer readback (e.g., screenshots, GPU profiler data), use
   `buffer.slice(..).map_async()` and poll on a background task
@@ -230,10 +253,12 @@ items, single-threaded is usually faster due to thread overhead.
 **Check:** Are there computations happening at runtime that could be const?
 
 **Fix:**
+
 - Use `const fn` for anything computable at compile time
 - Use `include_bytes!()` for embedded assets (shaders, textures)
 - Use `phf` crate for compile-time perfect hash maps
 - Use const generics to specialize hot functions:
+
   ```rust
   fn process_vertices<const HAS_NORMALS: bool>(data: &[u8]) {
       // The branch is eliminated at compile time — two monomorphized versions
@@ -289,6 +314,7 @@ mod layout_tests {
 Actual optimization requires measurement.
 
 **Toolchain:**
+
 - `cargo flamegraph` — CPU profiling
 - `tracy` — frame-level profiling with GPU timeline
 - `cargo asm` / godbolt.org — verify inlining and vectorization
@@ -297,6 +323,7 @@ Actual optimization requires measurement.
 - `wgpu` timestamp queries — per-pass GPU timing
 
 **Workflow:**
+
 1. Profile first. Identify the bottleneck.
 2. Check this list for applicable fixes.
 3. Apply the fix.

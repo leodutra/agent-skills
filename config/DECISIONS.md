@@ -658,6 +658,7 @@ was written and then removed the same day — see D38 for why, and for what the
 split therefore relies on instead.
 
 <a id="d37"></a>
+
 ## D37 — Cache-economics benchmark declined; Headroom retained provisionally
 
 **Version:** 2.3.3 · **Status:** Active — narrows [D20](#d20); its standing check
@@ -701,6 +702,7 @@ would not know — accepted, bounded by Headroom being the one layer that can be
 dropped per launch with no other consequence.
 
 <a id="d38"></a>
+
 ## D38 — Mechanical doc-drift checking declined
 
 **Version:** 2.3.3 · **Status:** **Premise corrected, partly reversed by
@@ -732,6 +734,7 @@ If it stops being small enough, the place for these checks is the invariant-test
 layer, not a standalone script.
 
 <a id="d39"></a>
+
 ## D39 — Serena tool-surface audit declined
 
 **Version:** 2.4 · **Status:** Active — declines [D23](#d23)
@@ -765,6 +768,7 @@ may never invoke, and will not learn which. Accepted: the cost is a fixed,
 cached prefix, not a per-turn one.
 
 <a id="d40"></a>
+
 ## D40 — Headroom stays default-on despite being the unverified layer
 
 **Version:** 2.4 · **Status:** Active — affirms [D25](#d25)
@@ -807,6 +811,7 @@ layer by default. Bounded by the footprint being marker-guarded and idempotent o
 both platforms, so removal is one edit per rc file plus a directory.
 
 <a id="d41"></a>
+
 ## D41 — The cache-bust symptom restated as a single-session ratio
 
 **Version:** 2.4 · **Status:** Active — repairs the standing check in [D37](#d37)
@@ -845,6 +850,7 @@ full benchmark stays declined and stays documented in §8 for the case where the
 ratio does look wrong and someone wants the effective-cost number.
 
 <a id="d42"></a>
+
 ## D42 — Doc reference checking reinstated, Unix-scoped
 
 **Version:** 2.4 · **Status:** Active — corrects the premise of [D38](#d38)
@@ -884,6 +890,7 @@ otherwise still binds: every behavior that touches a user's machine is mirrored.
 declared, rather than mirrored into PowerShell for symmetry alone.
 
 <a id="d43"></a>
+
 ## D43 — Condensed contract refreshed by hook, user-global scope only
 
 **Version:** 2.4 · **Status:** Active — narrows [D19](#d19)
@@ -914,6 +921,7 @@ a marker comparison over user-global files, with no git or network work, so the
 added session-start latency is negligible.
 
 <a id="d44"></a>
+
 ## D44 — `--no-tokensave` probed at launch, cached on headroom's version
 
 **Version:** 2.4 · **Status:** Active — narrows [D26](#d26)
@@ -946,6 +954,7 @@ Accepted: it runs once per session, and it converts an instruction nobody follow
 into a mechanism that cannot be skipped.
 
 <a id="d45"></a>
+
 ## D45 — `BACKLOG.md` as the fourth document
 
 **Version:** 2.4 · **Status:** Active — extends [D36](#d36)
@@ -968,6 +977,7 @@ evidence, and what "done" looks like. Every "why" it would otherwise carry is th
 decision that closes it. The file is the queue; `DECISIONS.md` remains the record.
 
 <a id="d46"></a>
+
 ## D46 — Serena's dashboard interface is pinned, and a tray is earned not assumed
 
 **Version:** 2.4.1 · **Status:** Active — narrows [D33](#d33)
@@ -1020,6 +1030,7 @@ in the dashboard step. Both are best-effort: every failure path lands on
 `browser`, which is exactly the behaviour this decision replaces.
 
 <a id="d47"></a>
+
 ## D47 — The shim pins Headroom to cache mode
 
 **Version:** 2.4.1 · **Status:** Active — narrows [D25](#d25)
@@ -1057,7 +1068,6 @@ route, and `wrap` forwards it deliberately.
 Its value is entirely in the failure it forecloses: an upstream default flip
 silently trading this stack's cache hits for a few hundred compressed tokens,
 with D41's ratio as the only thing that would ever notice.
-
 
 <a id="d48"></a>
 
@@ -1105,7 +1115,6 @@ same-named skill is never clobbered.
 there is no SessionStart hook auto-linking skills by project type, on purpose:
 which domain method applies to a repo is a judgment call, not something
 derivable from file extensions the way serena-autoinit's language list is.
-
 
 <a id="d49"></a>
 
@@ -1190,7 +1199,6 @@ sessions. The crash chain is the firmer half: it was read directly out of
 `select_outbound_body` and `handlers/anthropic.py`, and reproduced twice in the
 log. §8 remains the procedure that would settle the economics.
 
-
 <a id="d50"></a>
 
 ## D50 — Tool-search deferral is confounded with the latch; the flag stays on
@@ -1260,7 +1268,6 @@ leave it alone") or when there are fewer than 12 tools. With Claude Code's own
 `ENABLE_TOOL_SEARCH=true` active, both back-off branches are observable in this
 log — the three zero-deferral sessions. Headroom yields to the client's tool
 search by construction, so the two never both defer the same tool.
-
 
 <a id="d51"></a>
 
@@ -1453,7 +1460,6 @@ inside the plugin and is injected by its hook. It is deliberately **not** copied
 into `contract.md`: one fact, one home ([D30](#d30)), and a copy here would drift
 from the plugin on its next release.
 
-
 <a id="d55"></a>
 
 ## D55 — Serena's manifest measured: ~5.8K tokens, not ~24K
@@ -1517,7 +1523,6 @@ carelessness about arithmetic, it is quoting a number nobody produced. Cite a
 measurement or flag it as external — and when it is flagged, measuring it is
 work that pays.
 
-
 <a id="d56"></a>
 
 ## D56 — Anti-bypass rules deleted; the shell exclusion re-grounded
@@ -1562,7 +1567,6 @@ that stayed correct while its stated reason went stale. Each time the decision
 survived on a ground nobody had written down. The append-only rule exists for
 exactly this, and it keeps paying — [D51](#d51) would have quietly deleted a
 sound boundary if the reason had been the only thing recorded.
-
 
 <a id="d57"></a>
 

@@ -7,7 +7,7 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 ## Files
 
 | File | What it is | When to read/run |
-|---|---|---|
+| --- | --- | --- |
 | `claude-code-context-stack.md` | The spec: what the stack is and how to operate it. Component roles and boundaries (§2), agent routing matrix (§3), the routing contract (§4), source-of-truth precedence (§5), install & operating model (§6), failure modes (§7), verification (§8). Carries no rationale — only `D<n>` citations. | Read §1–3 first; the rest is reference. |
 | `DECISIONS.md` | Every "why", as numbered append-only decisions (D1–D48). A decision's body is never rewritten: when one is reversed or its stated reason turns out to be wrong, a new entry is appended and the old one gets a pointer. | When you want to know why something is the way it is — or before changing it. |
 | `CHANGELOG.md` | What changed and when, one terse line per change, each citing the decision it implements. | To see what moved between versions. |
@@ -50,7 +50,7 @@ Escape hatches: `CLAUDE_STACK_NO_SERENA_INIT=1` (or a `.serena-skip` file in a r
 ## The one-line model
 
 | Tool | Owns | Never used for |
-|---|---|---|
+| --- | --- | --- |
 | Serena *(opt-in)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it |
 | ponytail *(always on)* | minimal-code discipline, injected at session start | routing any question |
 
@@ -73,7 +73,6 @@ That global set is exactly three and does not grow: the repo's remaining skills 
 **worktrunk** (`wt`; `git-wt` on Windows) — a git-worktree manager for parallel agents/tasks. It moves no tokens and routes no questions; it only manages where checkouts live. `git-wt` and `git wt` are the same binary, not two names to pick between — git auto-discovers any `git-<name>` executable on PATH and exposes it as a `git <name>` subcommand. The Windows/Linux split is deliberate, not an inconsistency to fix: stock Win11 ships Windows Terminal's own `wt.exe`, so `stack-init.ps1` never trusts bare `wt` as evidence of worktrunk and only accepts `git-wt` (winget's install name) or a `.cargo\bin\wt.exe` found by explicit path; Linux/macOS have no such collision — brew and cargo both name the binary plainly `wt` — so `stack-init.sh` keeps bare `wt` first, matching what's actually installed there.
 
 Worktrees stay indistinguishable from any other checkout via one rule — *a worktree is a checkout; checkouts get init*. Serena is the only component with per-worktree state: a linked worktree is a separate checkout at its own path, so it gets its own `.serena/project.yml` (named `repo@branch`) from the serena-autoinit SessionStart hook — no manual step, but not "nothing" either (doc §6.3, D33).
-
 
 ## Prerequisites
 

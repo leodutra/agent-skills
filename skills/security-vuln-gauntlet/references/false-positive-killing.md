@@ -45,7 +45,7 @@ Gate 2 output: the source → sink chain and why the sanitizer (if any) is insuf
 ## Verdict table
 
 | Verdict | Condition |
-|---------|-----------|
+| --------- | ----------- |
 | **CONFIRMED** | Clears all three gates, with a non-destructive PoC and objective evidence |
 | **UNCONFIRMED** | Clears gates 1–2 but no PoC could be built, or exploitation preconditions are missing |
 | **FALSE POSITIVE** | Fails gate 1 (unreachable) or gate 2 (adequately sanitized) |

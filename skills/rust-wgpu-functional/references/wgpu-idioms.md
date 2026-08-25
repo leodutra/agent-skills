@@ -194,6 +194,7 @@ fn execute_compute(
 Review GPU bindings as one contract, not three isolated snippets.
 
 Checklist:
+
 - Each WGSL binding index exists in the Rust bind group layout
 - `read_only` matches WGSL `read` vs `read_write`
 - shader-stage visibility matches actual usage
@@ -203,6 +204,7 @@ Checklist:
 ### Indirect Draw Ownership
 
 If a compute pass writes indirect arguments:
+
 - make one pass the sole writer of `instance_count`
 - initialize the remaining fields deterministically in that same pass or on the CPU
 - remove stale bindings from earlier passes once ownership moves
@@ -455,6 +457,7 @@ flags -> chunk_counts -> chunk_offsets/block_sums -> block_offsets/indirect_args
 ```
 
 Rules:
+
 - keep outputs narrow and intentional
 - prefer one responsibility per pass over a pass that mutates unrelated buffers
 - assert scan hierarchy limits in Rust next to dispatch math

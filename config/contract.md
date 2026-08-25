@@ -24,7 +24,9 @@
    keep that search scoped - it is the most expensive thing you do.
 
 ## Source of truth
+
 The LSP (Serena, when enabled) is live ground truth - it reflects the working
 tree right now, including uncommitted changes. Nothing in this stack derives or
 caches a second model of the code, so there is no precedence conflict to resolve.
+
 # <<< claude-context-stack <<<

@@ -24,6 +24,7 @@ wt --version || git-wt --version || git wt --version
 ```
 
 If missing, offer install (do not install unasked):
+
 - Windows: `winget install max-sixty.worktrunk` then `git-wt config shell install`
 - macOS/Linux: `brew install worktrunk && wt config shell install`
 - Any platform: `cargo install worktrunk && wt config shell install`
@@ -33,7 +34,7 @@ If missing, offer install (do not install unasked):
 ## Core commands
 
 | Task | Command |
-|---|---|
+| --- | --- |
 | New worktree + branch | `wt switch -c <branch>` |
 | Switch to existing | `wt switch <branch>` |
 | Check out a PR in its own worktree | `wt switch pr:<number>` |
@@ -51,6 +52,7 @@ If missing, offer install (do not install unasked):
 Five lifecycle events, each with a blocking pre-hook and a background post-hook: `pre/post-switch`, `pre/post-start` (worktree creation), `pre/post-commit`, `pre/post-merge`, `pre/post-remove`. Pre-hooks block (a failing `pre-merge` stops the merge); post-hooks run in the background.
 
 Defined as top-level TOML keys in either config layer — both run, global first:
+
 - User-global: `~/.config/worktrunk/config.toml` (Linux/macOS), `%APPDATA%\worktrunk\config.toml` (Windows)
 - Per-repo (version-controlled): `.config/wt.toml`
 

@@ -54,6 +54,7 @@ fn update_world(entities: &mut Vec<Entity>, dt: f32) {
 ```
 
 **Problems:**
+
 - Entity is 200+ bytes. Iterating for physics touches `position` and `velocity`
   (24 bytes) but loads the entire struct per cache line.
 - `update()` mixes physics, AI, and spatial queries — can't parallelize.
@@ -162,6 +163,7 @@ fn execute_draws(
 ```
 
 **Performance gains:**
+
 - Physics loop touches 24 bytes/entity (was 200+) → 8x better cache utilization
 - Culling is pure → testable, parallelizable with `rayon::par_iter()`
 - Bitset active check eliminates per-entity branching
@@ -222,6 +224,7 @@ fn render_frame(
 ```
 
 **Problems:**
+
 - 150+ line function doing everything. Untestable — needs a live GPU.
 - Culling logic buried inside GPU pass recording.
 - Adding a new pass means editing this mega-function.
@@ -334,6 +337,7 @@ mod tests {
 ```
 
 **Why this is better:**
+
 - `plan_frame` is ~40 lines of pure logic, fully unit-testable
 - `execute_frame` is ~15 lines of mechanical GPU translation
 - Adding a new pass = add a field to `FramePlan` + a small executor
@@ -371,7 +375,8 @@ impl Renderer {
 }
 ```
 
-**Problems:**
+#### Problems
+
 - Booleans can be set independently from the data they "protect"
 - Every method starts with runtime validation
 - `unwrap()` calls that are "logically safe" but not provably safe
@@ -623,6 +628,7 @@ match load_shader(Path::new("main.wgsl")) {
 ```
 
 **Why algebraic errors win:**
+
 - Adding a new error variant forces every match site to handle it (no silent ignoring)
 - Error data is structured, not parsed from strings
 - Errors compose via `?` — the happy path reads linearly

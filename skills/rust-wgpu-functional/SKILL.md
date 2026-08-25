@@ -62,7 +62,7 @@ Before writing any code, evaluate along these axes:
 
 Structure every system as:
 
-```
+```text
 [ Pure logic ]  →  produces descriptions of work
 [ Thin shell ]  →  executes side effects (GPU commands, I/O, allocation)
 ```
@@ -82,6 +82,7 @@ fn collect_draw_calls(scene: &Scene, camera: &Camera, out: &mut Vec<DrawCall>) {
 Returning a new `Vec` is acceptable on cold paths. Repeated frame-time allocation is not.
 
 **Example — Render pipeline:**
+
 ```rust
 // PURE: describes what to draw (no GPU types)
 fn plan_draw_calls(scene: &Scene, camera: &Camera) -> Vec<DrawCall> { ... }
@@ -99,7 +100,7 @@ fn execute_draw_calls(
 Each module owns exactly one responsibility. Compose via function arguments
 and return values, never via shared mutable state.
 
-```
+```text
 input → parse → validate → transform → describe_effects → execute
 ```
 
@@ -118,6 +119,7 @@ confirms a cross-crate boundary blocks inlining. Within a crate, trust LLVM.
 ## Idiomatic Patterns
 
 Read `references/patterns.md` for detailed code patterns covering:
+
 - Type-state pattern for compile-time pipeline validation
 - Zero-cost iterator pipelines vs manual loops
 - Algebraic error handling (no panics in library code)
@@ -127,6 +129,7 @@ Read `references/patterns.md` for detailed code patterns covering:
 - Builder pattern for complex GPU resource creation
 
 Read `references/wgpu-idioms.md` for wgpu-specific patterns covering:
+
 - Bind group layout composition
 - Render pass and compute pass structure
 - Host/shader contract review
@@ -136,6 +139,7 @@ Read `references/wgpu-idioms.md` for wgpu-specific patterns covering:
 - Surface configuration and resize handling
 
 Read `references/perf-checklist.md` before finalizing any code for:
+
 - Allocation audit
 - Cache-line analysis
 - Branch elimination opportunities
@@ -158,6 +162,7 @@ python .github/skills/rust-wgpu-functional/scripts/generate_layout_tests.py src/
 ```
 
 Layout tests are necessary but not sufficient for Rust/WGSL interop. Also verify:
+
 - Rust `BindGroupLayoutEntry` visibility and read/write mode matches WGSL declarations
 - Rust bind group entries target the same binding indices as the shader
 - one pass owns each read-write aggregate output such as indirect args or scan totals
@@ -171,6 +176,7 @@ one contract and review them together.
 ### Host/Shader ABI Is a Single Unit
 
 For any buffer shared with WGSL:
+
 - use `#[repr(C)]` and `bytemuck::Pod + Zeroable` on Rust structs
 - keep field order identical between Rust and WGSL
 - validate size and alignment after every structural change
@@ -187,6 +193,7 @@ Every binding change must keep WGSL `@group/@binding`, Rust `BindGroupLayoutEntr
 ### Multi-Pass Compute Needs Explicit Ownership
 
 In culling, scan, compaction, and indirect-draw pipelines:
+
 - each pass should own exactly one transformation of data
 - one pass writes each aggregate output; later passes only consume it
 - encode scan hierarchy limits as Rust assertions near buffer sizing and dispatch math
@@ -330,6 +337,7 @@ When generating Rust code with this skill, verify every output against:
 ## Refactoring Examples
 
 Read `references/examples.md` for full before/after transformations showing:
+
 - OOP entity hierarchy → data-oriented SoA with pure systems
 - Monolithic render function → functional core / imperative shell split
 - Runtime type checks → type-state compile-time enforcement

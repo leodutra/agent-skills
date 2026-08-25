@@ -511,6 +511,7 @@ and use-after-free detection — all without reference counting overhead.
 Think in terms of data transformations, not object hierarchies.
 
 **Before (OOP mindset):**
+
 ```rust
 // Each entity is a bag of methods operating on scattered fields
 impl Enemy {
@@ -524,6 +525,7 @@ impl Enemy {
 ```
 
 **After (data-oriented, functional):**
+
 ```rust
 // Each system is a pure-ish function operating on contiguous data
 fn update_ai(ai_components: &mut [AiState], world: &WorldState, dt: f32) { ... }

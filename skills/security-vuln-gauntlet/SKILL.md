@@ -33,7 +33,7 @@ Reviewing or pentesting an authorized codebase, service, binary, or cloud config
 ## Role mapping
 
 | Core role | Security role |
-|-----------|---------------|
+| ----------- | --------------- |
 | LEAD | Split by trust boundary / entry point / high-value asset; maintain the coverage map |
 | BUILDER | **HUNTER** (clean context): propose candidates with an exploitation hypothesis (source → sink) |
 | CRITIC | **VALIDATOR** (blind): inspect the real artifact, check reachability and taint, **build the PoC**. No PoC, no pass |
@@ -62,13 +62,13 @@ Web, API, binary/memory, and cloud/IaC are covered in `references/checklists-by-
 
 - Web (path traversal, with a PoC plus a killed false positive): `references/example-web-run.md`.
 - IDOR/API, binary crash triage, and cloud IAM privilege escalation: inside `references/checklists-by-domain.md`.
-- An end-to-end run across several hunting units: `../../examples/example-security-run.md`.
 
 ## Output
 
 For every **CONFIRMED** finding: title, **CWE ID**, severity (with a suggested CVSS vector), the **non-destructive PoC or evidence**, the source → sink path, preconditions, and remediation. Findings without a PoC are reported as **UNCONFIRMED** in a separate section. Include the coverage map and a reference to the ROE.
 
 ## References
+
 - `references/safety-and-scope.md` — ROE template, PoC constraints, logging.
 - `references/false-positive-killing.md` — the reachability → taint → PoC gates.
 - `references/checklists-by-domain.md` — web / API / binary / cloud (source → sink + bar + OWASP/CWE/CIS).

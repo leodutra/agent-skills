@@ -16,7 +16,7 @@ The version is auto-detected from the project's lockfile (`pnpm-lock.yaml`, `pac
 ## Identifiers
 
 | Registry | Form |
-|---|---|
+| --- | --- |
 | npm (default) | `opensrc path zod`, `opensrc path zod@3.22.0` |
 | PyPI | `opensrc path pypi:requests` |
 | crates.io | `opensrc path crates:serde` |

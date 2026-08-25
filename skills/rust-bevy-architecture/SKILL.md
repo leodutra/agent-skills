@@ -1,5 +1,5 @@
 ---
-name: bevy-architecture
+name: rust-bevy-architecture
 description: Architecture method for Bevy (Rust ECS) game projects, grounded in how Bevy 0.18+ actually works rather than forcing DDD/Clean Architecture onto an ECS. Use this skill whenever designing, scaffolding, structuring, refactoring, or reviewing any Bevy codebase; deciding where a system/component/resource should live; choosing between Messages, Observers, or direct mutation; modeling components and game state; setting up schedules, states, assets, config, saves, determinism, networking, or AI. Trigger it for questions like "how should I structure my Bevy game", "where does this system go", "is this Bevy code over-engineered", or any Bevy folder/module/plugin layout decision, even when the word "architecture" is not used.
 ---
 
@@ -56,13 +56,14 @@ src/
 - `shared/` MUST be business-free. `domain/` MUST be business but feature-neutral.
 - `domain/` MUST be sub-grouped by capability from day one (`domain/combat/`, `domain/characters/`, `domain/economy/`, `domain/world/`). A flat `domain/` becomes a junk drawer every feature depends on.
 - Inside a feature, group by sub-capability and colocate tests:
-  ```text
+
+```text
   combat/
   ├── plugin.rs      # the feature's PUBLIC API
   ├── components.rs  # components private to combat
   ├── attack/{intent.rs, resolve.rs, tests.rs}
   └── damage/{apply.rs, tests.rs}
-  ```
+```
 
 ## 2. Plugin = public API
 
@@ -127,7 +128,7 @@ impl Health {
 ## 8. Communication: Messages vs Observers vs direct
 
 | Tool | Bevy concept | Timing | Ordering | Use for |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | Direct write | system mutates components | this frame | by schedule | same feature, immediate invariant |
 | **Message** | `Message` + `MessageWriter/Reader` | next time reader runs | by your schedule | cross-feature facts, fan-out, determinism-friendly |
 | **Observer** | `Event` + `Observer`/`On<E>` | immediate | CANNOT be ordered | entity-lifecycle reactions, targeted hooks, propagation |
@@ -237,13 +238,13 @@ pub struct CombatAssets { pub hit_sound: Handle<AudioSource> }
 
 ## 17. Errors, assertions, observability
 
-**Errors**
+### Errors
 
 - Systems/observers SHOULD return `Result<(), BevyError>` and use `?` for should-never-fail accesses (`query.single()?`).
 - Develop with the panicking handler; ship with a logging handler (`set_error_handler`).
 - Expected absence (no target this frame) is control flow (`let Ok(x) = .. else { return Ok(()) }`), not an `Err`.
 
-**Assertions / invariants**
+### Assertions / invariants
 
 - Invariants that the type system CANNOT express SHOULD be enforced with `debug_assert!` in the sim path (zero release cost), and with `assert!` for setup/config validation that must hold in release.
 
@@ -252,7 +253,9 @@ debug_assert!(health.current <= health.max);
 assert!(total_weight > 0.0, "loot table must have positive weight");
 ```
 
-**Observability** (first-class, not an afterthought — large games are undebuggable without it)
+### Observability
+
+(first-class, not an afterthought — large games are undebuggable without it)
 
 - Hot systems and core decision functions SHOULD carry tracing spans: `#[tracing::instrument(skip_all)]`.
 - Key facts SHOULD emit structured logs: `info!(attacker = ?e, damage = n, "attack resolved")`.

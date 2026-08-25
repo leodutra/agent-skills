@@ -83,7 +83,7 @@ This is the single most important driver for FX over the medium term.
 
 Structure the conclusion as follows:
 
-```
+```text
 ## Upside Scenario for [PAIR]
 Conditions required:
 - [Condition 1]
@@ -115,6 +115,7 @@ For every analysis, search for:
 6. Relevant upcoming events (FOMC, ECB, BOJ meetings, NFP, CPI releases)
 
 Use queries like:
+
 - `[PAIR] exchange rate today`
 - `[country] central bank interest rate 2026`
 - `[country] CPI inflation latest`
@@ -136,6 +137,7 @@ Use queries like:
 ### Emerging Market Currencies (BRL, MXN, TRY, ZAR, INR, etc.)
 
 Add to the framework:
+
 - Carry attractiveness: what is the nominal and real yield spread over USD?
 - Reserves adequacy: months of import cover, short-term debt ratio
 - Capital account openness: can money leave easily if sentiment shifts?
@@ -145,6 +147,7 @@ Add to the framework:
 ### Crypto-Macro Intersection
 
 If asked about BTC/crypto in macro context:
+
 - Treat as risk asset correlated to liquidity conditions
 - Focus on: global M2 growth, real rates, dollar strength, risk appetite
 - Do not treat as currency analysis — treat as speculative asset macro overlay

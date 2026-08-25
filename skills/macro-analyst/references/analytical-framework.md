@@ -2,13 +2,20 @@
 
 ## Table of Contents
 
-1. [Macro Driver Hierarchy](#macro-driver-hierarchy)
-2. [Central Bank Cheat Sheet](#central-bank-cheat-sheet)
-3. [Key Data Releases Calendar](#key-data-releases)
-4. [Historical Analogues](#historical-analogues)
-5. [EM Currency Risk Checklist](#em-currency-risk-checklist)
-6. [Cross-Asset Signal Map](#cross-asset-signal-map)
-7. [Common Analytical Traps](#common-analytical-traps)
+- [Analytical Framework Reference](#analytical-framework-reference)
+  - [Table of Contents](#table-of-contents)
+  - [Macro Driver Hierarchy](#macro-driver-hierarchy)
+    - [Tier 1: Rate Differentials (Dominant Driver)](#tier-1-rate-differentials-dominant-driver)
+    - [Tier 2: Central Bank Policy Stance](#tier-2-central-bank-policy-stance)
+    - [Tier 3: Fiscal and Sovereign Risk](#tier-3-fiscal-and-sovereign-risk)
+    - [Tier 4: Global Risk Environment](#tier-4-global-risk-environment)
+    - [Tier 5: Positioning and Sentiment (Contrarian at Extremes)](#tier-5-positioning-and-sentiment-contrarian-at-extremes)
+  - [Central Bank Cheat Sheet](#central-bank-cheat-sheet)
+  - [Key Data Releases](#key-data-releases)
+  - [Historical Analogues](#historical-analogues)
+  - [EM Currency Risk Checklist](#em-currency-risk-checklist)
+  - [Cross-Asset Signal Map](#cross-asset-signal-map)
+  - [Common Analytical Traps](#common-analytical-traps)
 
 ---
 
@@ -21,6 +28,7 @@ FX markets are driven by a hierarchy of forces. Analyze in this order — do not
 The single most important medium-term FX driver. Currency flows follow yield.
 
 **What to measure:**
+
 - Nominal policy rate spread (e.g., Fed Funds vs ECB Deposit Rate)
 - Real rate differential: (Nominal rate - Core CPI) for each currency
 - 2-year government bond yield spread — the market's implied rate path
@@ -29,6 +37,7 @@ The single most important medium-term FX driver. Currency flows follow yield.
 **Key principle:** The *direction* of the differential matters more than the *level*. A widening spread in favor of currency A drives A higher even if the absolute spread is small.
 
 **Historical calibration:**
+
 - EUR/USD has ~0.80 correlation with 2-year US-German yield spread over rolling 6-month windows
 - USD/JPY is highly sensitive to US 10-year yields due to Japan's yield curve control legacy
 - EM currencies respond more to real rate differentials than nominal ones
@@ -38,6 +47,7 @@ The single most important medium-term FX driver. Currency flows follow yield.
 Policy guides rate expectations, which move markets before actual rate changes.
 
 **What to assess:**
+
 - Explicit forward guidance vs data-dependency
 - Dot plot / Summary of Economic Projections (Fed-specific)
 - Dissent in voting — are hawks or doves gaining ground?
@@ -45,6 +55,7 @@ Policy guides rate expectations, which move markets before actual rate changes.
 - Emergency tools: is the central bank intervening in FX? (BOJ, PBOC, SNB historically)
 
 **Tone classification:**
+
 - **Ultra-hawkish:** "We will do whatever it takes to bring inflation to target" + actual hikes
 - **Hawkish:** Higher-for-longer messaging, no discussion of cuts
 - **Neutral:** Data-dependent, balanced risk assessment
@@ -57,6 +68,7 @@ Policy guides rate expectations, which move markets before actual rate changes.
 Fiscal policy affects long-term currency valuation and central bank credibility.
 
 **Key metrics:**
+
 - Primary fiscal balance (excluding interest payments) — direction matters most
 - Debt-to-GDP ratio: above 100% is a yellow flag, above 120% with rising trajectory is red
 - Current account balance: persistent deficits require capital inflows to sustain the currency
@@ -70,12 +82,14 @@ Fiscal policy affects long-term currency valuation and central bank credibility.
 Risk appetite drives capital flows between safe havens and risk assets.
 
 **Risk-on regime (favors EM FX, commodity FX, risk currencies):**
+
 - VIX below 15, equities trending up
 - Credit spreads tightening
 - Commodity prices rising
 - Capital flowing into EM bond/equity funds
 
 **Risk-off regime (favors USD, JPY, CHF):**
+
 - VIX above 25, equities falling
 - Credit spreads widening
 - Flight to US Treasuries
@@ -89,11 +103,13 @@ USD strengthens in two scenarios: (1) US economy much stronger than rest of worl
 Positioning data is not a directional signal — it's a crowding signal.
 
 **CFTC Commitments of Traders (COT) data:**
+
 - Net long/short positions of leveraged funds
 - Extreme readings (>2 standard deviations from 3-year mean) signal overcrowding
 - Overcrowded positions unwind violently on contrary data
 
 **Consensus / Analyst Surveys:**
+
 - When >80% of analysts agree on a direction, the trade is usually fully priced
 - Consensus is most useful as a contrarian indicator at extremes
 
@@ -102,7 +118,7 @@ Positioning data is not a directional signal — it's a crowding signal.
 ## Central Bank Cheat Sheet
 
 | Central Bank | Currency | Key Rate | Meeting Frequency | Key Personality Trait |
-|---|---|---|---|---|
+| --- | --- | --- | --- | --- |
 | Federal Reserve (Fed) | USD | Fed Funds Rate | 8x/year (FOMC) | Data-dependent, dual mandate (inflation + employment) |
 | European Central Bank (ECB) | EUR | Deposit Facility Rate | 8x/year | Inflation-focused, consensus-driven, slow to act |
 | Bank of Japan (BOJ) | JPY | Policy Rate | 8x/year | Ultra-gradualist, yield curve management legacy |
@@ -119,6 +135,7 @@ Positioning data is not a directional signal — it's a crowding signal.
 ## Key Data Releases
 
 **Tier 1 releases (immediate FX impact, high volatility):**
+
 - US Non-Farm Payrolls (NFP) — first Friday of the month
 - US/EU/UK CPI — monthly
 - FOMC/ECB/BOJ rate decisions + press conferences
@@ -126,6 +143,7 @@ Positioning data is not a directional signal — it's a crowding signal.
 - China PMI (official + Caixin)
 
 **Tier 2 releases (meaningful but lower volatility):**
+
 - PMI surveys (ISM Manufacturing/Services, EU PMIs)
 - Retail sales
 - Trade balance
@@ -133,6 +151,7 @@ Positioning data is not a directional signal — it's a crowding signal.
 - Wage growth data
 
 **Tier 3 releases (background noise, occasionally matters):**
+
 - Consumer confidence surveys
 - Industrial production
 - PPI
@@ -166,7 +185,7 @@ USD strengthened during the initial crisis (safe haven) → weakened during coor
 For any emerging market currency analysis, score these factors:
 
 | Risk Factor | Low Risk | Medium Risk | High Risk |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Real interest rate | > +3% | +1% to +3% | < +1% or negative |
 | Current account | Surplus | Deficit < 3% GDP | Deficit > 3% GDP |
 | FX reserves | > 6 months imports | 3-6 months | < 3 months |
@@ -184,7 +203,7 @@ For any emerging market currency analysis, score these factors:
 FX does not exist in isolation. These cross-asset relationships provide confirmation or divergence signals.
 
 | Signal | Implication |
-|---|---|
+| --- | --- |
 | US 10Y yield rising + USD rising | Classic: US exceptionalism, capital inflows |
 | US 10Y yield rising + USD falling | Fiscal risk signal — markets worried about debt, not growth |
 | Oil rising + CAD/NOK lagging | Bearish divergence — economy not benefiting from commodity |
