@@ -38,7 +38,7 @@ Bars by goal type:
 | Data, metrics | A known result or standard method, recomputed independently from raw |
 | Prompts, agents, skills | The current prompt as baseline on a frozen eval set with a held-out split |
 | Detection rule | The MITRE ATT&CK technique's attack data, plus a benign log set it must stay silent on |
-| Deck, doc, deliverable | A real artifact from a firm known for it, same page count |
+| Deck, doc, deliverable | A real artifact from a firm known for it, same quality and approximate page count |
 
 Prefer the hardest bar the agent can genuinely reach. Too easy and the loop exits on round one. Out of reach and the only exit left is the user stopping it - offer one of those only when the user wants the pull, and say so.
 
