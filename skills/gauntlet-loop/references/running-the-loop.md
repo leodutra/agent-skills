@@ -4,9 +4,9 @@ You are LEAD. The paste prompt is the contract; this file is how you honour it. 
 
 ## What the harness must have
 
-Subagents with their own clean context, plus the tools to run code, render pages, fetch the reference and take screenshots. In Claude Code: the Agent tool (fresh context by default; never `fork` for a critic; `model` picks the model per call), a git worktree per piece that you create (`wt` from the worktrunk skill, or `git worktree add` - not the Agent tool's `isolation: worktree`, one throwaway worktree per agent off the default branch), and an Artifact for the progress page. Subagents see a roster of the session's named agents, so name none; address a builder by its id and keep every label clear of piece, round and role. The Workflow tool (`ultracode`) fits a fan-out inside a round whose commands are all allowlisted - its agents prompt for anything else even in auto mode - and never the loop itself, which needs a coin flip, a prepared pair and a user who can stop it. If you cannot spawn a separate context, say so and do one self-review pass. Do not report a gauntlet that did not run.
+Subagents with their own clean context, plus the tools to run code, render pages, fetch the reference and take screenshots. In Claude Code: the Agent tool (fresh context by default; never `fork` for a critic; `model` picks the model per call), a git worktree per piece that you create (`wt` from the worktrunk skill, or `git worktree add` - not the Agent tool's `isolation: worktree`, which is one worktree per agent branched from the default branch, not from the piece), and an Artifact for the progress page. Subagents see a roster of the session's named agents, so name none; address a builder by its id and keep every label clear of piece, round and role. The Workflow tool fits a fan-out inside a round whose commands are all allowlisted - its agents prompt for anything else even in auto mode - and never the loop itself, which needs a coin flip, a prepared pair and a user who can stop it. If you cannot spawn a separate context, say so and do one self-review pass. Do not report a gauntlet that did not run.
 
-The loop. If the user typed `/goal`, the harness restarts you after every turn until a small fast model, reading only the transcript, agrees the exit holds: end every turn with one line, `confirmed n/m pieces, whole: no`, and never write that the bar is out of reach - the evaluator can clear a goal it judges impossible, and a turn that ends with subagents still running is simply not judged until they report. Otherwise you are the loop: invoke the loop skill with no interval unless the user typed `/loop`, and end every turn with a wakeup scheduled; forget once and the harness gives you one fallback wakeup 20 minutes later, forget twice and the run is dead.
+The loop. If the user typed `/goal`, the harness restarts you after every turn until a small fast model, reading only the transcript, agrees the exit holds: end every turn with one line, `confirmed n/m pieces, whole: no`, and never write that the bar is out of reach - the evaluator can clear a goal it judges impossible, and a turn that ends with subagents still running is simply not judged until they report. The turn that claims the whole has won ends with the two whole-gate WINNER lines and their file paths, verbatim: the evaluator judges evidence, not a claim. Otherwise you are the loop: invoke the loop skill with no interval unless the user typed `/loop`, and end every turn with a wakeup scheduled; forget once and the harness gives you one fallback wakeup 20 minutes later, forget twice and the run is dead.
 
 Every subagent's permission prompt lands in this session and stalls the run until someone answers it; in auto mode the classifier answers, with the same rules as for you. Before round zero say, in one line and not as a question, that the session needs auto mode or an allowlist covering what builders and critics will run, then continue. Concurrent subagents are capped by the harness (20 by default in Claude Code, `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`; no cap under `/effort ultracode`): count what is running before a fan-out and stage variant escalations one piece at a time.
 
@@ -17,7 +17,7 @@ Every subagent's permission prompt lands in this session and stalls the run unti
 | **LEAD** | Fetch and freeze the reference, set the bar, split, run command floors, prepare each A/B pair, spawn builders and critics, hold the label mapping, translate verdicts, route gaps, keep the workbench, merge | Everything | Builds a piece. Judges a piece. |
 | **BUILDER** | Build one piece for real, then close the gap it is handed | Goal, its piece, the bar sentence, the frozen reference (never the held-out material), the last GAP and FLOOR | Declares a win. Edits tests, eval cases or the bar. Returns notes. Leaves any trace of the loop inside the artifact. |
 | **CRITIC** | One verdict, then it is gone | A, B, the bar sentence with the reference's name removed, the domain's inspection steps | The reference's name, builder notes, round number, earlier verdicts, which side is ours |
-| **SMOOTHER** | Harmonise the assembled whole once | The whole artifact and the bar | Redesigns. Adds anything. Drops a piece below its floor. |
+| **SMOOTHER** | Harmonise the assembled work at each wave's end and at the gate | The assembled artifact and the bar | Redesigns. Adds anything. Drops a piece below its floor. |
 
 Blind is a procedure you run, not an adjective you write. A critic that fetches the bar itself, or is told its name, knows which side is the bar and judges the name: brand halo wearing a blindfold. You fetch; it judges A and B.
 
@@ -25,7 +25,7 @@ Blind is a procedure you run, not an adjective you write. A critic that fetches 
 
 1. **Fetch the reference and freeze it** under `reference/` before any builder exists: screenshots and recordings at named viewports, a clone at a pinned commit, the saved text, the two datasets. Write a one-line manifest: URL, date, viewport or commit. Every later comparison uses this copy. If the fetch fails, stop and tell the user (under `/goal`, see Stopping). No critic ever proceeds from memory.
 2. **Write two bar sentences** into the workbench, verbatim. The full one, for you and the builders: what the goal must achieve, the reference by name, and the floor - the checks that fail regardless of the A/B (tests green, contrast at AA, zero false positives, every citation opens, no schema-invalid output, a number). The critic's copy: the same sentence with the reference's name and origin removed - "a running campaign page for a young audience; mobile Lighthouse 90 or above", never "Nike's". A critic told the name finds the logo or the voice and the blind is gone.
-3. **Split** into the smallest pieces that can be built and judged on their own. Mark which are independent (parallel loops) and which share files or one reader experience (serialise them). A quality dimension can be its own piece - "accessibility" or "accuracy" judged separately instead of averaged into one verdict. A single-piece goal is one loop; skip the smoother at the end and let the piece's confirmed win stand as the whole gate.
+3. **Split** into the smallest pieces that can be built and judged on their own. Mark which are independent (parallel loops) and which share files or one reader experience (serialise them). A quality dimension can be its own piece - "accessibility" or "accuracy" judged separately instead of averaged into one verdict. A single-piece goal is one loop; skip the smoother at the end and let the piece's confirmed win stand as the whole gate. Split as fine as a piece can still be paired with a matching part of the reference - a tree against a tree, a function against a function, a hero against a hero; finer than that and there is nothing to hand the critic as B. A piece is something worth its own loop; what is not is built once inside a piece and judged at the whole gate. A repeated gap splits further on its own.
 4. **Fix the floor per piece.** For code you write the required tests and a held-out set now; the builder sees the required names, never the held-out ones. For prompts, freeze the eval set with a held-out split. For research, list the claims that must be sourced. Command floors (a test run, contrast, Lighthouse, word count, eval pass rate, a recomputation script, a rule over a dataset) are yours to run. Reading floors (a citation says what is claimed) go into the critic's job. A test or eval case you wrote wrong is yours alone to correct: log the old and new expectation under Escalations, rerun the command floors on every confirmed piece it touches, and a red one loses its confirmation.
 5. **Open the workbench** with all of the above. It is also your state file; see below.
 
@@ -39,8 +39,8 @@ Every verdict, every piece, every round:
 4. **Spawn a fresh critic** with the critic prompt below and nothing else. Never resume a critic.
 5. **Discard a verdict that cites nothing.** A verdict counts only if it names what it opened or ran: the two paths, the command and its output, the passage it quotes. No citation, or a WINNER line before EVIDENCE: throw it away and spawn a new critic. Do not argue with it. Once a round, rerun one cited command yourself; if the output differs, that verdict is gone too.
 6. **Translate and file.** Map A/B back to ours/reference. A hedge, a tie, or "both have merits" is a loss for ours. Save the verdict verbatim as `verdicts/<piece>-r<round>-<1|2>.md`, log WINNER, GAP and FLOOR in the workbench and link the file.
-7. **Route the gap.** The builder gets GAP and FLOOR, nothing more - not the critic's observations (one critic's taste; the next may not share it), not the verdict history.
-8. **Confirm a win.** When the critic picks ours, swap A and B - the opposite order, not a new coin flip - and spawn a second fresh critic, on a different model from the first where the harness offers one. The piece has won only when both pick ours. A second coin flip repeats the first order half the time, and a same-model second critic shares the first one's taste for its own kind of output.
+7. **Route the gap** when ours lost; a winner's gap names what the reference lacks and is only logged. The builder gets GAP and FLOOR, nothing more - not the critic's observations (one critic's taste; the next may not share it), not the verdict history.
+8. **Confirm a win.** When the critic picks ours, swap A and B - the opposite order, not a new coin flip - and spawn a second fresh critic on a different model from the first, as strong as the harness offers, and not the builder's model where it offers three. The piece has won only when both pick ours. A second coin flip repeats the first order half the time, and a same-model second critic shares the first one's taste for its own kind of output.
 
 ## Critic prompt
 
@@ -83,7 +83,7 @@ Why each rule is there:
 - Independent pieces are independent loops. Run them concurrently, inside the subagent cap.
 - Pieces that share a file or one reader experience are serialised, or the smoother reconciles them at the gate.
 - One critic per piece per verdict. A critic handed five pieces averages them.
-- Spawn first critics on the strongest model the harness offers; builders may run on a faster one.
+- Builders and first critics on the strongest model the harness offers: a weaker builder costs a round, and a round costs a critic. The smoother is where a faster model saves money; the confirming critic is the last check against a false win and gets a model as strong as the first.
 
 ## Stopping
 
@@ -94,11 +94,15 @@ The exit is winning: every piece confirmed by two critics, then the assembled wh
 - The user can stop the run at any point (`/goal clear`, or Esc on a loop). The workbench must always read as a complete report.
 - Under `/goal` you cannot end the run yourself. When you must stop - budget spent, fetch failed - write the report, then answer each restart with its one-line summary and no tool call; after a few such turns the harness hands control back to the user with the goal still set.
 
-## The assembled-whole gate
+## Waves and the assembled-whole gate
 
-Pieces judged separately drift apart, and a page made of winning pieces can still lose as a page. When every piece has a confirmed win:
+Pieces judged separately drift apart, and a page made of winning pieces can still lose as a page.
 
-1. **Smooth.** One fresh agent reads the assembled whole and harmonises naming, tone, spacing, error handling and the seams between pieces. It does not redesign and adds nothing. Re-run the command floors after it.
+A wave is the set of pieces running at once; a run with more pieces than the cap, or with pieces that build on earlier ones, has several. When every piece of a wave is confirmed and another wave follows, smooth what is assembled so far before it starts: one fresh agent harmonises naming, tone, spacing, error handling and the seams, touching as little as harmonising needs; re-run the command floors; every piece it touched gets one fresh critic with the order swapped from its last verdict - it has won twice already, this checks that it still does - and a loss reopens it. A seam found now is cheaper than the same seam at the gate.
+
+When every piece has a confirmed win:
+
+1. **Smooth.** The same pass over the whole; floors re-run after it.
 2. **Judge the whole.** The same verdict procedure, the whole of ours against the whole of the reference, confirmed by a second critic like any win. A loss becomes a new piece - usually "coherence" - and the gate runs again.
 
 The run ends when the whole wins or the user stops it; a harder bar is a new run, never a raise mid-run.
@@ -155,5 +159,5 @@ the builder prompt, plus one line each: "Approach: [one distinct approach chosen
 ### SMOOTHER
 
 ```text
-You are seeing the complete assembled [goal] for the first time. Pieces were improved separately. Harmonise naming, tone, spacing, error handling and the seams between them. Do not redesign, do not add. Leave no note of what you changed inside the artifact. Return one line: the artifact path.
+You are seeing the assembled [goal] for the first time. Pieces were improved separately. Harmonise naming, tone, spacing, error handling and the seams between them, touching as little as that needs. Do not redesign, do not add. Leave no note of what you changed inside the artifact. Return two lines: the artifact path, and the pieces you touched.
 ```

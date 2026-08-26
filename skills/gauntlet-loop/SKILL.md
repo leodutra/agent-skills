@@ -14,7 +14,7 @@ Run mode - you are that agent - starts when the user says run it, asks you to ru
 1. **Read the goal.** One-line restatement in your head, not on screen.
 2. **Set the bar.** Read the `references/domains/` file that matches the work, if one does; its "Bars that work" entries, each with a measurable half, are the shapes to pattern candidates on. Test a bar the user supplied against the three tests below, fetchable with the tools this session actually has; if it passes, use it. If it fails one, say which test and offer 2 or 3 replacements; if they supplied none, offer 2 or 3 candidates, one line each. In both of those cases stop and wait for their pick before writing anything.
 3. **Write the prompt.** One block, paste-ready, no preamble, no headings inside it, no narration after it.
-4. **Say how to run it.** One flat line under the prompt: "Paste it as is, here or in a fresh session. The session needs auto mode, or the first permission prompt stalls it." Not a question.
+4. **Say how to run it.** One flat line under the prompt: "Paste it as is, here or in a fresh session, with `/effort ultracode` set so builders and critics get the effort. The session needs auto mode, or the first permission prompt stalls it." Not a question.
 
 ## The bar is the whole trick
 
@@ -40,7 +40,7 @@ Bars by goal type:
 | Detection rule | The MITRE ATT&CK technique's attack data, plus a benign log set it must stay silent on |
 | Deck, doc, deliverable | A real artifact from a firm known for it, same quality and approximate page count |
 
-Prefer the hardest bar the agent can genuinely reach. Too easy and the loop exits on round one. Out of reach and the only exit left is the user stopping it - offer one of those only when the user wants the pull, and say so.
+Prefer the hardest bar the agent can genuinely reach; between two equally hard, the less iconic one, since a critic can recognise a famous page from its pixels. Too easy and the loop exits on round one. Out of reach and the only exit left is the user stopping it - offer one of those only when the user wants the pull, say so, and give the first line a budget or time clause so the run has an end.
 
 Give the goal its measurable half where one exists - load time, token cost, benchmark score, pass rate, word count - and put it inside the bar sentence as a floor, not alongside as a preference. A number stated as a preference gets averaged into the A/B; a number stated as a floor gates it. Taste plus a number beats taste alone.
 
@@ -63,14 +63,14 @@ If the same gap comes back, split that piece, then change builders, then fan out
 
 Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
-Fan out subagents and ultracode.
+Fan out subagents.
 ```
 
 Rules for what you fill in:
 
 - Bake the bar in as a concrete, fetchable thing. URL, product name, repo, title.
 - Say how the lead freezes it, in the words of the goal: screenshots at desktop and mobile, three actual posts, the repo at a pinned commit, the two datasets.
-- Add a budget **only if the user named one**, as a second exit at the end of the first line: "...or the budget of [X] is spent". No default cap.
+- Add a budget or time clause as a second exit at the end of the first line - "...or the budget of [X] is spent" - only if the user named one, and always when the bar is out of reach. No default cap otherwise.
 - Add tool names only if the goal needs them (image or video generation, a browser, a deploy target).
 - For code, add one line: you write the required tests and a held-out set before any builder starts, and no builder edits them. For prompts: the eval set is frozen with a held-out split. Other goals carry their floor inside the bar sentence.
 - The first line is the exit and the harness reads it; the last line is the fan-out. Only the noun for the whole and a user-named budget ever change them.
@@ -84,11 +84,11 @@ Plain sentences. No bullet lists inside the prompt. It should read like someone 
 
 ## Portability
 
-`/goal`, `/loop` and `ultracode` are Claude Code features.
+`/goal`, `/loop` and `ultracode` are Claude Code features; what follows is from the Claude Code docs as of August 2026.
 
 `/goal` has to be the first token; the whole message after it is the condition, up to 4,000 characters. After every turn a small fast model reads the transcript and, unless it finds the condition met, starts the lead's next turn; a turn that ends with subagents still running is not judged until they report. The evaluator cannot run commands or open files, so the count of confirmed pieces the lead ends every turn with is what it reads. It survives a lead that forgets to continue, and it waits for nothing between turns. The user ends the run with `/goal clear`; if the evaluator ever clears the goal as impossible, `/goal` again with the same text and the progress page resumes the run. `/goal` is a hook, so it is unavailable where hooks are disabled.
 
-`ultracode` in the prompt opts that turn into workflow orchestration. `/effort ultracode` does it for the whole session and also lifts the 20-subagent cap; Shumer recommends the session setting for serious runs.
+Effort is a session setting the user picks before pasting, and it reaches every builder and critic. The default, `high`, shortchanges exactly the two agents that buy quality: `/effort ultracode` is the setting for a gauntlet - `xhigh` for the session, no 20-subagent cap, no workflow approval prompt in auto mode, Shumer's own recommendation - with `/effort xhigh` the fallback where ultracode is unavailable. The word `ultracode` typed inside a prompt does something else: it turns that one turn into a workflow script and changes no effort, and a script is the wrong tool for round zero, so the prompt does not carry it.
 
 Where `/goal` is unavailable, make `/loop` the first token instead, same body: the prompt re-fires as a new turn at a pace the agent picks, one minute or more apart, with one 20-minute fallback if it forgets to reschedule and a seven-day expiry.
 
@@ -113,7 +113,7 @@ If the same gap comes back, split that piece, then change builders, then fan out
 
 Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
-Fan out subagents and ultracode.
+Fan out subagents.
 ```
 
 **Non-visual goal.** User: "a 2000-word explainer on vector databases for non-engineers."
@@ -133,7 +133,7 @@ If the same gap comes back, split that piece, then change writers, then fan out 
 
 Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
-Fan out subagents and ultracode.
+Fan out subagents.
 ```
 
 ## What breaks a gauntlet loop
@@ -142,7 +142,7 @@ Fan out subagents and ultracode.
 - **The critic hearing the bar's name.** A critic told the reference is Nike finds the swoosh; told it is Julia Evans, finds the voice. It then judges the name, not the work. The lead fetches and freezes; the critic gets A, B and the goal with the name removed, nothing that says which is which.
 - **The builder judging its own work.** The critic must be a separate agent with fresh context, and a new one every round - a reused critic conforms to its own earlier answer and, having seen which side changed, knows which side is ours. It never sees the builder's notes or how many rounds have run.
 - **A soft critic.** Give it a binary job: which one is better, A or B. Scores out of 10 have no anchor, so a threshold gets crossed by noise; a list of ten gaps gets ten shallow fixes. Make it write what it sees before it picks, or it picks first and writes observations to match.
-- **Labels the critic can decode.** Ours always handed over second, a file called hero-v4-final, a comment mentioning round three, a subagent named or labelled after a piece, round or role - every subagent sees the session's agent roster. Random order, clean names, no trace of the loop inside the artifact.
+- **Labels the critic can decode.** Ours always handed over second, a file called hero-v4-final, a comment mentioning round three, a subagent named or labelled after a piece, round or role - every subagent sees the session's roster of named agents. Random order, clean names, no trace of the loop inside the artifact.
 - **The builder editing the bar.** Tests, eval cases and criteria are fixed before building; a green test the builder rewrote is not a green test.
 - **Named exit after N rounds.** Also "no improvement in two rounds, stop". The exit is winning the comparison, confirmed by a second critic with the order swapped, or the user stopping the run. A repeated gap is a reason to split further or change builders, never to stop.
 - **Over-specifying.** Every extra instruction is one fewer decision the agent makes with its own judgment. Minimal wins.

@@ -17,7 +17,7 @@ If the same gap comes back, split that piece, then change builders, then fan out
 
 Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
-Fan out subagents and ultracode.
+Fan out subagents.
 ```
 
 ## Turn 1 - round zero

@@ -18,9 +18,9 @@ HELD-OUT: viewports and content the BUILDER never sees - 320 px, a 40-character 
 
 ## What the critic physically does
 
-Opens a.png and b.png at 100 percent, then the state variants. Measures: samples hex pairs and computes the ratio, measures gutters and row heights in px, lays a ruler on baselines. For games, steps through frames comparing edge softness, shadow direction and HUD scale. Evidence is a path, a px number, a hex pair, a ratio.
+Opens a.png and b.png at 100 percent, then the state variants. Measures: samples hex pairs and computes the ratio, measures gutters and row heights in px, lays a ruler on baselines. For motion, steps through a.webm and b.webm frame by frame: what moves on scroll and hover, when, and how far. For games, steps through frames comparing edge softness, shadow direction and HUD scale. Evidence is a path, a px number, a hex pair, a ratio.
 
-Pair preparation: the LEAD renders both sides with one Playwright script - same viewport and scale factor, same crop, browser chrome removed, filenames a and b, labels coin-flipped for every first CRITIC and swapped for the confirming one. For games, same resolution, matching framing and lighting hour, same frame count. BUILDER screenshots never reach a CRITIC.
+Pair preparation: the LEAD renders both sides with one Playwright script - same viewport and scale factor, same crop, browser chrome removed, filenames a and b, labels coin-flipped for every first CRITIC and swapped for the confirming one; for motion, the same script records a scripted scroll and hover on each side to a.webm and b.webm of equal length. For games, same resolution, matching framing and lighting hour, same frame count. BUILDER screenshots never reach a CRITIC.
 
 ## How the LEAD splits this work
 
