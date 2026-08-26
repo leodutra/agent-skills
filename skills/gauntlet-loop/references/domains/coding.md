@@ -12,7 +12,9 @@ Command floors, run by the LEAD on ours before any CRITIC: required tests green,
 
 ## What the critic physically does
 
-It runs both suites, the benchmark and the hostile-input script from a clean checkout, pastes counts and numbers, then reads both sources for hardcoded test values. Evidence is pasted output, a measured number, or a quoted line with path:line. The LEAD makes the pair blind: both trees copied to `a/` and `b/`, same layout and runtime, git history stripped, comments and filenames naming a round or the CRITIC removed, one adapter so the same script calls each side. The pair is matched by function or feature, never by cutting either side. UI is rendered by the LEAD, never from BUILDER screenshots; a piece with a UI also takes its floors and pair preparation from design.md.
+It runs both suites, the benchmark and the hostile-input script from a clean checkout, pastes counts and numbers, then reads both sources for hardcoded test values. Evidence is pasted output, a measured number, or a quoted line with path:line.
+
+Pair preparation: the LEAD copies both trees to `a/` and `b/`, same layout and runtime, git history stripped, comments and filenames naming a round or the CRITIC removed, one adapter so the same script calls each side; matched by function or feature, never by cutting either side. UI is rendered by the LEAD, never from BUILDER screenshots; a piece with a UI also takes its floors and pair preparation from design.md.
 
 ## How the LEAD splits this work
 
@@ -21,9 +23,6 @@ Pieces are public functions, modules, or endpoints, each with its own test group
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B returns 0 for input it cannot parse instead of throwing; seen by running b/run.js on "abc" and "-5m", both print 0 with exit code 0.
-FLOOR: thrown error names the bad input - A: pass, `Error: invalid duration: "abc"` / B: fail, no error thrown
 EVIDENCE:
 - A: `npm test` in a/ - 6 passed, 0 failed; "" throws, "1h1h" returns 7200
 - B: `npm test` in b/ - 4 passed, 2 failed (cases 4 and 6, negative and invalid input)
@@ -31,4 +30,7 @@ EVIDENCE:
 - B: "999999999999h" returns 3.6e15 with no error; A throws `duration too large`
 - A: hyperfine, 1e6 calls: 412 ms; budget 500 ms
 - B: hyperfine, 1e6 calls: 388 ms; budget 500 ms
+WINNER: A
+GAP: B returns 0 for input it cannot parse instead of throwing; seen by running b/run.js on "abc" and "-5m", both print 0 with exit code 0.
+FLOOR: thrown error names the bad input - A: pass, `Error: invalid duration: "abc"` / B: fail, no error thrown
 ```

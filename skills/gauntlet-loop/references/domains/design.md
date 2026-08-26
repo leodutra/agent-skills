@@ -29,14 +29,14 @@ Pieces are components or screens: a card, a nav bar, an empty state; for games a
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B has no hierarchy - opened b-1440.png; price and plan name are both 16 px regular, so the eye has no first stop. In a-1440.png the price is 40 px bold and lands first.
-FLOOR: primary action found in one glance - A: pass, one saturated button / B: fail, "Choose Pro" and "Compare plans" carry the same weight
-FLOOR: focus state visible - A: pass, 2 px ring in a-1440-focus.png / B: fail, b-1440-focus.png is pixel-identical to b-1440.png
 EVIDENCE:
 - A: a-1440.png - gutters measure 16 and 24 px; feature rows 26 px tall on 16 px text
 - A: a-390.png - card stacks to one column, button full width, no horizontal overflow
 - B: b-1440.png - feature rows 19 px tall on 16 px text (line-height about 1.2); rows touch
 - B: b-390.png - 12 px gutter against 16 px elsewhere; check icons sit 2 px above the text baseline
 - B: b-1440.png - button fill #E5E7EB matches the card border tone; the button does not separate from the card
+WINNER: A
+GAP: B has no hierarchy - opened b-1440.png; price and plan name are both 16 px regular, so the eye has no first stop. In a-1440.png the price is 40 px bold and lands first.
+FLOOR: primary action found in one glance - A: pass, one saturated button / B: fail, "Choose Pro" and "Compare plans" carry the same weight
+FLOOR: focus state visible - A: pass, 2 px ring in a-1440-focus.png / B: fail, b-1440-focus.png is pixel-identical to b-1440.png
 ```

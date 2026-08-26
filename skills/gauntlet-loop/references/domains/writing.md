@@ -25,13 +25,13 @@ Pieces: the opening, each section or argument, the close; for docs, each step or
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B buries its point - opened both excerpts; A states the decision in line 1, B reaches it in the last clause of line 4 after three sentences of setup.
-FLOOR: source check - A: pass ("p99 rose to 4.1 s" matches sources.txt entry 2) / B: fail ("thousands of requests per second" has no entry; grep "requests\|rps" sources.txt returns 0 hits)
 EVIDENCE:
 - A: 81 words, 5 sentences, median 15 words; delete-the-word strikes 3 of 81 ("actually", "very", "in fact")
 - B: 86 words, 3 sentences, median 29 words; delete-the-word strikes 27 of 86, including "in today's rapidly evolving landscape", "in order to", "the various issues relating to"
 - A: line 1 names the reader's problem: "Our checkout times out under Friday traffic"
 - B: line 1 is generic: "Choosing an infrastructure solution is an important consideration"
 - B: "load" appears four times with no noun attached; the reader cannot tell load of what
+WINNER: A
+GAP: B buries its point - opened both excerpts; A states the decision in line 1, B reaches it in the last clause of line 4 after three sentences of setup.
+FLOOR: source check - A: pass ("p99 rose to 4.1 s" matches sources.txt entry 2) / B: fail ("thousands of requests per second" has no entry; grep "requests\|rps" sources.txt returns 0 hits)
 ```

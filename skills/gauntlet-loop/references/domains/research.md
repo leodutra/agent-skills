@@ -41,14 +41,14 @@ One piece per question: evidence for, known limitations, cost figures, the count
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B lacks the counter-case - its "known limitations" section names no contrary source; a search for "logical replication failover data loss" returns two 2025 practitioner write-ups on the ordering gap, neither cited in B; A cites both ([7], [8]) and addresses them.
-FLOOR: every citation opens and contains the claim - A: pass, 11/11 / B: fail, 9/11
-FLOOR: inference is labeled - A: pass (lines 14 and 20 carry "inference:") / B: fail (line 9 states [5]'s "early, promising" as settled)
 EVIDENCE:
 - A: [4] https://wiki.example.org/replication paragraph 3 reads "commits are replayed in the order they were committed on the primary"; matches A line 12
 - B: [3] https://cloud.example.com/pricing opened 2026-08-25; the figure "USD 0.012 per GB" appears nowhere on the page (grep -c "0.012" page.html -> 0)
 - B: [5] byline dated 2023-11-02, concludes "early, promising"; B line 9 presents it as current with no date
 - B: [1], [2] and [6] each cite the same vendor launch post of 2024-03-14 - one source counted as three
 - A: every source dated inline; oldest load-bearing source 2025-02
+WINNER: A
+GAP: B lacks the counter-case - its "known limitations" section names no contrary source; a search for "logical replication failover data loss" returns two 2025 practitioner write-ups on the ordering gap, neither cited in B; A cites both ([7], [8]) and addresses them.
+FLOOR: every citation opens and contains the claim - A: pass, 11/11 / B: fail, 9/11
+FLOOR: inference is labeled - A: pass (lines 14 and 20 carry "inference:") / B: fail (line 9 states [5]'s "early, promising" as settled)
 ```

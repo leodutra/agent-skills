@@ -16,7 +16,8 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 | Skill | Use for |
 | --- | --- |
 | [`architecture-blueprint`](skills/architecture-blueprint/SKILL.md) | Domain-first backend/full-stack architecture: modular monoliths, vertical slices, type-driven domain modeling, ADRs. |
-| [`gauntlet-loop`](skills/gauntlet-loop/SKILL.md) | Turn a goal into a paste-ready prompt (or run it as lead) that loops builders and blind critics against a frozen real-world reference until two critics in a row pick ours; runbook plus per-domain bars for code, writing, design, data, research, prompts and detection. |
+| [`gauntlet-loop`](skills/gauntlet-loop/SKILL.md) | Turn a goal into a paste-ready prompt (or run it as lead) that loops builders and blind critics against a frozen real-world reference until two critics in a row pick ours; runbook plus per-domain bars for code, writing, design, data, research, prompts and detection. Design decisions: [`skills/gauntlet-loop/README.md`](skills/gauntlet-loop/README.md). |
+| [`security-vuln-gauntlet`](skills/security-vuln-gauntlet/SKILL.md) | The gauntlet loop applied to authorized vulnerability hunting: a hunter proposes, a blind validator must build a non-destructive PoC before anything counts. |
 | [`macro-analyst`](skills/macro-analyst/SKILL.md) | Structured macro/FX analysis for currency pairs, rate differentials, central bank policy. |
 | [`opensrc`](skills/opensrc/SKILL.md) | Read the actual source of a dependency (npm/PyPI/crates.io/GitHub) at the installed version via `opensrc path`, instead of guessing from types or docs. |
 | [`rust-bevy-architecture`](skills/rust-bevy-architecture/SKILL.md) | Architecture method for Bevy (Rust ECS) game projects — layout, plugins, messages/observers, scheduling, determinism. |

@@ -1,20 +1,20 @@
 ---
 name: gauntlet-loop
-description: Turns any goal into one short, paste-ready "gauntlet loop" prompt, or runs the loop as lead when asked - set a concrete, fetchable bar (a real product, piece, repo or dataset), split the work into small judgeable pieces, run a builder and a separate blind critic on each, compare the real artifact against the bar with labels stripped, and loop until ours wins. Works for code, writing, UI, research, data analysis, prompts and detection rules. Triggers on "/gauntlet-loop", "gauntlet loop", "gauntlet this", "make a gauntlet prompt", "loop until it beats X", "builder critic loop". Security vulnerability hunting uses the separate security-vuln-gauntlet skill.
+description: Turns any goal into one short, paste-ready "gauntlet loop" prompt, or runs the loop as lead when asked - set a concrete, fetchable bar (a real product, piece, repo or dataset), split the work into small judgeable pieces, run a builder and a separate blind critic on each, compare the real artifact against the bar with labels stripped, and loop until ours wins. Works for code, writing, UI, research, data analysis, prompts and detection rules. Triggers on "/gauntlet-loop", "gauntlet loop", "gauntlet this", "make a gauntlet prompt", "loop until it beats X", "builder critic loop", "run the gauntlet". Security vulnerability hunting uses the separate security-vuln-gauntlet skill.
 ---
 
 # Gauntlet Loop
 
-The user gives a goal. You give back ONE short prompt they can paste into a fresh agent session. If they say run it, you run that prompt here as LEAD.
+The user gives a goal. You give back ONE short prompt they can paste into a fresh agent session. You are not doing the work; you are writing the prompt that makes another agent grind on the work until it beats a real reference. That is write mode, the default.
 
-In write mode you are not doing the work. You are writing the prompt that makes another agent grind on the work until it beats a real reference.
+Run mode - you are that agent - starts when the user says run it, asks you to run a gauntlet loop on a goal, pastes a gauntlet prompt at you, or types `/goal` or `/loop` in front of one. Skip to Run mode at the end.
 
 ## Flow
 
 1. **Read the goal.** One-line restatement in your head, not on screen.
-2. **Set the bar.** Read the `references/domains/` file that matches the work, if one does; its "Bars that work" entries, each with a measurable half, are the shapes to pattern candidates on. If the user supplied a bar, test it against the three tests below with the tools this session actually has; if it fails one, say which test and offer 2 or 3 replacements. If they supplied none, offer 2 or 3 candidate bars, one line each. Either way stop and wait for their pick. Do not write the prompt yet.
+2. **Set the bar.** Read the `references/domains/` file that matches the work, if one does; its "Bars that work" entries, each with a measurable half, are the shapes to pattern candidates on. Test a bar the user supplied against the three tests below, fetchable with the tools this session actually has; if it passes, use it. If it fails one, say which test and offer 2 or 3 replacements; if they supplied none, offer 2 or 3 candidates, one line each. In both of those cases stop and wait for their pick before writing anything.
 3. **Write the prompt.** One block, paste-ready, no preamble, no headings inside it, no narration after it.
-4. **Offer to run it.** One flat line under the prompt: "I can run this here - in auto mode, or the first permission prompt stalls it." Not a question.
+4. **Say how to run it.** One flat line under the prompt: "Paste it as is, here or in a fresh session. The session needs auto mode, or the first permission prompt stalls it." Not a question.
 
 ## The bar is the whole trick
 
@@ -48,9 +48,11 @@ If no reference comes to mind, the first job of the loop is to find one. Never l
 
 ## Prompt template
 
-Adapt the wording every time. Fill the brackets, keep it short, keep the last line.
+Adapt the wording every time. Fill the brackets, keep it short, keep the first and last lines.
 
 ```text
+/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the assembled whole. Until then, run a gauntlet loop:
+
 Build [GOAL].
 
 The bar is [BAR]. Fetch the real thing first and freeze a copy; judge against that copy, never a description of it. [It also has to MEASURABLE HALF.]
@@ -59,9 +61,7 @@ Split it into the smallest pieces that can be judged alone. Each piece gets a bu
 
 If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the assembled whole against the bar the same way.
 
-Update a progress page after every verdict: piece, round, winner, gap. Questions go there, not to me.
-
-/loop until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Only I end it earlier.
+Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
 Fan out subagents and ultracode.
 ```
@@ -70,24 +70,29 @@ Rules for what you fill in:
 
 - Bake the bar in as a concrete, fetchable thing. URL, product name, repo, title.
 - Say how the lead freezes it, in the words of the goal: screenshots at desktop and mobile, three actual posts, the repo at a pinned commit, the two datasets.
-- Add a budget or cost ceiling line **only if the user named one**. No default cap.
+- Add a budget **only if the user named one**, as a second exit at the end of the first line: "...or the budget of [X] is spent". No default cap.
 - Add tool names only if the goal needs them (image or video generation, a browser, a deploy target).
 - For code, add one line: you write the required tests and a held-out set before any builder starts, and no builder edits them. For prompts: the eval set is frozen with a held-out split. Other goals carry their floor inside the bar sentence.
+- The first line is the exit and the harness reads it; the last line is the fan-out. Only the noun for the whole and a user-named budget ever change them.
 - Everything else stays out. No architecture, no file layout, no list of pieces, no round count, no stack choice unless the user demanded it. The agent decides those, and it decides better than a spec written before the work started.
 
 ## Length and voice
 
-Short. Around 200 words; a filled prompt runs to 240 at most. If it needs a heading to stay readable, it is too long.
+Short. Around 230 words; a filled prompt runs to 270 at most. If it needs a heading to stay readable, it is too long.
 
 Plain sentences. No bullet lists inside the prompt. It should read like someone telling an agent what perfect looks like and refusing to accept less. Procedure beats adjectives: "no ties; a hedge counts as a loss" does what "be harsh" only asks for.
 
 ## Portability
 
-`/loop` and `ultracode` are Claude Code features. Mid-prompt, `/loop` tells the agent to invoke the loop skill with no interval and reschedule at the end of every turn until the condition holds. `ultracode` opts the turn into multi-agent orchestration.
+`/goal`, `/loop` and `ultracode` are Claude Code features.
 
-Claude Code also has `/goal <condition>`: typed as the first token, it makes the harness start a new turn after every turn until a separate fast model judges the condition met. It survives an agent that forgets to reschedule. To use it, paste `/goal` plus the exit sentence, then the prompt body without its `/loop` line.
+`/goal` has to be the first token; the whole message after it is the condition, up to 4,000 characters. After every turn a small fast model reads the transcript and, unless it finds the condition met, starts the lead's next turn; a turn that ends with subagents still running is not judged until they report. The evaluator cannot run commands or open files, so the count of confirmed pieces the lead ends every turn with is what it reads. It survives a lead that forgets to continue, and it waits for nothing between turns. The user ends the run with `/goal clear`; if the evaluator ever clears the goal as impossible, `/goal` again with the same text and the progress page resumes the run. `/goal` is a hook, so it is unavailable where hooks are disabled.
 
-For any other agent, swap the last two lines for: "Keep looping until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Run the builders and critics as parallel subagents with their own context." The structure carries over unchanged.
+`ultracode` in the prompt opts that turn into workflow orchestration. `/effort ultracode` does it for the whole session and also lifts the 20-subagent cap; Shumer recommends the session setting for serious runs.
+
+Where `/goal` is unavailable, make `/loop` the first token instead, same body: the prompt re-fires as a new turn at a pace the agent picks, one minute or more apart, with one 20-minute fallback if it forgets to reschedule and a seven-day expiry.
+
+For any other agent, replace the first line with "Keep looping until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Run a gauntlet loop:" and the last line with "Run the builders and critics as parallel subagents with their own context." The structure carries over unchanged.
 
 ## Two filled examples
 
@@ -96,6 +101,8 @@ For any other agent, swap the last two lines for: "Keep looping until two fresh 
 Bars offered: A) Nike's current running campaign page B) On Running's homepage C) Gymshark's product landing page. User picks A.
 
 ```text
+/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the whole page. Until then, run a gauntlet loop:
+
 Build a landing page for a running brand. Athletic, green and dark, alive, for a young audience.
 
 The bar is Nike's current running campaign page. Freeze screenshots and scroll recordings of it at desktop and mobile first; judge against those, never a description of them. It also has to score 90 on Lighthouse performance on mobile.
@@ -104,29 +111,27 @@ Split it into the smallest pieces that can be judged alone. Each piece gets a bu
 
 If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the whole page against Nike's the same way.
 
-Update a progress page after every verdict: piece, round, winner, gap. Questions go there, not to me.
-
-/loop until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Only I end it earlier.
+Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
 Fan out subagents and ultracode.
 ```
 
 **Non-visual goal.** User: "a 2000-word explainer on vector databases for non-engineers."
 
-Bars offered: A) a specific Stripe engineering blog explainer B) a named Julia Evans post C) the Wikipedia article plus a comprehension test. User picks B.
+Bars offered: A) a specific Stripe engineering blog explainer B) Julia Evans' explainers on jvns.ca, three posts frozen C) the Wikipedia article plus a comprehension test. User picks B.
 
 ```text
+/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the whole explainer. Until then, run a gauntlet loop:
+
 Write a 2000-word explainer on vector databases for readers who are smart but not engineers.
 
-The bar is Julia Evans' writing on hard technical topics. Freeze three of her actual posts first; judge against those, never a description of her style. Stay within 2000 words.
+The bar is Julia Evans' explainers on jvns.ca. Freeze three of her actual posts first; judge against those, never a description of her style. Stay within 2000 words.
 
 Split it into the smallest pieces that can be judged alone. Each piece gets a writer and, every round, a fresh critic. For each piece pick a passage of hers doing the same job at about the same length, bylines stripped. Hand it ours and hers as A and B in random order; it hears the goal, never her name, which is which, or who wrote either. It reads both, writes what a non-engineer would take from each, then picks the one they would understand faster and names the biggest thing the loser lacks. No ties; a hedge counts as a loss. The writer closes that gap; repeat.
 
 If the same gap comes back, split that piece, then change writers, then fan out variants; never mark it done. When every piece wins, judge the whole explainer against a whole post of hers the same way.
 
-Update a progress page after every verdict: piece, round, winner, gap. Questions go there, not to me.
-
-/loop until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Only I end it earlier.
+Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
 
 Fan out subagents and ultracode.
 ```
@@ -137,13 +142,13 @@ Fan out subagents and ultracode.
 - **The critic hearing the bar's name.** A critic told the reference is Nike finds the swoosh; told it is Julia Evans, finds the voice. It then judges the name, not the work. The lead fetches and freezes; the critic gets A, B and the goal with the name removed, nothing that says which is which.
 - **The builder judging its own work.** The critic must be a separate agent with fresh context, and a new one every round - a reused critic conforms to its own earlier answer and, having seen which side changed, knows which side is ours. It never sees the builder's notes or how many rounds have run.
 - **A soft critic.** Give it a binary job: which one is better, A or B. Scores out of 10 have no anchor, so a threshold gets crossed by noise; a list of ten gaps gets ten shallow fixes. Make it write what it sees before it picks, or it picks first and writes observations to match.
-- **Labels the critic can decode.** Ours always handed over second, a file called hero-v4-final, a comment mentioning round three. Random order, clean names, no trace of the loop inside the artifact.
+- **Labels the critic can decode.** Ours always handed over second, a file called hero-v4-final, a comment mentioning round three, a subagent named or labelled after a piece, round or role - every subagent sees the session's agent roster. Random order, clean names, no trace of the loop inside the artifact.
 - **The builder editing the bar.** Tests, eval cases and criteria are fixed before building; a green test the builder rewrote is not a green test.
 - **Named exit after N rounds.** Also "no improvement in two rounds, stop". The exit is winning the comparison, confirmed by a second critic with the order swapped, or the user stopping the run. A repeated gap is a reason to split further or change builders, never to stop.
 - **Over-specifying.** Every extra instruction is one fewer decision the agent makes with its own judgment. Minimal wins.
 
 ## Run mode
 
-You are LEAD. Read `references/running-the-loop.md`, then the one file in `references/domains/` that matches the work. You fetch and freeze the bar, split the goal, dispatch builders and critics as fresh subagents, translate each verdict and route the gap back, and merge. You never build a piece and never judge one. You are also the loop: unless the user typed `/goal`, invoke the loop skill with no interval and reschedule at the end of every turn until the exit holds. If this session cannot spawn subagents, say so and do one self-review pass; do not call it a gauntlet.
+You are LEAD. Read `references/running-the-loop.md`, then the one file in `references/domains/` that matches the work. A goal that arrived without a bar gets Flow step 2 first. You fetch and freeze the bar, split the goal, dispatch builders and critics as fresh subagents, translate each verdict and route the gap back, and merge. You never build a piece and never judge one. The loop: if the user typed `/goal`, the harness restarts you after every turn until its evaluator agrees the exit holds, so end every turn with the count of confirmed pieces; otherwise you are the loop - invoke the loop skill with no interval and reschedule at the end of every turn until the exit holds. If this session cannot spawn subagents, say so and do one self-review pass; do not call it a gauntlet.
 
 Method: Matt Shumer, ["How to Run a Gauntlet Loop"](https://somethingbig.ai/gauntlet-loop). This skill is an independent adaptation.

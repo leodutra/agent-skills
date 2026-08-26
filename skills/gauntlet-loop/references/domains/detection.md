@@ -43,10 +43,6 @@ One piece per technique per log source: schtasks.exe process creation and Event 
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B fires on benign scheduled-task creation by the endpoint management agent; A carries a parent-image filter for it. Seen by running both over benign/ and opening the 17 matched lines.
-FLOOR: every exclusion cites a benign line - A: pass, filter names CcmExec.exe and benign line 20481 / B: pass, no exclusions
-FLOOR: ATT&CK tag matches what the attack set exercises - A: pass (attack.t1053.005) / B: pass (attack.t1053.005)
 EVIDENCE:
 - A: `chainsaw hunt benign/ -s a.yml --mapping sigma-event-logs-all.yml` -> 0 detections over 412,880 process_creation events (30 days)
 - B: same command -> 17 detections, all ParentImage=C:\Windows\CCM\CcmExec.exe, User=NT AUTHORITY\SYSTEM, CommandLine contains "/tn \Microsoft\Configuration Manager\"
@@ -54,4 +50,8 @@ EVIDENCE:
 - B: detection block is `selection` only - Image endswith \schtasks.exe, CommandLine contains /create; no suspicious clause, no parent filter
 - A: `SCHTASKS  /Create /tn x /tr "powershell -enc ..."` (upper case, double space) still fires; B: same
 - A and B: task registered through the ITaskService COM API, no schtasks.exe process, fires on neither
+WINNER: A
+GAP: B fires on benign scheduled-task creation by the endpoint management agent; A carries a parent-image filter for it. Seen by running both over benign/ and opening the 17 matched lines.
+FLOOR: every exclusion cites a benign line - A: pass, filter names CcmExec.exe and benign line 20481 / B: pass, no exclusions
+FLOOR: ATT&CK tag matches what the attack set exercises - A: pass (attack.t1053.005) / B: pass (attack.t1053.005)
 ```

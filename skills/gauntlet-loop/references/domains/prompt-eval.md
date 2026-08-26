@@ -25,14 +25,14 @@ Pieces: system prompt core, each tool description, few-shot block, output format
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B lacks the held-out generalisation A has - held-out 6/10 vs 9/10, stable across 3 runs; opened B.txt and eval/visible.jsonl: B's two few-shot invoices are visible cases 07 and 12 copied verbatim, and the three held-out cases B loses are multi-currency layouts those examples never show
-FLOOR: few-shot examples are not eval cases - A: pass (grep -F -f eval/inputs.txt A.txt: 0 hits) / B: fail (2 hits, B.txt lines 31-58 match cases 07 and 12)
-FLOOR: described output format matches what the harness checks - A: pass (A.txt line 12 names the four JSON keys the schema requires) / B: pass (B.txt line 9, same four keys)
 EVIDENCE:
 - A: `promptfoo eval -c eval/config.yaml --prompts A.txt` x3 - visible 27/30, 28/30, 27/30; held-out 9/10, 9/10, 8/10; schema-invalid 0/40; mean 690 tokens
 - B: same command with B.txt - visible 28/30, 28/30, 27/30; held-out 6/10, 6/10, 7/10; schema-invalid 0/40; mean 740 tokens
 - runs/diff.jsonl: visible 03 and 19 flip between runs on both sides; B breaks held-out 33, 36, 38, all invoices carrying two currencies
 - Noise band: visible moves by 1 case per side across runs; the 3-case held-out gap sits outside it
 - B.txt line 31 quotes "Invoice #4471 ... Total EUR 1,240.00", the input of visible case 07
+WINNER: A
+GAP: B lacks the held-out generalisation A has - held-out 6/10 vs 9/10, stable across 3 runs; opened B.txt and eval/visible.jsonl: B's two few-shot invoices are visible cases 07 and 12 copied verbatim, and the three held-out cases B loses are multi-currency layouts those examples never show
+FLOOR: few-shot examples are not eval cases - A: pass (grep -F -f eval/inputs.txt A.txt: 0 hits) / B: fail (2 hits, B.txt lines 31-58 match cases 07 and 12)
+FLOOR: described output format matches what the harness checks - A: pass (A.txt line 12 names the four JSON keys the schema requires) / B: pass (B.txt line 9, same four keys)
 ```

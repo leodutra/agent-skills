@@ -32,9 +32,6 @@ Pieces: ingestion and cleaning; one per metric; the sensitivity sweep; the findi
 ## A verdict, as evidence looks
 
 ```text
-WINNER: A
-GAP: B's headline lift excludes mobile sessions without saying so - seen by reading b/sql/conversion.sql against the metric definition, which names all sessions
-FLOOR: every code filter appears in the report - A: pass (a/run.py filters on the 4-week window only; a/report.md line 8 names it) / B: fail (b/sql/conversion.sql line 9 `WHERE device = 'desktop'`; b/report.md never names device)
 EVIDENCE:
 - A: `python a/run.py --seed 42` prints `lift=0.061 ci=[0.032,0.090] n=184203`; a/report.md line 12 quotes the same three numbers
 - A: recomputation from the definition sentence: 6.1%; weekly sweep 2.4% to 9.0%, sign holds, a/report.md line 31 states it
@@ -42,4 +39,7 @@ EVIDENCE:
 - B: recomputation from the definition sentence: 6.1%; weekly sweep 14.9% to 26.1%, sign holds, not stated in b/report.md
 - B: b/report.md line 12 states "+20% conversion" with no interval
 - A and B: sha256 of out/results.csv identical across two seed-42 runs on each side
+WINNER: A
+GAP: B's headline lift excludes mobile sessions without saying so - seen by reading b/sql/conversion.sql against the metric definition, which names all sessions
+FLOOR: every code filter appears in the report - A: pass (a/run.py filters on the 4-week window only; a/report.md line 8 names it) / B: fail (b/sql/conversion.sql line 9 `WHERE device = 'desktop'`; b/report.md never names device)
 ```
