@@ -1080,7 +1080,10 @@ The global install deploys exactly three skills to `~/.claude/skills/`
 remaining skills — architecture-blueprint, rust-bevy-architecture,
 rust-wgpu-functional, macro-analyst — are DOMAIN skills, and they get a new
 `skills` subcommand on both installers that deploys them into the current
-repo's `.claude/skills/` instead.
+repo's `.claude/skills/` instead. The rule, not the list, is what binds: every
+skill added to the repo since (security-vuln-gauntlet, good-readme) deploys the
+same way, and the subcommand enumerates `skills/*/` at runtime, so a new one
+needs no installer change.
 
 **Why not global.** Every skill in `~/.claude/skills/` pays its description
 frontmatter into every session's context, in every project, relevant or not.

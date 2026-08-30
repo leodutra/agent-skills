@@ -820,7 +820,8 @@ install_global() {
 # Per-repo skill deployment (`skills`). The global install deploys exactly
 # three skills (gauntlet-loop, opensrc, worktrunk) because they are
 # project-agnostic; the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
-# rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of
+# rust-bevy-architecture, rust-wgpu-functional, macro-analyst,
+# security-vuln-gauntlet, good-readme) stay out of
 # $CLAUDE_DIR/skills on purpose: every skill there pays its description into
 # EVERY session's context, in every project, relevant or not — about a
 # thousand tokens of standing overhead for skills that only apply to specific
