@@ -34,6 +34,11 @@ removed; what remains is one opt-in tool and one instruction-injecting plugin.
   for opt-in is inert cost when Serena is never activated, plus the full
   prefix-cache bust that toggling it mid-session causes (D50's mechanism).
   [D55](DECISIONS.md#d55) (corrects [D53](DECISIONS.md#d53))
+- **Add** good-readme to the global skill set, making it four: it is project-agnostic
+  (every repo has a README) and the first global skill fronting no installed tool.
+  D48's per-repo rule for domain skills is unchanged; only its "exactly three"
+  bound moved. ~85 tokens per session. [D58](DECISIONS.md#d58) (amends
+  [D48](DECISIONS.md#d48))
 - **Add** ponytail as a default-on Claude Code plugin (marketplace
   `DietrichGebert/ponytail`, plugin `ponytail@ponytail`), installed by
   `stack-init` via the `claude plugin` CLI. Injects a minimal-code-discipline

@@ -28,7 +28,7 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 
 Skills are picked up automatically by Claude Code when their trigger conditions match a request — no manual invocation needed beyond what each `SKILL.md` describes.
 
-Claude Code only discovers skills from `~/.claude/skills/` (global) and a repo's `.claude/skills/` — never from this checkout itself. `config/stack-init.sh global` deploys the three project-agnostic skills (`gauntlet-loop`, `opensrc`, `worktrunk`) globally; the domain skills deploy per repo with `stack-init skills <name>`, because a global skill's description is loaded into every session in every project ([D48](config/DECISIONS.md#d48)).
+Claude Code only discovers skills from `~/.claude/skills/` (global) and a repo's `.claude/skills/` — never from this checkout itself. `config/stack-init.sh global` deploys the four project-agnostic skills (`gauntlet-loop`, `opensrc`, `worktrunk`, `good-readme`) globally; the domain skills deploy per repo with `stack-init skills <name>`, because a global skill's description is loaded into every session in every project ([D48](config/DECISIONS.md#d48)).
 
 ## Docs
 

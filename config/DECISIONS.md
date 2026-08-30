@@ -71,6 +71,7 @@ with its correction next to it, is the point.
 | [D55](#d55) | Serena's manifest measured: ~5.8K tokens, not ~24K | 3.0 | Active — corrects the figure in D53; decision stands on narrower grounds |
 | [D56](#d56) | Anti-bypass rules deleted; the shell exclusion re-grounded | 3.0 | Active — completes D51's removal; re-grounds D3 |
 | [D57](#d57) | Serena retained behind a mechanical kill criterion | 3.0 | Active — gates D53; the gate D20 never had |
+| [D58](#d58) | good-readme deploys globally; the criterion is project-agnosticism | 3.0 | Active — amends D48 |
 
 ---
 
@@ -1073,17 +1074,19 @@ with D41's ratio as the only thing that would ever notice.
 
 ## D48 — Domain skills deploy per-repo, never globally
 
-**Version:** 2.5 · **Status:** Active
+**Version:** 2.5 · **Status:** Active — **the "exactly three" bound is amended by [D58](#d58)**; the per-repo rule for domain skills stands.
 
 The global install deploys exactly three skills to `~/.claude/skills/`
 (gauntlet-loop, opensrc, worktrunk) and that set does not grow. The repo's
 remaining skills — architecture-blueprint, rust-bevy-architecture,
 rust-wgpu-functional, macro-analyst — are DOMAIN skills, and they get a new
 `skills` subcommand on both installers that deploys them into the current
-repo's `.claude/skills/` instead. The rule, not the list, is what binds: every
-skill added to the repo since (security-vuln-gauntlet, good-readme) deploys the
-same way, and the subcommand enumerates `skills/*/` at runtime, so a new one
-needs no installer change.
+repo's `.claude/skills/` instead. The rule, not the list, is what binds: a
+skill added to the repo later deploys per-repo unless it is project-agnostic —
+security-vuln-gauntlet is not and stays per-repo, good-readme is and went
+global ([D58](#d58)) — and the
+subcommand enumerates `skills/*/` at runtime, so a new one needs no installer
+change.
 
 **Why not global.** Every skill in `~/.claude/skills/` pays its description
 frontmatter into every session's context, in every project, relevant or not.
@@ -1630,3 +1633,41 @@ and the layer it was supposed to gate turned out to be inflating its own numbers
 condition. This one is a `grep` over logs the tool already writes, and
 `stack-init verify` runs it, so the answer arrives without anyone deciding to
 look for it.
+
+<a id="d58"></a>
+
+## D58 — good-readme deploys globally; the criterion is project-agnosticism
+
+**Version:** 3.0 · **Status:** Active — amends [D48](#d48)'s "exactly three and
+does not grow" bound; D48's rule for domain skills stands unchanged
+
+good-readme joins gauntlet-loop, opensrc and worktrunk in `~/.claude/skills/`,
+making the global set four. It is the first global skill that surfaces no
+globally installed tool.
+
+**Why the bound moved rather than the rule.** D48 stated the global set as a
+number ("exactly three") and justified it with a property (project-agnostic:
+"they surface globally installed tools and apply to any repo"). Those are two
+different criteria bolted together, and the number was the incidental half — at
+the time, the only project-agnostic skills in the repo happened to be the three
+that front an extra. A README is not a domain: every repo has one, in every
+language, and none of the per-repo triggers D48 relies on (is this Bevy? is
+this Rust?) apply. Deploying it per-repo would mean running `stack-init skills
+good-readme` in every checkout, which is a global install with extra steps.
+What binds is the property; the count was a description of it, not a limit.
+
+**What it costs.** The description is 333 characters, roughly 85 tokens,
+charged to every session in every project. That is under a tenth of the ~1,000
+tokens D48 measured for the four domain skills, and it buys a skill that fires
+in any of them. The trigger is unusually tight for a skill this broad — its
+description names five exclusions ("not for full docs sites,
+API-reference-only work, general repo launch/readiness audits, topics/homepage
+metadata, or broad repository review") — so the spurious-trigger half of D48's
+argument, the part a token count does not capture, is answered by the
+description rather than by scope.
+
+**What would reverse this.** The same evidence D48 runs on: if the description
+starts pulling sessions into README work they did not ask for, it goes back to
+per-repo, where its canonical copy already works unchanged (`stack-init skills
+good-readme`). Nothing about the skill differs between the two deployments —
+only who pays for its description.

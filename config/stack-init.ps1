@@ -140,7 +140,8 @@ function Get-Contract {
   return (Read-Text $p).TrimEnd()
 }
 
-# Skills for the extras (gauntlet-loop, opensrc, worktrunk). These ship none of
+# The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme).
+# The three extras ship none of
 # their own, and without a SKILL.md in
 # $ClaudeDir\skills Claude has the binaries on PATH but nothing ever surfaces
 # them - the skill description is what makes the agent reach for the tool.
@@ -735,7 +736,7 @@ function Install-Global {
     Warn "worktrunk unavailable - parallel-worktree support skipped (stack unaffected)"
   }
 
-  Say "Extras' skills -> $ClaudeDir\skills (gauntlet-loop, opensrc, worktrunk)"
+  Say "Global skills -> $ClaudeDir\skills (gauntlet-loop, opensrc, worktrunk, good-readme)"
   # Deployed unconditionally (even if a binary install above failed - both are
   # global tools the user may add later, and the worktrunk skill itself covers
   # offering the install) and idempotently: overwritten every run, like the
@@ -743,6 +744,8 @@ function Install-Global {
   Install-ExtraSkill 'gauntlet-loop'
   Install-ExtraSkill 'opensrc'
   Install-ExtraSkill 'worktrunk'
+  # Surfaces no binary - global because it is project-agnostic (D58).
+  Install-ExtraSkill 'good-readme'
 
   Say "Routing contract -> $ClaudeMd"
   Write-ManagedBlock $ClaudeMd (Get-Contract 'contract.md')
@@ -760,10 +763,11 @@ function Install-Global {
   Say "graph ('.\stack-init.ps1 init' still works for an eager build)."
 }
 
-# Per-repo skill deployment (`skills`). The global install deploys exactly
-# three skills (gauntlet-loop, opensrc, worktrunk) because they are
-# project-agnostic; the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
-# rust-bevy-architecture, rust-wgpu-functional, macro-analyst) stay out of
+# Per-repo skill deployment (`skills`). The global install deploys only the
+# project-agnostic skills (gauntlet-loop, opensrc, worktrunk, good-readme);
+# the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
+# rust-bevy-architecture, rust-wgpu-functional, macro-analyst,
+# security-vuln-gauntlet) stay out of
 # $ClaudeDir\skills on purpose: every skill there pays its description into
 # EVERY session's context, in every project, relevant or not. This deploys
 # them into the CURRENT repo's .claude\skills instead, where only sessions in
@@ -951,6 +955,7 @@ function Invoke-Verify {
   Write-RowSkill 'opensrc'
   Write-RowSkill 'worktrunk'
   Write-RowSkill 'gauntlet-loop'
+  Write-RowSkill 'good-readme'
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Row 'contract' "OK ($ClaudeMd)" }
   else { Write-Row 'contract' 'MISSING' }
   if (Test-InGitRepo) {

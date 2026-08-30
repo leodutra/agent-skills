@@ -16,10 +16,12 @@ The other skills here are domain methods (Rust, architecture, macro analysis) or
 
 ## Deployment
 
-Domain skill, so it deploys per repo, never globally ([D48](../../config/DECISIONS.md#d48)):
+Global, deployed by `config/stack-init.sh global` alongside gauntlet-loop, opensrc and worktrunk ([D58](../../config/DECISIONS.md#d58)):
 
 ```sh
-cd /path/to/project && stack-init skills good-readme
+config/stack-init.sh global     # mirrors this directory to ~/.claude/skills/good-readme
 ```
 
-Global would charge its description to every session in every project, including the ones that will never ask for a README. Its trigger is narrow by design — the description says "only when the user explicitly asks" — which makes it a poor fit for standing context and a good fit for an explicit per-repo opt-in.
+It is the first global skill fronting no installed tool. The reason it is not a per-repo domain skill ([D48](../../config/DECISIONS.md#d48)): every repo has a README, in every language, so none of the per-repo triggers domain skills rely on apply — deploying it per checkout would be a global install with extra steps. The cost is its description, ~85 tokens in every session, held down by a deliberately narrow trigger that names five exclusions.
+
+The deployed copy is managed: overwritten on every `stack-init global` run, stale files removed. Edit here, not there.
