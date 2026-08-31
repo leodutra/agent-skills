@@ -112,3 +112,189 @@ Document direction (READMEs + ADR). Once boundaries matter, you MUST enforce it 
 ## Strategic DDD only
 
 Use bounded contexts, ubiquitous language, domain ownership, explicit business concepts. You MUST NOT import the tactical-DDD pattern zoo (aggregates/repositories/factories/specifications everywhere) by default; pull a pattern in ONLY when a specific problem calls for it.
+
+## Role vocabulary (file and folder names)
+
+This vocabulary names the **role a file plays**, which is a different axis from SKILL.md's Naming rules (those govern functions, types, and events, which MUST speak the business language). `handler.ts` is a legitimate file name; `handle()` as a business operation is not. Both apply at once: `refund-order/handler.ts` exporting `refundOrder()`.
+
+Rules for using it:
+
+- Name by **responsibility**, not by technical kind. A file MUST NOT carry a role name it does not actually fulfil (`repository.ts` that wraps one ORM call is a mislabel).
+- This is a **catalog to pull from, not a folder tree to create**. Most slices need three or four of these names, ever. Creating the full set is the pattern-zoo failure this blueprint forbids.
+- **Singular for a file, plural for a folder** of several: `validator.ts`, `policies/`.
+- **One role per file.** A file needing two role names SHOULD be split — or the names are wrong.
+- These names live *inside* a module. Top-level source folders MUST still be business capabilities.
+- In snake_case languages, transliterate: `use_case.py`, `value_object.rs`, `refund_policy.py`.
+
+### Input, output, and shape
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `parser` | Raw representation → structure | Slice boundary. SHOULD produce domain types directly (parse, don't validate) |
+| `schema` | Declares the contract/shape of data at a boundary | Slice |
+| `serializer` | Structure → serialized representation | Slice |
+| `deserializer` | Serialized representation → structure | Slice. `codec` MAY name the pair when they are symmetric and co-located |
+| `formatter` | Structure → presentation form for humans | Slice; `platform/` only if business-free |
+| `mapper` | Model A → model B across one boundary | Slice |
+| `converter` | Value/type conversion between representations | `domain/` if the types are domain types, else `platform/` |
+| `normalizer` | Puts data in canonical form | Slice or `domain/` |
+| `sanitizer` | Removes or neutralizes unwanted/unsafe input | Trust boundary. MUST NOT be skipped as "simplification" |
+| `presenter` / `view-model` | Shapes data for one specific view | Read-side slice |
+| `contract` | Shape published to external consumers | `api/`. Changing it is a breaking change |
+| `translator` | Maps a foreign model into our language (anti-corruption) | Next to the `gateway` it protects |
+
+### Validation
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `validator` | Verifies data validity | Boundary only. SHOULD return parsed typed values, not booleans; downstream code MUST NOT re-validate |
+| `matcher` | Tests a value against a criterion | Slice |
+| `specification` | Composable predicate (`isSatisfiedBy`) | Rare. ONLY when composing predicates or driving queries (see `domain-modeling.md`) |
+
+### Application (the slice)
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `handler` | Entry point of one operation; orchestrates | Slice. The default slice entry point |
+| `use-case` | One business operation | Synonym of `handler`. Pick ONE of the two per codebase and keep it consistent |
+| `command` | Intent to change state | Slice. Conceptual only — MUST NOT be read as requiring CQRS |
+| `query` | A read operation | Slice |
+| `resolver` | Resolves a value, resource, or implementation on demand | Slice |
+| `middleware` | Cross-cutting step in a request pipeline | `platform/`. MUST stay business-free |
+| `saga` / `process-manager` | Coordinates a multi-step, multi-module workflow with compensation | Module level, Stage 3+. ONLY when a real workflow spans modules and can fail midway |
+| `job` / `task` | Unit of scheduled or deferred work | Slice. MUST be idempotent |
+
+### Domain
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| newtype | Distinguishes same-typed primitives (ids) | `domain/`. On from Stage 1 |
+| `value-object` | Concept defined by its value; immutable, self-validating | `domain/` |
+| `entity` | Identity, lifecycle, and invariants | `domain/`. Rich behavior ONLY on a SKILL.md trigger |
+| `policy` | A business decision or rule | Slice by default; `policies/` when shared by 2+ slices |
+| `process` / `reaction` | Reactive when-then logic | Slice. MUST NOT be called a policy |
+| `factory` | Non-trivial construction | `domain/`. ONLY when construction itself carries rules |
+| `builder` | Incremental construction of a complex value | Rare. ONLY for genuinely many optional parts |
+| `domain-service` | Domain behavior belonging to no single entity or value object | `domain/`. Prefer a pure function in the functional core first |
+| `events` | Past-tense business facts | Slice (`events`) or `domain/` |
+| `errors` | Typed domain failures | `domain/`. Technical error primitives MAY live in `platform/` |
+
+### Persistence
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `repository` | Persists/retrieves aggregates or entities | NOT the default. ONLY for measurable value; direct ORM calls otherwise |
+| `read-model` | Shape optimized for one read path | Read-side slice |
+| `projection` | Builds/updates a read model from events | Slice. Only where events already exist |
+| `unit-of-work` / `transaction` | Transactional boundary control | Imperative shell or `platform/` |
+| `cache` | Cache abstraction | `platform/`. Add ONLY with a measured need |
+| `migration` | Schema/data migration | Module `migrations/` or repository level |
+| `outbox` | Records events transactionally for reliable publish | ONLY when at-least-once delivery is actually required |
+
+### Integration
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `gateway` | Boundary to an external system, expressed in our language | Module or slice |
+| `client` | Concrete transport/protocol implementation | Behind the gateway, or `platform/` |
+| `adapter` | Adapts one interface to another | ONLY where two real, existing interfaces meet |
+| `port` | Interface the module owns for an outbound need | ONLY with 2+ real implementations or a committed swap. MUST NOT be introduced for testability alone |
+
+### Messaging
+
+`event` = a domain fact that happened. `message` = the transport envelope carrying it. You MUST NOT use the words interchangeably.
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `event` | Past-tense business fact | `domain/` or slice. Naming rules in `events-and-consistency.md` |
+| `event-publisher` | Publishes domain events | Slice or module |
+| `event-handler` / `subscriber` | Reacts to an event | Consuming slice. MUST be idempotent |
+| `message-publisher` / `message-consumer` | Transport-level send/receive | `platform/`. Business-free |
+
+### Security
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `authentication` | Establishes who the actor is | Edge / `platform/` |
+| `authorization` | `can*` policy: may this actor do this | `policies/`, checked at use-case entry, deny-by-default |
+| `guard` | Enforcement point that *invokes* an authorization policy | Edge. MUST NOT contain the decision itself or any role conditional |
+
+### Platform substrate
+
+Business-free technical concerns: `config`, `logger`, `telemetry`, `clock` / `time-provider`, `id-generator`, `feature-flags`. These live in `platform/`, and ONLY once 2+ capabilities need them. Any of these that acquires business meaning MUST move to the owning capability.
+
+### Computation
+
+| Role | Responsibility | Where it lives / caveat |
+| --- | --- | --- |
+| `calculator` | Encapsulated calculation | Functional core of the slice, or `policies/` when shared |
+| `extractor` | Pulls information out of a larger structure | Slice |
+| `selector` | Selects/derives a subset of data | Slice |
+
+### Tests
+
+Colocated with the slice they cover (see `testing-and-governance.md`). Supporting names: `fixtures` (static data), `builders` (test data construction), `fakes` (in-memory doubles). Cross-module tests only in the four canonical `tests/` buckets.
+
+### `utils` and `helpers`
+
+Both are legitimate names. Both are also a signal that the code has **no more specific architectural responsibility**. Preference ladder:
+
+```text
+specific role name  →  utils  →  helpers
+```
+
+```text
+❌ utils/validate.ts       ✅ validator.ts
+❌ utils/parse.ts          ✅ parser.ts
+❌ utils/transform.ts      ✅ mapper.ts
+❌ helpers/save.ts         ✅ repository.ts (or a direct ORM call)
+❌ helpers/checkAccess.ts  ✅ policies/canRefundOrder.ts
+```
+
+`utils` is legitimate for small, generic, business-free functions with no owning capability — and those belong in `platform/`, not at a module's top level:
+
+```text
+platform/utils/
+├── clamp
+├── sleep
+├── isDefined
+└── groupBy
+```
+
+`helpers` is reserved for **local, contextual** helpers of one slice, and MUST stay inside that slice:
+
+```text
+create-order/
+├── handler
+└── helpers/
+    ├── calculate-items-total
+    └── build-line-items
+```
+
+A `utils` or `helpers` folder that accumulates business rules is a defect; the rules MUST move to a policy, a domain type, or the slice's functional core.
+
+### Names to avoid
+
+You SHOULD NOT use: `manager`, bare `service` (`OrderService` doing everything), `common`, `shared`, `core`, `base`, `impl`, `misc`, `data`, `models`, `dto`. Each names a technical bucket rather than a responsibility, and each grows without limit because nothing is out of scope for it. Layer folders (`controllers/`, `services/`, `repositories/`) are already forbidden above.
+
+### In a real vertical slice
+
+Roles appear where they are earned, never as a uniform template:
+
+```text
+features/orders/
+├── create/
+│   ├── handler
+│   ├── schema
+│   ├── mapper
+│   └── serializer
+├── cancel/
+│   ├── handler
+│   └── policy
+└── get/
+    ├── handler
+    ├── query
+    └── serializer
+```
+
+Three slices, three different shapes. A slice whose folder mirrors its siblings role-for-role is usually a template that was copied rather than a design that was chosen.

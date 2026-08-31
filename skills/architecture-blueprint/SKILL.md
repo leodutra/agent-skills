@@ -67,7 +67,7 @@ Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) i
 
 | You are working on… | Read |
 | --- | --- |
-| Folder/module layout, module public APIs, dependency direction, READMEs | `references/structure-and-boundaries.md` |
+| Folder/module layout, module public APIs, dependency direction, READMEs, file/folder role names (`handler`, `mapper`, `gateway`, `utils`…) | `references/structure-and-boundaries.md` |
 | Newtypes, value objects, parse-don't-validate, illegal states, policies, rich domain objects, functional core, temporal modeling, idempotency, persistence | `references/domain-modeling.md` |
 | Domain events, event naming, direct-call vs event, consistency model, observability | `references/events-and-consistency.md` |
 | Unit/integration/acceptance tests, test placement, fitness functions, ADRs, AI context files | `references/testing-and-governance.md` |
@@ -77,13 +77,15 @@ Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) i
 
 Names MUST speak the business language: `approveOrder()`, `reserveInventory()`, `calculateShippingCost()`. You SHOULD NOT use vague verbs (`process`, `execute`, `run`, `handle`) unless intent is obvious from context. Events MUST be past-tense business facts (`OrderApproved`, `InventoryReserved`) and MUST NOT be vague mutations (`OrderUpdated`, `EntityChanged`).
 
+File and folder names are a separate axis: they name the **role** a file plays (`handler`, `validator`, `mapper`, `gateway`), which is why a generic word is acceptable there and not in a business operation name. You MUST name a file for its actual responsibility, and SHOULD fall back to `utils` (business-free generics, in `platform/`) or slice-local `helpers/` ONLY when no specific role fits. See the role vocabulary in `references/structure-and-boundaries.md`.
+
 ## Avoid by default
 
 You SHOULD NOT introduce these without a present, demonstrated need: microservices first, repositories everywhere, CQRS everywhere, event sourcing everywhere, layer-based folders, factory proliferation, specification proliferation, framework-centric architecture.
 
 ## Review checklist
 
-1. **Organization** — Within the application source tree, are top-level folders business capabilities (the ONLY allowed non-capability entries being optional `platform/` and `tests/`)? Are features vertical slices? Does code that changes together live together?
+1. **Organization** — Within the application source tree, are top-level folders business capabilities (the ONLY allowed non-capability entries being optional `platform/` and `tests/`)? Are features vertical slices? Does code that changes together live together? Does each file's name state its actual role, with `utils`/`helpers` used only where no specific role fits?
 2. **Boundaries** — Narrow module public API (`orders/api`)? No module reaching into another's internals? Dependencies explicit and acyclic? Authorization a `can*` policy at use-case entry (deny-by-default), kept OUT of entities, never scattered role conditionals?
 3. **Types** — Identities are newtypes? Rule-bearing concepts are value objects? Both under `domain/`? Validation done once at the boundary? Illegal states unrepresentable via typed unions?
 4. **Behavior** — Logic in slice + functional core by default? Behavior centralized on an object ONLY on a named trigger (flag rich objects that have not earned it)? Shared `policies/` genuinely shared by 2+ slices (authorization `can*` policies excepted) and distinct from reactive processes?
