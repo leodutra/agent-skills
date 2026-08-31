@@ -24,6 +24,7 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 | [`rust-bevy-architecture`](skills/rust-bevy-architecture/SKILL.md) | Architecture method for Bevy (Rust ECS) game projects — layout, plugins, messages/observers, scheduling, determinism. |
 | [`rust-type-driven`](skills/rust-type-driven/SKILL.md) | Idiomatic type-driven Rust for domain/backend code — parse-don't-validate, newtypes, illegal states unrepresentable, typed errors, async cancellation discipline. |
 | [`rust-wgpu-functional`](skills/rust-wgpu-functional/SKILL.md) | Idiomatic Rust for wgpu / bare-metal GPU code, applying functional principles without sacrificing performance. |
+| [`sdd-spec`](skills/sdd-spec/SKILL.md) | Spec-Driven Development artifacts — product/domain/feature specs that define WHAT the software must do, with convention detection, cross-referencing instead of duplication, drift detection against code, and a human approval gate. |
 | [`worktrunk`](skills/worktrunk/SKILL.md) | Git worktree management via Worktrunk (`wt`; `git-wt`/`git wt` on Windows) for parallel/isolated work — create, switch, merge, and clean up worktrees by branch name. |
 
 Skills are picked up automatically by Claude Code when their trigger conditions match a request — no manual invocation needed beyond what each `SKILL.md` describes.
