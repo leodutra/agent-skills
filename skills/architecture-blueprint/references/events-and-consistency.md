@@ -32,6 +32,22 @@ Analytics update       → Eventual
 
 Any handler crossing an eventual boundary (events, queues, retries) MUST be idempotent — see `domain-modeling.md`.
 
+## Concurrency & cancellation
+
+**Cancellation is control flow, not an error case.** Long-running or externally triggered work MUST propagate cancellation: when a request or job is abandoned, its child operations MUST be cancelled and its resources released. Thread the cancellation signal (Rust `CancellationToken`, Go `context.Context`, JS `AbortSignal`) exactly as correlation IDs are threaded. Orphaned work still running after its caller is gone is a defect. A cancelled operation MUST leave state consistent — partial effects MUST be compensated or safely retryable (see idempotency in `domain-modeling.md`).
+
+**Independent work SHOULD run concurrently, and MUST be bounded.** Where N operations do not depend on each other, fan out rather than sequencing them — with an explicit concurrency limit. Unbounded fan-out against a shared resource (connection pool, third-party API) MUST NOT be used: it converts a latency win into an outage.
+
+**Scatter-gather** is the default shape for aggregation endpoints:
+
+```text
+        ┌→ service A ┐
+request ├→ service B ├→ gather → result
+        └→ service C ┘
+```
+
+You MUST declare per-branch failure behavior: which branches are required, which MAY degrade to a partial result, and the deadline for the whole gather. A gather with no timeout is permanently as slow as its slowest branch.
+
 ## Observability
 
 Important workflows MUST be reconstructable. Emit milestones (`OrderCreated`, `OrderApproved`, `InventoryReserved`, `PaymentCaptured`) with:

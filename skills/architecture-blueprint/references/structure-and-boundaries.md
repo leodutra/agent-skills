@@ -109,6 +109,68 @@ Shipping ✕ Orders        (forbidden)
 
 Document direction (READMEs + ADR). Once boundaries matter, you MUST enforce it with architecture fitness functions (see `testing-and-governance.md`). Documentation alone CANNOT enforce boundaries.
 
+## Anti-corruption boundary
+
+An external model MUST NOT reach the domain in its own vocabulary. Every integration crosses a translation step:
+
+```text
+Stripe / Shopify / Salesforce / ERP / legacy model
+        ↓  gateway  (the boundary)
+        ↓  translator  (their words → ours)
+internal Payment / Customer / Order
+```
+
+The `gateway` owns the call; the `translator` owns the vocabulary. Their field names, enums, error shapes, and nulls MUST stop at that line — once translated, the system speaks ONE language inward. A foreign type appearing in `domain/` or in a slice signature is a defect, and it is how a vendor's model quietly becomes your model.
+
+## Composition over inheritance
+
+You MUST NOT build behavior through inheritance hierarchies (`BaseService → AbstractService → ConcreteService`). Compose instead: small types, plain functions, traits/interfaces satisfied by delegation, generic parameters, enums for closed variation, newtypes for distinction.
+
+Shared behavior SHOULD be a function the callers call, NOT a base class the callers extend. An inheritance chain hides where behavior actually comes from and MUST be read end-to-end before any one method can be trusted — the opposite of the locality this blueprint optimizes for. In Rust this is the language model rather than a preference; in TypeScript and Python the rule holds anyway.
+
+## Composition root
+
+Concrete infrastructure MUST be assembled in ONE place — the composition root (`main`, or app-wide bootstrap in `platform/`).
+
+```text
+main
+ ↓  config (already parsed into typed values)
+ ↓  database pool, clients, bus
+ ↓  module wiring
+ ↓  HTTP server / workers
+```
+
+Business code MUST receive its dependencies and MUST NOT construct infrastructure itself: no connection opened inside a use case, no HTTP client instantiated in a policy, no global singleton reached for. The composition root is then the only file that knows every concrete choice, and the functional core stays reachable in tests without infrastructure.
+
+A composition root is NOT a DI container. You SHOULD wire by hand with plain constructor arguments; adopt a container ONLY when hand-wiring is demonstrably unmanageable.
+
+## Capability-oriented dependencies
+
+Pass the narrowest capability that does the job. A slice needing to load one user MUST NOT receive the whole database handle, ORM, or a god `Service` object.
+
+```text
+❌ handler(db: Database)
+✅ handler(loadUser: LoadUser, publishEvent: PublishEvent)
+```
+
+What a slice cannot reach, it cannot misuse, and its tests supply only what it names. Express the capability as a function parameter first; promote it to a trait/interface ONLY under the `port` rule (2+ real implementations or a committed swap). This is the capability thinking of `authorization.md` — least authority, granted explicitly — applied to code dependencies.
+
+## State ownership
+
+For every piece of mutable state, ONE owner MUST be nameable:
+
+```text
+application  → configuration
+module       → its store / connection pool
+task         → its local state
+actor        → the state behind its mailbox
+request      → request-scoped data
+```
+
+Shared mutable state with no named owner is a defect. Most synchronization bugs are ownership questions that were never answered, and naming the owner usually deletes the synchronization rather than fixing it.
+
+Where the language expresses scope-bound resources (Rust ownership and `Drop`, Python context managers, `defer`/`using`), you SHOULD let scope release the resource instead of releasing it by hand, and SHOULD hold a lock for the shortest scope that is still correct.
+
 ## Strategic DDD only
 
 Use bounded contexts, ubiquitous language, domain ownership, explicit business concepts. You MUST NOT import the tactical-DDD pattern zoo (aggregates/repositories/factories/specifications everywhere) by default; pull a pattern in ONLY when a specific problem calls for it.
@@ -147,7 +209,7 @@ Rules for using it:
 
 | Role | Responsibility | Where it lives / caveat |
 | --- | --- | --- |
-| `validator` | Verifies data validity | Boundary only. SHOULD return parsed typed values, not booleans; downstream code MUST NOT re-validate |
+| `validator` | Verifies data validity at a boundary | Subordinate to `parser`, never a peer: it MUST yield typed domain values, NOT a boolean or error list that leaves the raw shape in play downstream. A `validator` called below the boundary is a defect (see parse-don't-validate) |
 | `matcher` | Tests a value against a criterion | Slice |
 | `specification` | Composable predicate (`isSatisfiedBy`) | Rare. ONLY when composing predicates or driving queries (see `domain-modeling.md`) |
 
@@ -244,7 +306,7 @@ specific role name  →  utils  →  helpers
 ```
 
 ```text
-❌ utils/validate.ts       ✅ validator.ts
+❌ utils/validate.ts       ✅ parser.ts / schema.ts
 ❌ utils/parse.ts          ✅ parser.ts
 ❌ utils/transform.ts      ✅ mapper.ts
 ❌ helpers/save.ts         ✅ repository.ts (or a direct ORM call)

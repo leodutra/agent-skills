@@ -7,7 +7,7 @@ description: Apply the Modern Architecture Blueprint (2026), a pragmatic domain-
 
 Domain-first method for long-lived systems. Prefer business capabilities over technical layers, locality over abstraction, and strong types over runtime checks. This skill is the decision layer. You MUST read the matching reference file before applying a pattern in depth.
 
-Core rule: **every abstraction MUST earn its existence.** You MUST treat the pattern catalog as pull-based, not a checklist.
+Core rule: **every abstraction MUST earn its existence.** You MUST treat the pattern catalog as pull-based, not a checklist. Every rule here is derivable from `references/first-principles.md` — patterns are consequences, not axioms.
 
 ## Normative keywords
 
@@ -24,6 +24,7 @@ You MUST NOT invent exceptions to a SHOULD beyond those named in this skill. Whe
 - **Focused design question** → use Decision Rules, then open the matching reference.
 - **Reviewing code/design** → use the Review Checklist.
 - **Modeling a concept** → read `references/domain-modeling.md`.
+- **Novel tradeoff no decision rule covers, or a "why" dispute** → derive the answer from `references/first-principles.md` instead of importing a pattern.
 
 **Record decisions as you go.** When you conclude a considerable architectural decision or definition, you MUST record it as an ADR — or explicitly propose one — and MUST keep ADRs maintained. See `references/testing-and-governance.md`.
 
@@ -40,6 +41,8 @@ You MUST NOT optimize for: maximum abstraction, framework independence, theoreti
 - **Domain first.** Within the application source tree (for example, `src/`), top-level folders MUST be business capabilities (`orders/`, `billing/`…). The ONLY sanctioned non-capability source-tree entries are optional `platform/` (genuinely cross-cutting, business-free technical substrate) and `tests/` (cross-module tests). Repository-level support folders such as `docs/adr/` and, in Rust repositories, `xtask/` MAY exist alongside the source tree. Any other technical-concern source-tree folder is a defect.
 - **Simplicity until complexity appears.** You MUST NOT introduce repositories, factories, CQRS, event sourcing, microservices, or specification hierarchies without a present, demonstrated need.
 - **Prefer deletion.** Before adding any abstraction, ask "can this be solved with fewer concepts?"
+- **Compose, don't inherit.** You MUST NOT build behavior through inheritance hierarchies (`BaseService → AbstractService → ConcreteService`). Compose small types, functions, traits/interfaces, generics, and enums instead.
+- **Assemble infrastructure in one place.** Concrete infrastructure MUST be wired in a single composition root; business code receives dependencies and MUST NOT construct them.
 
 ## Evolution Path (central decision tool)
 
@@ -67,11 +70,12 @@ Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) i
 
 | You are working on… | Read |
 | --- | --- |
-| Folder/module layout, module public APIs, dependency direction, READMEs, file/folder role names (`handler`, `mapper`, `gateway`, `utils`…) | `references/structure-and-boundaries.md` |
-| Newtypes, value objects, parse-don't-validate, illegal states, policies, rich domain objects, functional core, temporal modeling, idempotency, persistence | `references/domain-modeling.md` |
-| Domain events, event naming, direct-call vs event, consistency model, observability | `references/events-and-consistency.md` |
+| Folder/module layout, module public APIs, dependency direction, READMEs, file/folder role names (`handler`, `mapper`, `gateway`, `utils`…), anti-corruption boundaries, composition root, capability dependencies, state ownership | `references/structure-and-boundaries.md` |
+| Newtypes, value objects, parse-don't-validate, typed config, illegal states, lifecycle typestate, error taxonomy, policies, rich domain objects, functional core, temporal modeling, idempotency, persistence | `references/domain-modeling.md` |
+| Domain events, event naming, direct-call vs event, consistency model, cancellation, bounded concurrency, scatter-gather, observability | `references/events-and-consistency.md` |
 | Unit/integration/acceptance tests, test placement, fitness functions, ADRs, AI context files | `references/testing-and-governance.md` |
 | Authorization, access control, permissions vs. roles, deny-by-default | `references/authorization.md` |
+| A situation no rule above covers; justifying or challenging any rule; proof obligations, validity frames, local checkability | `references/first-principles.md` |
 
 ## Naming
 
@@ -86,10 +90,10 @@ You SHOULD NOT introduce these without a present, demonstrated need: microservic
 ## Review checklist
 
 1. **Organization** — Within the application source tree, are top-level folders business capabilities (the ONLY allowed non-capability entries being optional `platform/` and `tests/`)? Are features vertical slices? Does code that changes together live together? Does each file's name state its actual role, with `utils`/`helpers` used only where no specific role fits?
-2. **Boundaries** — Narrow module public API (`orders/api`)? No module reaching into another's internals? Dependencies explicit and acyclic? Authorization a `can*` policy at use-case entry (deny-by-default), kept OUT of entities, never scattered role conditionals?
-3. **Types** — Identities are newtypes? Rule-bearing concepts are value objects? Both under `domain/`? Validation done once at the boundary? Illegal states unrepresentable via typed unions?
+2. **Boundaries** — Narrow module public API (`orders/api`)? No module reaching into another's internals? Dependencies explicit and acyclic? Is infrastructure assembled in one composition root, with slices receiving narrow capabilities rather than a database handle or god service? Do foreign models stop at a gateway/translator? Authorization a `can*` policy at use-case entry (deny-by-default), kept OUT of entities, never scattered role conditionals?
+3. **Types** — Identities are newtypes? Rule-bearing concepts are value objects? Both under `domain/`? Validation done once at the boundary, config included? Illegal states unrepresentable via typed unions? Are errors classified (domain / application / infrastructure / transport), with lower-level errors translated rather than leaked?
 4. **Behavior** — Logic in slice + functional core by default? Behavior centralized on an object ONLY on a named trigger (flag rich objects that have not earned it)? Shared `policies/` genuinely shared by 2+ slices (authorization `can*` policies excepted) and distinct from reactive processes?
-5. **Communication & consistency** — Each interaction's consistency declared? Events past-tense business facts? Externally triggered commands idempotent?
+5. **Communication & consistency** — Each interaction's consistency declared? Events past-tense business facts? Externally triggered commands idempotent? Is cancellation propagated and fan-out bounded?
 6. **Time** — Temporal facts explicit (`approvedAt`, `shippedAt`) where rules depend on them, not inferred from `status`?
 7. **Governance** — Rules enforced by fitness functions, not just docs? Important workflows observable with correlation IDs? Considerable decisions recorded as ADRs and kept maintained? `AGENTS.md`/`ARCHITECTURE.md` present? Tests placed by scope — single-module tests (unit, integration, AND slice-scoped acceptance) colocated, and only cross-module behavior in `tests/` (canonical buckets: `acceptance/`, `architecture/`, `e2e/`, `performance/`)?
 8. **Restraint** — Any abstraction that has not earned its place (premature repositories, specifications, rich objects, CQRS)? Could the design use fewer concepts?

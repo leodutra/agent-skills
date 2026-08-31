@@ -73,6 +73,10 @@ Use a newtype when it only identifies; a value object when it has rules, behavio
 
 Validation MUST happen ONCE, at the boundary, converting raw input into already-valid domain types. Downstream code MUST NOT re-validate: a `Money`/`Email`/`CustomerId` is guaranteed valid by its type. You SHOULD prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
 
+**Configuration is boundary input too.** Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port(u16)`, `DatabaseUrl`, `Timeout(Duration)`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it.
+
+**Boundary parsing SHOULD be packaged as reusable components** where the framework supports it (Axum extractors, FastAPI dependencies, middleware). The handler MUST receive already-typed values — `AuthenticatedUser`, `Tenant`, `Pagination`, `CreateOrderRequest` — never the raw transport object. Naming note: such a framework "extractor" is a `parser` in the role vocabulary; `extractor` there means pulling information out of a larger structure.
+
 ## Make illegal states unrepresentable
 
 You SHOULD forbid invalid combinations in the type system rather than guarding at runtime. Avoid `{ status: "Shipped", shippedAt: undefined }`. Prefer a discriminated union (sum type) where each variant carries exactly its valid data:
@@ -85,6 +89,25 @@ type Order =
 ```
 
 Python: model variants as distinct frozen dataclasses combined in a `Union`, matched with `match`.
+
+The same technique applies to **component lifecycle** (`Created → Initialized → Running → Draining → Stopped`): where the lifecycle matters, each state MAY be its own type (typestate) so that `stop()` CANNOT be called on a component that never started. Reach for typestate ONLY where an illegal transition is actually costly; elsewhere an enum plus a guard is enough.
+
+## Error taxonomy
+
+Errors MUST be classified by the layer that owns them. A system with one flat error type CANNOT distinguish a business outcome from an outage, and will retry the wrong things.
+
+| Kind | Owner | Example |
+| --- | --- | --- |
+| Domain | `domain/` | `OrderAlreadyCancelled`, `InsufficientInventory` |
+| Application | slice | `RefundNotAuthorized`, `ConcurrentUpdate` |
+| Infrastructure | `gateway` / `platform/` | `DatabaseUnavailable`, `StripeTimeout` |
+| Transport | edge | `InvalidJson`, `PayloadTooLarge` |
+
+- A lower-level error MUST NOT leak outward unmapped. Infrastructure failures MUST be translated at the module boundary (`gateway`/`translator`) into a domain or application error the caller can reason about.
+- Domain errors MUST be typed values, not strings, and SHOULD form an enum/union so exhaustive handling is checkable by the compiler.
+- The transport edge decides status codes; the domain MUST NOT know them. `OrderAlreadyCancelled` → 409 is an edge mapping, and it MUST live at the edge.
+- Expected business outcomes SHOULD be return values (`Result`, typed union), NOT exceptions or panics. Reserve unwinding for genuine faults.
+- Only infrastructure errors are candidates for retry. Retrying a domain error is a defect.
 
 ## Policies vs. specifications
 
