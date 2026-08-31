@@ -140,7 +140,8 @@ function Get-Contract {
   return (Read-Text $p).TrimEnd()
 }
 
-# The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme).
+# The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme,
+# sdd-spec).
 # The three extras ship none of
 # their own, and without a SKILL.md in
 # $ClaudeDir\skills Claude has the binaries on PATH but nothing ever surfaces
@@ -736,7 +737,7 @@ function Install-Global {
     Warn "worktrunk unavailable - parallel-worktree support skipped (stack unaffected)"
   }
 
-  Say "Global skills -> $ClaudeDir\skills (gauntlet-loop, opensrc, worktrunk, good-readme)"
+  Say "Global skills -> $ClaudeDir\skills (gauntlet-loop, opensrc, worktrunk, good-readme, sdd-spec)"
   # Deployed unconditionally (even if a binary install above failed - both are
   # global tools the user may add later, and the worktrunk skill itself covers
   # offering the install) and idempotently: overwritten every run, like the
@@ -744,8 +745,9 @@ function Install-Global {
   Install-ExtraSkill 'gauntlet-loop'
   Install-ExtraSkill 'opensrc'
   Install-ExtraSkill 'worktrunk'
-  # Surfaces no binary - global because it is project-agnostic (D58).
+  # Surface no binary - global because they are project-agnostic (D58, D59).
   Install-ExtraSkill 'good-readme'
+  Install-ExtraSkill 'sdd-spec'
 
   Say "Routing contract -> $ClaudeMd"
   Write-ManagedBlock $ClaudeMd (Get-Contract 'contract.md')
@@ -956,6 +958,7 @@ function Invoke-Verify {
   Write-RowSkill 'worktrunk'
   Write-RowSkill 'gauntlet-loop'
   Write-RowSkill 'good-readme'
+  Write-RowSkill 'sdd-spec'
   if ((Test-Path $ClaudeMd) -and (Select-String -Path $ClaudeMd -Pattern 'claude-context-stack' -Quiet)) { Write-Row 'contract' "OK ($ClaudeMd)" }
   else { Write-Row 'contract' 'MISSING' }
   if (Test-InGitRepo) {

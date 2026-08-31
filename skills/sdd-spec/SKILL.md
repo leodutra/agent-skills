@@ -1,6 +1,6 @@
 ---
 name: sdd-spec
-description: Create, update, review, and maintain Spec-Driven Development (SDD) specification artifacts — product, domain, and feature specs under the project's spec tree (`spec/` by default, or an incumbent convention like .kiro/, openspec/, or .specify/). Use this skill whenever the user asks to spec, specify, write or update requirements, document expected behavior, review a spec, check specs for conflicts, or formalize a feature before planning/implementation — even if they don't say "SDD" or "specification" explicitly, and whenever a spec.md or requirements file is being created or edited. Do NOT use for implementation planning (plan.md, tasks.md), ADR authoring, or writing code.
+description: Create, update, review, and maintain Spec-Driven Development (SDD) specification artifacts — the product, domain, and feature specs under a project's spec tree (`spec/` by default, or an incumbent convention like .kiro/, openspec/, or .specify/). Use when asked to specify a feature, write or update requirements, document expected behavior before implementation, check specs for conflicts or drift against code, or bootstrap a spec tree from an existing PRD/MVP document. Do NOT use for: `*.spec.ts`/`*.spec.js` or any other test file (those are tests, not specifications), implementation planning (plan.md, tasks.md), ADR authoring, API reference docs, or writing code.
 ---
 
 # SDD Specification Skill

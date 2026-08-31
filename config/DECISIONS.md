@@ -72,6 +72,7 @@ with its correction next to it, is the point.
 | [D56](#d56) | Anti-bypass rules deleted; the shell exclusion re-grounded | 3.0 | Active — completes D51's removal; re-grounds D3 |
 | [D57](#d57) | Serena retained behind a mechanical kill criterion | 3.0 | Active — gates D53; the gate D20 never had |
 | [D58](#d58) | good-readme deploys globally; the criterion is project-agnosticism | 3.0 | Active — amends D48 |
+| [D59](#d59) | sdd-spec deploys globally; method-scope is not project-scope | 3.0 | Active — applies D58 |
 
 ---
 
@@ -1671,3 +1672,45 @@ starts pulling sessions into README work they did not ask for, it goes back to
 per-repo, where its canonical copy already works unchanged (`stack-init skills
 good-readme`). Nothing about the skill differs between the two deployments —
 only who pays for its description.
+
+---
+
+## D59 — sdd-spec deploys globally; method-scope is not project-scope
+
+**Version:** 3.0 · **Status:** Active — applies [D58](#d58)'s criterion; adds no
+new rule
+
+sdd-spec joins the global set in `~/.claude/skills/`, making it five.
+
+**Why the first answer was wrong.** The initial call was per-repo, on the
+grounds that the skill "presumes an adopted spec tree that most repos don't
+have." That is false about this skill: its DERIVE mode exists precisely to
+bootstrap a repo that has no spec tree, from a PRD or MVP document. Per-repo
+deployment would therefore invert the skill's own entry point — you would have
+to run `stack-init skills sdd-spec` in a checkout *before* the skill could tell
+you a spec tree was worth starting, which is D58's "a global install with extra
+steps" in its purest form.
+
+**Method-scope is not project-scope.** The distinction D48 draws is whether a
+per-repo trigger exists: is this Bevy, is this Rust, is this wgpu. Those are
+properties of the checkout, readable from a manifest. Whether a project is
+specified before it is built is a property of how the *operator* works, and it
+is the same answer in every checkout. A skill scoped to a method the operator
+either uses or does not is global-or-nothing; there is no repo to deploy it to
+selectively, only a habit.
+
+**What it costs, and the trigger.** 687 characters, roughly 172 tokens per
+session — double good-readme's 85, a sixth of the ~1,000 D48 measured for four
+domain skills. The description was tightened before the promotion, because
+D58's second half is trigger hygiene and the original failed it: it fired
+"whenever a spec.md or requirements file is being created or edited" and
+licensed itself to trigger "even if they don't say SDD or specification
+explicitly." Both clauses are gone. The exclusion list now names the collision
+that actually matters — `*.spec.ts` / `*.spec.js` are tests, not
+specifications, and in a JS or TS repo they are the overwhelmingly more common
+meaning of the word "spec".
+
+**What would reverse this.** D58's test, unchanged: if it pulls sessions into
+requirements work they did not ask for — a test file being the likeliest way —
+it goes back to per-repo, where its canonical copy works unchanged
+(`stack-init skills sdd-spec`).

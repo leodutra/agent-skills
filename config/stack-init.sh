@@ -107,7 +107,8 @@ print_contract_file() {
 print_contract()           { print_contract_file contract.md; }
 print_contract_condensed() { print_contract_file contract-condensed.md; }
 
-# The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme).
+# The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme,
+# sdd-spec).
 # The three extras ship none of
 # their own, and without a SKILL.md in
 # $CLAUDE_DIR/skills Claude has the binaries on PATH but nothing ever surfaces
@@ -785,7 +786,7 @@ install_global() {
     warn "worktrunk unavailable — parallel-worktree support skipped (stack unaffected)"
   fi
 
-  say "Global skills -> $CLAUDE_DIR/skills (gauntlet-loop, opensrc, worktrunk, good-readme)"
+  say "Global skills -> $CLAUDE_DIR/skills (gauntlet-loop, opensrc, worktrunk, good-readme, sdd-spec)"
   # Deployed unconditionally (even if a binary install above failed — both are
   # global tools the user may add later, and the worktrunk skill itself covers
   # offering the install) and idempotently: overwritten every run, like the
@@ -793,8 +794,9 @@ install_global() {
   install_extra_skill gauntlet-loop
   install_extra_skill opensrc
   install_extra_skill worktrunk
-  # Surfaces no binary — global because it is project-agnostic (D58).
+  # Surface no binary — global because they are project-agnostic (D58, D59).
   install_extra_skill good-readme
+  install_extra_skill sdd-spec
 
   say "Routing contract -> $CLAUDE_MD"
   mkdir -p "$CLAUDE_DIR"; touch "$CLAUDE_MD"
@@ -821,7 +823,8 @@ install_global() {
 }
 
 # Per-repo skill deployment (`skills`). The global install deploys only the
-# project-agnostic skills (gauntlet-loop, opensrc, worktrunk, good-readme);
+# project-agnostic skills (gauntlet-loop, opensrc, worktrunk, good-readme,
+# sdd-spec);
 # the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
 # rust-bevy-architecture, rust-wgpu-functional, macro-analyst,
 # security-vuln-gauntlet) stay out of
@@ -995,6 +998,7 @@ verify() {
   row_skill worktrunk
   row_skill gauntlet-loop
   row_skill good-readme
+  row_skill sdd-spec
   if grep -q '>>> claude-context-stack >>>' "$CLAUDE_MD" 2>/dev/null
   then row contract "OK ($CLAUDE_MD)"; else row contract "MISSING"; fi
   if in_git_repo; then

@@ -66,6 +66,14 @@ removed; what remains is one opt-in tool and one instruction-injecting plugin.
   tool partly because MCP calls bypassed RTK's hook. With RTK gone that half is
   dead; the decision stands on duplicate-tool routing alone.
   [D53](DECISIONS.md#d53)
+- **Add** sdd-spec to the global skill set, making it five: Spec-Driven
+  Development artifacts (product/domain/feature specs) with drift detection
+  against code and a human approval gate. Whether a project is specified before
+  it is built is a property of the operator, not of the checkout, so there is no
+  per-repo trigger to deploy it on — and its bootstrap mode targets repos with
+  no spec tree, which per-repo deployment would put out of reach. ~172 tokens
+  per session; description tightened first so `*.spec.ts` test files do not
+  trigger it. [D59](DECISIONS.md#d59) (applies [D58](DECISIONS.md#d58))
 
 ## 2.5
 
