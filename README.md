@@ -8,7 +8,7 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 | --- | --- |
 | `skills/` | Claude Code skills (`SKILL.md` + `references/`), auto-invoked by Claude Code based on their `description` frontmatter. |
 | `docs/` | Standalone reference specs (not skills) that codify conventions for a stack. |
-| `config/` | The Claude Code Context Stack — install scripts and spec for graphify, Serena, RTK, and Headroom. |
+| `config/` | The Claude Code Context Stack — install scripts and spec for Serena (opt-in) and ponytail, plus the global routing contract. |
 | `agents/` | Reserved for custom agent definitions. Currently empty. |
 
 ## Skills
@@ -37,4 +37,4 @@ Claude Code only discovers skills from `~/.claude/skills/` (global) and a repo's
 
 ## Config — Claude Code Context Stack
 
-[`config/`](config/README.md) holds a separate, self-contained setup: four tools (graphify, Serena, RTK, Headroom) plus the routing contract that tells Claude which tool to use for structure, symbols, execution output, and wire-level compression. See `config/README.md` for quick start and `config/claude-code-context-stack.md` for the full spec.
+[`config/`](config/README.md) holds a separate, self-contained setup: two components — Serena (LSP symbol tools via MCP, opt-in per session) and ponytail (minimal-code discipline, default-on) — plus the global routing contract that tells Claude which tool to use for symbols and execution. 3.0 removed graphify, RTK, and Headroom ([D51](config/DECISIONS.md#d51), [D52](config/DECISIONS.md#d52)). See `config/README.md` for quick start and `config/claude-code-context-stack.md` for the full spec.

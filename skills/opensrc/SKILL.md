@@ -40,5 +40,5 @@ Global cache `~/.opensrc/` (override: `OPENSRC_HOME`), laid out as `repos/<host>
 
 ## When NOT to use
 
-- The question is about the project's own code → Serena/graphify per the routing contract.
+- The question is about the project's own code → Serena (when enabled) or native search per the routing contract.
 - Public API shape is enough (signatures, option names) → types/docs already in the project answer it cheaper.

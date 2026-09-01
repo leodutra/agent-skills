@@ -67,7 +67,6 @@ If a fresh worktree "doesn't build" or lacks env files, the fix is usually a `po
 - Worktrees created by `wt` are ordinary git worktrees — all git tooling works inside them.
 - On Windows, hooks execute via Git for Windows' bash; it must be installed.
 - Each worktree shares the repo's object store: cheap to create, but a branch checked out in one worktree cannot be checked out in another (git rule, not a worktrunk one).
-- If a `graphify` graph exists (Context Stack), it lives per checkout — a fresh worktree has no graph until one is built there. The stack's global installer writes a worktrunk `post-start` hook that rebuilds it automatically in every new worktree whose primary checkout was stack-inited; if that hook is absent, run `graphify . && graphify hook install` in the worktree.
 
 ## Failure modes
 
