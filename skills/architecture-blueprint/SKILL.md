@@ -75,7 +75,7 @@ Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) i
 | Domain events, event naming, direct-call vs event, consistency model, cancellation, bounded concurrency, scatter-gather, observability | `references/events-and-consistency.md` |
 | Unit/integration/acceptance tests, test placement, fitness functions, ADRs, AI context files | `references/testing-and-governance.md` |
 | Authorization, access control, permissions vs. roles, deny-by-default | `references/authorization.md` |
-| A situation no rule above covers; justifying or challenging any rule; proof obligations, validity frames, local checkability | `references/first-principles.md` |
+| A situation no rule above covers; justifying or challenging any rule; two rules in tension; proof obligations, validity frames, consistency scopes, local checkability | `references/first-principles.md` |
 
 ## Naming
 
@@ -97,5 +97,7 @@ You SHOULD NOT introduce these without a present, demonstrated need: microservic
 6. **Time** — Temporal facts explicit (`approvedAt`, `shippedAt`) where rules depend on them, not inferred from `status`?
 7. **Governance** — Rules enforced by fitness functions, not just docs? Important workflows observable with correlation IDs? Considerable decisions recorded as ADRs and kept maintained? `AGENTS.md`/`ARCHITECTURE.md` present? Tests placed by scope — single-module tests (unit, integration, AND slice-scoped acceptance) colocated, and only cross-module behavior in `tests/` (canonical buckets: `acceptance/`, `architecture/`, `e2e/`, `performance/`)?
 8. **Restraint** — Any abstraction that has not earned its place (premature repositories, specifications, rich objects, CQRS)? Could the design use fewer concepts?
+
+For a contested or novel call, apply the nine tests in `references/first-principles.md` (§The tests) before ruling.
 
 You MUST flag over-engineering as readily as under-engineering. Recommend the lowest Evolution Path stage that meets the actual requirements, and name the concrete trigger that would justify advancing.
