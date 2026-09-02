@@ -1,6 +1,6 @@
-# First Principles of Software Design — Extended
+# First Principles of Software Design
 
-*A pattern-free extraction, with the full derivation tree. No pattern is named; every pattern should be derivable. Under each first principle stand the engineering principles it generates, each with its one-line derivation. Where a derived principle has two parents, it is listed under the dominant one and cross-referenced — the structure is a DAG that reads as a tree.*
+*An extraction with the full derivation tree. Above the pattern level no pattern is named; patterns appear only in the closing ledger, each admitted with its derivation exhibited — the reconstruction test passed in writing. Under each first principle stand the engineering principles it generates, each with its one-line derivation. Where a derived principle has two parents, it is listed under the dominant one and cross-referenced — the structure is a DAG that reads as a tree.*
 
 ---
 
@@ -8,42 +8,66 @@
 
 Every correctness property of a system is a proposition someone must discharge: *this value is well-formed, this state is legal, this actor is permitted, this resource is live, this operation happened once.* These obligations are conserved — the essential ones cannot be destroyed, only assigned. Design does not decide *whether* they get paid; it decides **who pays, when, how often, and in what currency**.
 
-The currencies are not equal. Ordered from cheapest to most expensive:
+The currencies are not equal. Ordered from cheapest to most expensive in lifetime discharge cost:
 
 1. paid by the machine, at construction, once — structurally impossible to skip;
-2. paid by a mechanized check, at every change, automatically — the test suite is the ledger of obligations structure could not absorb, re-audited on demand;
+2. paid by a mechanized check, at every change, automatically — holding the obligations structure could not absorb, re-audited on demand;
 3. paid by one author, at one place, once — and recorded;
 4. paid by every maintainer, at every use, forever — from memory, unrecorded.
 
-The ladder orders coverage as well as cost: structure binds all cases, a mechanized check binds only the cases it states, a record binds only the reader who reads it, and memory binds no one reliably.
+The ladder orders coverage as well as cost: structural enforcement binds every representable case of the property it encodes — and nothing beyond that property; a mechanized check binds only the cases it states; a record binds only the reader who reads it; memory binds no one reliably. And the ordering is a default, not a law: it holds per discharge for a fixed obligation, and the weighting of principle 13 can invert it over a lifetime — a volatile rule or a rarely-consumed fact can make a lower rung the cheaper total payment. Beneath the ladder sits the actual rule: **pay in the cheapest mode that reliably discharges the obligation under the expected distribution of use and change.**
 
-One constraint governs the whole exercise: **an obligation must exist before it is assigned.** Discharging propositions no one relies on is not diligence but negative work — every speculative proof is paid in real currency against a debt that was never owed.
+Obligations are not self-generated. They descend from requirements — propositions the domain, the environment, or the system's operators require to hold — and the framework prices their discharge without inventing them. One constraint therefore governs the whole exercise: **an obligation must exist before it is assigned** — which means it traces to a requirement, or it is struck. Discharging propositions no one relies on is not diligence but negative work — every speculative proof is paid in real currency against a debt that was never owed.
 
 The central failure mode is a payment in the wrong currency:
 
 > **Validation that produces no change in representation leaves the burden on every future caller.**
 
-The obligation was discharged — but the payment left no receipt. To every later observer the epistemic state of the value is unchanged, so the obligation regenerates at every use site. The cost is not *C* but *nC*, paid in the most expensive currency there is: distributed human memory.
+Read "representation" broadly, as A2 defines it — the value's own shape, or persistent evidence attached to it — and the sentence is exact. The obligation was discharged — but the payment left no receipt. To every later observer the epistemic state of the value is unchanged, so the obligation regenerates at every use site. The cost is not *C* but *nC*, paid in the most expensive currency there is: distributed human memory.
 
 ---
 
-## The axioms
+## The foundations
 
-Three assumptions carry everything below; deny any one and the framework dissolves.
+Four foundations carry everything below — three truths and one axiom, as the ladder of statements will classify them. Deny a truth and the framework loses its ground; reject the axiom and its vocabulary loses its content.
 
 **A1 — Reasoners are bounded.** Every mind that maintains the system — human or machine — has finite capacity. Correctness that depends on unbounded recall of unrecorded facts is not correctness; it is a debt whose default date is unknown.
 
-**A2 — Minds are not shared.** The reasoner who establishes a fact and the reasoners who later depend on it are different minds, at different times, with no common context. Nothing transmits between them except persistent representation — of the value itself, or of evidence attached to it: a certificate, a signature, a capability are representations too. This is why receipts exist at all.
+**A2 — Reasoning contexts are not shared.** The reasoner who establishes a fact and the reasoners who later depend on it occupy different contexts — different people, different processes, different executions, or the same person at a later time, which is a different context in everything but name. Nothing transmits between contexts except persistent representation — of the value itself, or of evidence attached to it: a certificate, a signature, a capability are representations too, as are shared state, protocols, and any behavior that leaves something readable later. A channel that persists is a representation by another name. This is why receipts exist at all.
 
-**A3 — Essential obligations are conserved.** The propositions a domain genuinely requires cannot be made to disappear by representation; they can only be discharged, delegated, or relocated. Design chooses their assignment, never their existence; whatever appears eliminated has been moved, and the only question is whether the move was priced.
+**A3 — Essential obligations are conserved.** The propositions a domain genuinely requires cannot be made to disappear by representation; they can only be discharged, delegated, or relocated. Design chooses their assignment, never their existence; whatever appears eliminated has been moved, and the only question is whether the move was priced. (A3 is the set's only axiom proper, by the ladder of statements below — closer to the definition of an obligation unpacked, its substantive content being only that relocation is never deletion; in any formal treatment it is the first thing a critic should probe.)
+
+**A4 — The territory outlives the map.** Behavior, state, authority, resources, and effects have real inputs, causes, lifetimes, and transitions whether or not the system represents them; what the model omits is not thereby absent — only invisible, and invisibly billed. This is the silent partner of principles 7, 10, and 12: hidden inputs falsify precisely because a true domain exists; the environment breaks promises precisely because it is not the model; lifetimes expire whether or not anyone is watching. Compressed: a model does not control the reality it models — the resource it calls alive may be dead, the message it calls sent-once may arrive twice, the permission it calls granted may have lapsed. For engineering purposes this is not metaphysics: a system built as if an unmodeled input were absent misbehaves observably, which is as empirical as truths get.
+
+*Independence.* The truths do not derive from one another. An unbounded reasoner among unshared contexts still needs receipts — infinite capacity cannot conjure what was never transmitted into its context — so A2 does not follow from A1; a bounded reasoner in one fully shared context needs locality but no receipts at all, so A1 does not follow from A2; and both concern reasoners while A4 concerns the world, which would remain causal if no one reasoned about it. A4 is one truth — realism — instantiated over several categories, not a bundle. A3 alone is admitted non-independent, in place. The set factors as: two epistemic truths, one ontological truth, one definitional axiom.
+
+---
+
+## The ladder of statements
+
+Not everything this document says — and not everything engineering culture repeats — is the same kind of claim. Six levels, each with its own mode of validity and its own way of failing:
+
+**Foundational truth** — a fact about reality that would remain true had this framework never been written. *Reasoners are bounded; reasoning contexts are not shared; the territory outlives the map* — A1, A2, and A4 are truths of this kind. Denied only by denying the world; fails only by being empirically false.
+
+**Axiom** — a stipulation the framework adopts to give its vocabulary content. A3 is the set's only axiom proper: nearly definitional, chosen because everything downstream leans on it, and flagged as such in place. Fails by incoherence or sterility, not by falsehood.
+
+**Principle** — a relation derived from the levels above, holding wherever its derivation's premises hold. The fourteen of this document, cut where failure modes and remedies differ: siblings under shared foundations are not duplicates, and the further compression they admit (see "Compression") trades bindingness for generality — which is why it lives below them, not instead of them. Fails by invalid derivation — which is why each carries its reasoning, not merely its conclusion.
+
+**Heuristic** — a default action serving a principle under typical conditions. *Normalize once at the edge; fail at the threshold; prefer idempotence where repetition is plausible.* Much of the derived layer under each principle lives here. Fails when applied outside its conditions — which is why the honest ones state them.
+
+**Pattern** — a named, recurring solution shape instantiating one or more heuristics. Admitted to this document only in the closing ledger, each with its derivation exhibited, and kept at this level by the reconstruction test in "The tests." Fails by cargo cult: application by name-matching rather than by the obligation discharged.
+
+**Technique** — a concrete mechanism in a concrete medium: this language's wrapper type, that database's idempotency-key column. Fails only by misexecution.
+
+The ladder's governing rule: **every statement lives at the lowest level that fully captures it, and binds at no higher level than it occupies.** Dogma is precisely a level violation — a pattern enforced as a principle ("always inject dependencies"), a heuristic enforced as an axiom ("always normalize"). Movement on the ladder must be earned in both directions: promotion by exhibited derivation, demotion by exhibited reconstruction. And the parallel with the currency ladder is not accidental — both order the same question at different scales: *what actually binds, and what merely advises?*
 
 ---
 
 # The principles
 
-## 1. Knowledge exists only where representation changed
+## 1. Knowledge exists only in what representation carries
 
-An observer's knowledge of a value is a function of the value's representation and the observer's context. When a fact is established but the representation is unchanged, the fact lives only in the transient context of whoever established it — and by A2, contexts are not shared. For every later observer the fact's status reverts to *unknown*.
+An observer's knowledge of a value is a function of the value's representation and the observer's context. When a fact is established but the representation is unchanged, the fact lives only in the transient context of whoever established it — and by A2, contexts are not shared. For every later observer the fact's status reverts to *unknown*. (Some facts are born carried — the literal `3` needs no event to prove it positive, because positivity is recoverable from the representation that already exists. The principle governs *establishment*: an establishment act that leaves carriage unchanged has established nothing for anyone else.)
 
 Therefore establishing a fact `P(x)` should be a transformation `x → x_P` such that possession of `x_P` entails `P`. The proof becomes a persistent object rather than an event. "Representation" is broad here: the change may be in the value's own shape or in evidence that travels attached to it — a wrapper, a certificate, a token. What does not count is a proof that stays behind: a fact whose evidence is not recoverable from what the consumer holds has, for that consumer, never been established.
 
@@ -55,7 +79,7 @@ Therefore establishing a fact `P(x)` should be a transformation `x → x_P` such
 - **Construction is the only path to possession.** If a strong value can be obtained without passing through the proof, the representation lies; the proving path must be the sole path, or the receipt is forgeable.
 - **Never require the same proof twice.** Within a fact's validity frame, re-checking an already-carried fact adds no information — it only re-imposes a discharged obligation, converting a paid debt back into an outstanding one.
 - **Pay at the earliest stable point.** An obligation discharged where knowledge is greatest and consumers are fewest costs *C*; deferred outward, it costs *nC* — so expensive facts (interpretation, normalization, permission, configuration) migrate to the earliest point where their result stays valid.
-- **Information accumulates monotonically.** Learning and then discarding is regression; a transformation that knows more than its input should output a representation that carries more, never less.
+- **Information accumulates monotonically — in the facts that still matter.** A transformation that establishes facts should preserve every fact still relevant downstream and never silently discard one; deliberately shedding what no later frame needs is not regression but compression (4), and the sin is silence, not loss.
 - **Do not decay strong representations casually.** Each step backward down the certainty ladder re-creates every obligation the climb had discharged; descent should be deliberate, at frame boundaries, never as a convenience.
 - **A stored decision beats a repeated decision.** Anything decided identically at many sites — a rule, a normalization, an interpretation — is a fact awaiting its representation; repetition of judgment is the mental-currency form of repeated proof (see also 6).
 - **Execution leaves receipts too.** The running system continuously establishes facts — what happened, in what order, caused by what — and history that leaves no representation must later be reconstructed by an investigator, paid in the most expensive currency at the worst possible time. These receipts are *promised* observations, deliberately emitted for a named audience — not the incidental observability principle 5 tells you to minimize.
@@ -64,7 +88,7 @@ Therefore establishing a fact `P(x)` should be a transformation `x → x_P` such
 
 No fact is absolute. It holds relative to a frame: a process, a version of the rules that checked it, a trust domain, sometimes an instant. `x_P` proves `P` *within the frame where the proof was made*. Carried across a frame boundary — into another process, another epoch of the rules, another party's custody — it remains a proof only if the receiving frame can recognize and verify its evidence against that frame's own trust anchors; otherwise it is a claim.
 
-Therefore: preserve facts aggressively **within** frames (principle 1), re-establish them **at** frame crossings, and make the crossings themselves explicit objects of design. This is what a boundary *is*: the locus where established knowledge expires and must be repurchased. The two errors are symmetric — re-proving inside a frame wastes *nC*; trusting across a frame trades correctness for the *illusion* of a receipt, which is worse than no receipt.
+Therefore: preserve facts aggressively **within** frames (principle 1), re-establish or accept them **at** frame crossings, and make the crossings themselves explicit objects of design. This is what a boundary *is*: the locus where established knowledge must be re-acquired — at full price by re-proof, or at the discount portable evidence earns through acceptance — never carried through for free. The triad beneath the whole principle: within a frame, establishment produces evidence; at a crossing, evidence meets acceptance; past expiry, only re-establishment remains. The two errors are symmetric — re-proving inside a frame wastes *nC*; trusting across a frame trades correctness for the *illusion* of a receipt, which is worse than no receipt.
 
 **Under it:**
 
@@ -73,7 +97,7 @@ Therefore: preserve facts aggressively **within** frames (principle 1), re-estab
 - **Structural reconstruction is not semantic proof.** Recovering the *shape* of data from a wire form establishes syntax only; the domain's propositions form a second, separate frame that must be entered by its own proof.
 - **Rules are part of the frame.** A fact proven under version *n* of the rules is a claim under version *n+1*; wherever rules evolve, stored receipts age, and the design must say what re-proof their expiry triggers.
 - **Trust follows custody.** Data that leaves your custody and returns — through storage, a peer, a queue — has crossed a frame even if it "was yours"; provenance is not proof.
-- **Make crossings few, explicit, and load-bearing.** Every crossing is a mandatory repurchase of knowledge; a design with accidental, implicit, or repeated crossings pays that price without noticing, and a design that knows its crossings can concentrate all re-proof there.
+- **Make crossings few, explicit, and load-bearing.** Every crossing is a mandatory re-acquisition of knowledge — at full price or at evidence's discount; a design with accidental, implicit, or repeated crossings pays that price without noticing, and a design that knows its crossings can concentrate all re-proof and acceptance there.
 - **The clock is a frame.** Facts with temporal scope — freshness, validity windows, leases — expire like any other framed fact; an instant of proof is part of the proof (see also 12).
 - **The checker bounds the proof.** "Structurally impossible" means impossible within the enforcing mechanism's power, and no further; claiming more than the checker verified is the illusion-of-receipt error committed against oneself.
 
@@ -93,10 +117,10 @@ The contrapositive matters equally: a distinction that carries no consequence fo
 
 ## 4. Match the representable to the meaningful
 
-Every representable state is a possibility some reasoner may one day have to exclude. The ideal representation closes the gap between representable states and meaningful situations: every representable state has a valid interpretation, and every distinction on which correctness turns has an honest representation. (Strict one-to-one correspondence is not the law — several encodings of one meaning are legitimate at the perimeter; but the moment they pass it, the equivalence class becomes an obligation every consumer must know, which is why the interior canonicalizes to one representative per meaning — see 8.) There are two failure directions, and the second is the one naive formulations miss:
+Every representable state is a possibility some reasoner may one day have to exclude. Let `I : Representations ⇀ Meanings` be the interpretation — partial, because not every representation means anything. The ideal representation closes the gap in both directions: every representable state has a valid interpretation, and every distinction on which correctness turns has an honest representation. (Strict one-to-one correspondence is not the law — several encodings of one meaning are legitimate at the perimeter; but the moment they pass it, the equivalence class becomes an obligation every consumer must know, which is why the interior canonicalizes to one representative per meaning — see 8.) There are two failure directions, and the second is the one naive formulations miss:
 
-- **Excess** — representable ⊃ meaningful: the surplus states are illegal, yet every reader must rule them out and every writer might construct them.
-- **Deficit** — representable ⊂ meaningful: real situations of the domain now have no honest encoding, so they get smuggled in through convention, overloading, or out-of-band memory — violating principle 3 by construction.
+- **Excess** — representations outside `I`'s domain: states with no valid interpretation, which every reader must nonetheless rule out and every writer might nonetheless construct.
+- **Deficit** — correctness-relevant meanings outside `I`'s image: real situations of the domain with no honest encoding, so they get smuggled in through convention, overloading, or out-of-band memory — violating principle 3 by construction.
 
 So the principle is **not** "minimize the state space." It is: *close the gap between representable and meaningful from above, and never cross below.*
 
@@ -109,11 +133,11 @@ So the principle is **not** "minimize the state space." It is: *close the gap be
 - **Meaningful stages deserve distinct states.** When a thing's legal operations differ across its life, one undifferentiated representation forces every operation to carry the whole lifecycle's case analysis (see also 12).
 - **Do not compress below the domain's variety.** A representation smaller than the situation space it must express doesn't remove complexity — it evicts it into convention, the most expensive residence there is.
 
-## 5. Interaction, not size, is the measure of complexity
+## 5. Interaction, not size, dominates reasoning cost
 
-The cost of understanding a system grows not with the number of parts but with the number of pairs that can affect each other — with edges, not nodes. A large sparse graph is cheaper than a small dense one.
+The cost of understanding a system grows not with the number of parts but with the number of pairs that can affect each other — with edges, not nodes. A large sparse graph is cheaper than a small dense one. And edges are weighted, not merely counted: two narrow, independent edges cost less than one entangling edge whose effects must be considered jointly — sparsity is the shorthand; joint consideration is the quantity.
 
-And the effective edge set is larger than the declared one: **given enough consumers and time, whatever is observably stable will be depended upon.** Every stable distinction a component exposes — in behavior, timing, ordering, error detail — tends toward de facto contract, whether promised or not. The corollary: an observable you refuse to promise is best made visibly unstable, since dependence cannot form on what refuses to repeat.
+And the effective edge set is larger than the declared one: **given enough consumers and time, whatever is observably stable will be depended upon.** Every stable distinction a component exposes — in behavior, timing, ordering, error detail — tends toward de facto contract, whether promised or not. The corollary: an unpromised observable is defended in descending order of strength — remove the observation; where removal is impossible, the observable is semantically free by contract, and variation is operationally cheap, vary it deliberately (a targeted tool, not a blanket prescription — dependence also forms on statistical regularities, and variation carries its own debugging and testing costs to price in); or declare it unspecified, the weakest defense of all, being testimony that binds no one (3) — a declaration of instability atop actually-stable behavior is precisely what accidental contracts are made of.
 
 **Under it:**
 
@@ -128,7 +152,7 @@ And the effective edge set is larger than the declared one: **given enough consu
 
 A component's authority is the set of states it can influence. Two components can interfere only where their authorities intersect; the total interference potential of a system is the sum of these intersections. Authority in excess of responsibility purchases nothing and enlarges every intersection it touches.
 
-The limiting case is the most important: **every mutable fact needs one locus of authority — one writer, or, where several writers are necessary, one explicit resolution rule that all of them submit to.** Single ownership is the cheapest implementation of that rule, not the rule itself: with one writer the fact's history is a sequence; with many writers and no authoritative resolution it is a negotiation every reader must model; with many writers and a lawful merge (10) it is a sequence again — of resolutions.
+The limiting case is the most important: **every mutable fact needs one locus of authority — one writer, or, where several writers are necessary, one explicit resolution rule that all of them submit to.** Single ownership is the cheapest implementation of that rule, not the rule itself: with one writer the fact's history is a sequence; with many writers and no authoritative resolution it is a negotiation every reader must model; with many writers and a lawful merge (10) it becomes lawful again — concurrent histories converge under an explicit resolution law, even where no single sequence of events exists.
 
 **Under it:**
 
@@ -155,13 +179,15 @@ This is not a demand to expose implementation; it is a prohibition on invisible 
 - **Chance is an input.** Same argument, same remedy: where randomness affects outcomes, its source belongs in the reasoning model, or the function's identity changes on every call unannounced.
 - **Identity, permission, locale, and configuration are inputs.** Anything that makes the same visible call mean different things in different contexts is part of the true domain and must appear in it.
 - **No ambient authority.** Globally reachable state is a hidden input to everything and a hidden output of everything — the densest possible edge, connecting all components pairwise through the back door (see also 5, 6).
-- **Determinism is the default; nondeterminism is a declared dependency.** A computation whose outputs are a function of its stated inputs can be replayed, compared, and trusted; every departure from that should be visible as a named input, not embedded as a surprise.
+- **Determinism is the default; nondeterminism is a declared dependency.** A computation whose outputs are a function of its stated inputs can be replayed, compared, and trusted; every departure from that should be visible in the dependency model — as a parameter or a granted capability — not embedded as a surprise.
 
 ## 8. Uncertainty decreases monotonically inward; the irreducible remainder stays at the perimeter
 
 Order knowledge states by information: more constrained ⊒ less constrained. A healthy system is a monotone ascent — data gains constraint at each inward step and never silently loses it. A sick system carries raw ambiguity to its center, so every interior component re-confronts what the perimeter failed to resolve.
 
 Some uncertainty is irreducible — the world, other parties, the clock, the network. It cannot be eliminated, but it can be *quarantined*: converted at the perimeter, once, into internal facts or explicit internal failures.
+
+Uncertainty is not one thing, and each kind has its own gradient. *Epistemic* uncertainty — what is true of this data — collapses early, at the perimeter: this principle's subject. *Environmental* uncertainty — what the world will do — never collapses, and is absorbed by invariant semantics and bounds (10). *Design* uncertainty — what we should choose — collapses late, at the point of maximum knowledge (13). Misfiling an uncertainty misapplies its gradient.
 
 **Under it:**
 
@@ -188,19 +214,19 @@ Handling is *translation at each frame crossing*: preserve exactly the semantics
 - **Handle where understanding lives.** The frame that can distinguish retry from refusal from redesign is the frame that should decide; handling above it lacks context, handling below it lacks authority (see also 6).
 - **A failure's audience includes the future.** What is preserved through translation should serve not only the caller but the investigator — discarding the causal trail to tidy the interface trades tomorrow's diagnosis for today's neatness.
 
-## 10. Give operations an algebra the environment cannot break
+## 10. Choose semantics invariant under the environment's perturbations
 
-Some environments cannot promise that an operation runs exactly once, in order, ungrouped — most distributed settings are such environments at some layer, and any setting with retries over an unreliable link certainly is. Correctness there must not depend on promises the environment cannot make. The resolution is algebraic: choose operation semantics whose closure absorbs the environment's uncertainty.
+Some environments cannot promise that an operation runs exactly once, in order, ungrouped — most distributed settings are such environments at some layer, and any setting with retries over an unreliable link certainly is. Correctness there must not depend on promises the environment cannot make. The resolution is invariance: choose operation semantics unmoved by the perturbations the environment can actually produce. Algebra is invariance's sharpest instrument:
 
-- Idempotence — `f∘f = f` — makes duplication harmless.
-- Commutativity makes reordering harmless.
-- Associativity makes regrouping harmless.
+- Idempotence of the operation — `f(f(x)) = f(x)` — makes duplication harmless.
+- Commutativity of the combining step — `a ∗ b = b ∗ a` — makes reordering harmless.
+- Associativity of the combining step — `(a ∗ b) ∗ c = a ∗ (b ∗ c)` — makes regrouping harmless.
 
-**When delivery guarantees are weak, strengthen the algebra until the weakness is unobservable.**
+These are properties of different objects — the first of a repeated operation, the other two of how effects combine — unified by one role: the algebra absorbs exactly what the environment scrambles. **When delivery guarantees are weak, strengthen the algebra until the weakness is unobservable.** And where the perturbation is not algebraic — interruption, abandonment mid-flight — the same rule holds through resumable or compensating semantics.
 
 **Under it:**
 
-- **Design for at-least-once, any-order — wherever duplication or reordering is possible.** Exactly-once-in-order is a promise such environments keep only on good days; semantics that survive repetition and reordering convert delivery uncertainty from a correctness problem into a non-event.
+- **Do not build correctness on guarantees the environment does not actually provide.** Where duplication or reordering is possible, correctness must not depend on their absence — design for at-least-once, any-order, and delivery uncertainty becomes a non-event. Where the environment genuinely provides uniqueness or order, relying on it is legitimate and cheaper; paying the algebra-price anyway is insurance, judged like any other (13).
 - **Prefer idempotence wherever repetition is plausible.** When re-execution equals execution, the entire question "did it already happen?" — unanswerable in a distributed setting — no longer needs an answer.
 - **Identity of intent, not of message.** Two arrivals of one intention must be recognizable as one intention; an operation that cannot recognize its own repetition will perform it.
 - **Interruption is a first-class outcome.** In an environment that can abandon work at any point, "stopped partway" is a state every operation may enter; semantics that account for it degrade cleanly, semantics that ignore it corrupt quietly (see also 11).
@@ -216,7 +242,7 @@ Two errors are possible, and both are common. An invariant that quietly straddle
 **Under it:**
 
 - **Jointly necessary facts change in one act — within the scope.** Facts that an invariant binds together must move together where the invariant lives; movement one-at-a-time inside the scope manufactures states the domain never meant to exist (4 applied jointly).
-- **The scope is exactly as large as its invariants demand.** Every fact added to a scope taxes every change within it; indivisibility must be justified per invariant, never defaulted per convenience of storage or module.
+- **The scope is exactly as large as its invariants demand.** "Scope" here is the correctness-required scope; the mechanism enforcing it may enclose more for its own convenience, and that surplus is a tax under the same rule. Every fact added taxes every change within; indivisibility must be justified per invariant, never defaulted per convenience of storage or module.
 - **Across scopes, agreement is a process, not a state.** Where no single act can bind facts, their convergence takes time — and the window of disagreement is a real, representable situation, not an embarrassment to hide.
 - **Where indivisibility is impossible, intermediate states are real.** The halfway points of a multi-scope change exist whether modeled or not — modeled, each has a meaning and a path forward or back; unmodeled, they are corruption pending discovery.
 - **A reader spanning scopes sees a moment, not a truth.** Facts gathered from different scopes were established at different instants; a conclusion composed from them must tolerate their skew or arrange to observe within one scope (2 applied to reads).
@@ -240,7 +266,7 @@ Temporal validity is the fact most often left implicit, because it is invisible 
 
 A system is not only its present behavior; it is its sensitivity to change. For each assumption *A* the system rests on, ask: when *A* changes, how much changes with it? Good architecture keeps `ΔSystem/ΔA` small for the assumptions that actually vary — a discrete sensitivity, honestly notated, not the derivative of a function no one has defined — which requires grouping elements by *shared reasons for change* and separating what must remain true from how it is currently achieved.
 
-*Qualification:* insulation is bought with edges and indirection (principle 5), so it must be purchased only against changes with real probability mass. The sensitivity is weighted by the distribution of actual change — not by the space of imaginable change.
+*Qualification:* insulation is bought with edges and indirection (principle 5), so it must be purchased only against changes with real probability mass. The sensitivity is judged against the expected distribution of actual change — an estimate, necessarily, but an estimate of something real — never against the space of imaginable change.
 
 **Under it:**
 
@@ -253,15 +279,15 @@ A system is not only its present behavior; it is its sensitivity to change. For 
 - **Design decisions are themselves framed facts.** The designer's knowledge of the domain grows over the system's life, so a commitment made early is made at the point of minimum knowledge (2 applied to the designer); while uncertainty is high, prefer assignments that are cheap to revise, and escalate structure on evidence rather than anticipation.
 - **Compatibility is a promise about sensitivity.** A stable interface is a commitment that dependents' proofs survive the provider's evolution — the counterfactual principle turned outward, into a discipline about what may change and what may not.
 
-## 14. Local checkability is the target all of this serves
+## 14. Local checkability is the mechanism all of this serves
 
-The maintainer is a bounded prover (A1). A design is good precisely insofar as each important property can be verified from a context that fits within bounded attention — without opening the implementations of everything adjacent. When verifying a property requires the transitive closure of the system, the design has failed the axiom, whatever its other virtues.
+The maintainer is a bounded prover (A1). A design is good precisely insofar as each important property can be verified from a context that fits within bounded attention — without opening the implementations of everything adjacent. When verifying a property requires the transitive closure of the system, the design has failed A1, whatever its other virtues.
 
 The hierarchy deserves stating plainly. The ultimate objective is the frame itself: **minimize the lifetime cost of keeping the system's propositions true.** Local checkability is the primary architectural mechanism serving that objective — its dominant term, because verification under maintenance is where most of the cost accrues — but a mechanism nonetheless, and where the two ever diverge, the objective wins.
 
 **Under it:**
 
-- **Contracts must compose.** If a part guarantees `A ⇒ B` and its neighbor requires only `B`, the pair yields `A ⇒ C` from contracts alone — and a chain of parts can be trusted without opening any of them; where guarantees fail to compose, every whole must be re-proven from scratch.
+- **Contracts must compose.** If a part guarantees `A ⇒ B` and its neighbor guarantees `B ⇒ C` while requiring nothing beyond `B`, the pair yields `A ⇒ C` from contracts alone — and a chain of parts can be trusted without opening any of them; where guarantees fail to compose, every whole must be re-proven from scratch.
 - **Minimize simultaneously required context.** The burden of understanding grows with the facts that must be held at once *and* their interactions; a component resting on three independent assumptions is categorically easier than one resting on ten entangled ones.
 - **What is needed to verify a thing should live near the thing.** Verification that requires a tour of the system pays a search cost before the proof cost; locality of evidence is half of local checkability.
 - **An interface is the complete list of what may be relied upon.** If correct use requires knowledge the interface doesn't state, the interface is a partial truth — and its consumers' proofs rest partly on excavation (3 applied to contracts).
@@ -301,15 +327,15 @@ A foundation that cannot state its own limits is ideology.
 
 ## Compression
 
-The fourteen reduce to **three conserved reductions and one direction of flow**.
+The fourteen reduce to **three recurring reductions and one direction of flow**.
 
 **Reduce possibility.** Fewer representable-but-meaningless states (4), fewer distinctions living only in minds (3), fewer unmodeled joint states and halfway worlds (11), fewer futures in which a fact must be re-proven (1, 12).
 
 **Reduce interaction.** Fewer edges, declared and observable (5); smaller authority intersections (6); no invisible participants in any contract (7).
 
-**Reduce propagation.** Uncertainty resolved at the perimeter and not re-imported (8); failure traveling exactly as far as its meaning (9); change absorbed near its source (13); environmental disorder absorbed by algebra rather than transmitted (10); partial change contained within its scope (11).
+**Reduce propagation.** Uncertainty resolved at the perimeter and not re-imported (8); failure traveling exactly as far as its meaning (9); change absorbed near its source (13); environmental disorder absorbed by invariant semantics rather than transmitted (10); partial change contained within its scope (11).
 
-**And one direction:** correctness migrates *toward construction* — as early, as structural, as machine-checked as the domain permits; uncertainty migrates *toward the perimeter* — as late, as explicit, as contained as reality demands. These are not two policies but two gradients of the same field: each fact should be established at the point of maximum knowledge and minimum cost, and preserved from there to every point of use — within its frame, and never past it.
+**And one direction:** correctness migrates *toward construction* — as early, as structural, as machine-checked as the domain permits; uncertainty migrates *toward the perimeter* — as late, as explicit, as contained as reality demands (epistemic and environmental uncertainty, that is; design uncertainty runs the opposite gradient — 13). These are not two policies but two gradients of the same field: each fact should be established at the point of maximum knowledge and minimum cost, and preserved from there to every point of use — within its frame, and never past it.
 
 ---
 
@@ -329,11 +355,104 @@ The operational payoff of a first-principles document is the questions it lets y
 
 A design that answers these well needs no pattern vocabulary to defend itself; a design that cannot answer them is not saved by one.
 
+And one meta-test, aimed at the framework rather than the design: **ban the pattern's name and ask whether it can be reconstructed from the principles alone.** If it can, the pattern is a consequence — knowledge no one needs to memorize. If it cannot, one of two findings follows: the pattern encodes something the framework lacks, which is a gap worth mining, or the pattern is ritual, which is a cut worth making. Either way the test discriminates — and discrimination is what keeps this a theory rather than a vocabulary.
+
+---
+
+## The pattern ledger
+
+Patterns are level-five statements, and this document admits them on one condition: the derivation is exhibited — the reconstruction test passed in writing. The semantics of "derived" deserve precision: principles entail *requirements*, and a pattern is an implementation of a requirement, generally not the unique one — the entry's clause names the requirement the pattern discharges, not a claim that the principles could produce no other solution. That non-uniqueness is exactly why patterns sit at level five. Entries sit at mixed granularity — some are single named patterns, others strategy families spanning several techniques; the ledger is a coverage map of derivations, not a normalized taxonomy, and the ladder of statements supplies the finer levels when an entry needs splitting. Each entry names its deriving principles and compresses the chain to a clause; conditional patterns carry their conditions, because a level-five statement binds only within them. Absence from the ledger means not-yet-derived, not rejected — except the final list, whose rejections are themselves derived.
+
+**From establishment and representation (1, 3, 4):**
+
+- **Parse, don't validate** — (1) establishing a fact must change the representation; the parser is `x → x_P`, and downstream code accepts only `x_P`.
+- **Smart constructor** — (1) construction as the only path to possession; a receipt obtainable without the proof is forged.
+- **Value object** — (1, 4) jointly-meaningful facts travel in one receipt, so their relationship is never reconstructed at use sites.
+- **Builder with staged construction** — (1, 4) "partially configured" is its own represented state; the final build is the proof gate.
+- **Semantic newtype** — (3) a distinction correctness turns on, moved from naming convention into the medium.
+- **Phantom type** — (3) the same move at zero runtime cost: identical machine representation, distinct compile-time meaning.
+- **Algebraic data type / enum** — (4) mutual exclusivity encoded as alternatives, deleting the 2ⁿ flag-combinations for *k* meanings.
+- **Make illegal states unrepresentable** — (4) the excess direction closed: an unconstructible case needs no test, branch, or memory.
+- **Typestate** — (4, 12) lifecycle stages with different legal operations become distinct types, so phase errors become construction errors.
+- **Sealed alternatives** — (4) a closed set stays closed; exhaustiveness stays checkable.
+- **State machine** — (4, 10, 11) meaningful intermediate states — including interruption's — represented rather than implied.
+- **Canonicalization at the boundary** — (4, 8) the equivalence class collapsed once at entry, so the interior never learns it existed.
+
+**From interaction and authority (5, 6):**
+
+- **Composition over inheritance** — (5) assembled parts couple by narrow contract; inheritance couples implicitly to the whole base behavior.
+- **Facade** — (5) a subsystem's observable surface shrunk to its intended promises.
+- **Capability interface** — (5, 6) the dependency is the ability needed, not the machinery that has it; authority arrives explicit and minimal.
+- **Ownership / single writer** — (6) one authority per mutable fact; interleavings collapse to a sequence.
+- **Immutability by default** — (6) what cannot change cannot be interfered with; mutability becomes a deliberate grant.
+- **Actor / message passing** — (6) mutation serialized through the owner; others hold a channel, not the state.
+- **Repository** — (6, 2) the derived requirement is localized persistence authority; a repository is one implementation of it — conditional: it models a domain persistence boundary, not a table.
+- **CQRS** — (6) the derived requirement is separability of read from write authority; CQRS is one architecture exploiting it — conditional: the separation must be worth its edges (5).
+- **Inversion of control / composition root** — (6, 7) acquisition and orchestration authority relocated to one designated assembler; components receive, and the wiring has one home.
+
+**From explicit inputs and the perimeter (7, 8):**
+
+- **Dependency injection** — (7) receive dependencies rather than discover them; the visible domain becomes the true one.
+- **Explicit clock / injected randomness** — (7) time and chance named as the inputs they are; the core becomes replayable.
+- **Configuration as parsed input** — (7, 8, 1) the environment crosses once, becomes a receipt, and no subsystem re-reads raw strings.
+- **Functional core, imperative shell** — (7, 8) calculation separated from the world's cooperation; effects held at the rim.
+- **DTO → domain translation** — (8, 2) the transport's frame ends at the boundary; the domain's frame is entered by its own proof.
+- **Anti-corruption layer** — (8, 2, 13) a foreign vocabulary translated once, so it never becomes ambient.
+- **Middleware pipeline** — (8, 14) the derived requirement is monotone property acquisition through composing contracts; a middleware chain is one implementation of it.
+- **Fail-fast startup** — (8, 1) viability established once at the earliest perimeter instead of detonating mid-flight.
+
+**From failure and the environment (9, 10):**
+
+- **Typed errors** — (9, 3) distinct failure meanings get distinct representations; handlers stop reverse-engineering strings.
+- **Error translation per boundary** — (9, 2) each frame receives failure in its own vocabulary — never leaked raw, never swallowed.
+- **Idempotency key** — (10) intent made recognizable across repetition — conditional on possible duplication.
+- **Deduplication / inbox** — (10) the same condition, discharged at the receiver.
+- **Retry under policy** — (10, 13) re-execution centralized as a stated policy rather than scattered loops.
+- **Backpressure / bounded queues** — (10) the unbounded bounded; overload propagates backward instead of pooling.
+- **Circuit breaker** — (10, 13) premises: an external dependency, repeatedly failing, where attempts are costly and the failure is plausibly temporary — then stop repurchasing from a frame that keeps defaulting, and bound the wasted spend until it plausibly recovers.
+- **Lawful merge (CRDT-style)** — (10, 6) multiple writers submitted to an explicit resolution law; convergence without sequence.
+
+**From consistency and lifetime (11, 12):**
+
+- **Transaction / unit of work** — (11) jointly-necessary facts moved in one act within their declared scope.
+- **Aggregate** — (11) the scope drawn by its invariants — conditional: no larger than they demand.
+- **Outbox** — (11, 10, 1) two effects that can fail independently leave a durable residue of the pending intent — representation compensating for a world that won't promise atomicity.
+- **Saga / compensation** — (11) where indivisibility is impossible, the intermediate states modeled, each with a path forward or back.
+- **RAII / scoped guards** — (12) possession implies validity; release is a structural consequence of scope's end.
+- **Structured concurrency** — (12) initiated work enclosed in its initiator's lifetime — reachable by cancellation, visible to teardown.
+- **Cancellation propagation** — (12) the owner's end propagated to everything it owns.
+
+**From change and checkability (13, 14):**
+
+- **Ports and adapters** — (13, 7, 5) stable meaning separated from unstable mechanism — conditional: the port earns its edge with a real second implementation or seam, a test double often sufficing.
+- **Strategy / policy object** — (13, 7) independently-varying policy made an explicit input instead of buried conditionals.
+- **Adapter** — (13, 2) the mechanism's change-sensitivity contained at one translation point.
+- **Vertical slice** — (13, 14) the derived requirement is grouping by shared reason for change with evidence kept local; the slice layout is one implementation — conditional: the fundament is fewer, closer interactions, not the folder shape.
+- **Use case / application service** — (14, 11) one business operation's orchestration in one place — often the natural consistency scope.
+- **Stable versioned contract** — (13) compatibility as an explicit promise about sensitivity.
+- **Contract test** — (14, 2) the derived requirement is mechanically checkable boundary assumptions; contract tests are one implementation — rung two of the currency ladder, holding what structure couldn't.
+- **Property-based test** — (frame, rung 2) obligations structure could not absorb, stated as properties rather than instances — so the check binds a space of cases, not a sample of them.
+
+**Rejected by derivation — the ledger's other half:**
+
+- **Service locator** — violates 7: dependencies discovered from ambient context; the signature lies by construction.
+- **Ambient singleton / global state** — violates 7 and 6: a hidden input to everything and an unowned authority over everything — the densest possible edge.
+- **God context** — violates 5 and 6: maximal authority delivered everywhere, every reader accounting for what every holder could do.
+- **Interface-for-everything** — violates 13's qualification and 5: insurance bought against imaginable change, paid in certain edges.
+- **Utils / common modules** — violates 13: cohabitation without a shared reason for change; a module named for having no name.
+- **Wrapper-on-wrapper ceremony** — violates 3: renaming without removing; each layer an edge that deletes nothing.
+
+Absence means not-yet-derived; rejection means derived-against — under the conditions each entry names, not as a verdict on every configuration bearing the name: a singleton with explicit injection is not ambient, and not that entry. The distinction is the ledger's point.
+
 ---
 
 ## The final statement
 
-> **Design is the assignment of proof obligations. The best assignment discharges each obligation once, at the point of maximum knowledge, in the cheapest currency available — structure before record, record before memory — and issues a receipt that travels with the value to the edge of its validity frame, where the obligation is knowingly, explicitly, purchased again.**
+> **Design is the assignment of proof obligations. The best assignment discharges each obligation once per validity frame, at the point of maximum knowledge, in the cheapest currency available — structure before record, record before memory — and issues a receipt that travels with the value to the edge of that frame, where the obligation is knowingly, explicitly, purchased again.**
+
+At definition length:
+
+> **Software design is the deliberate placement of information, authority, and uncertainty so that the correctness the domain requires can be maintained at bounded reasoning cost.**
 
 Or, at aphorism length:
 
