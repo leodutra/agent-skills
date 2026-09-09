@@ -396,6 +396,7 @@ Patterns are level-five statements, and this document admits them on one conditi
 - **Composition over inheritance** — (5) assembled parts couple by narrow contract; inheritance couples implicitly to the whole base behavior.
 - **Facade** — (5) a subsystem's observable surface shrunk to its intended promises.
 - **Capability interface** — (5, 6) the dependency is the ability needed, not the machinery that has it; authority arrives explicit and minimal.
+- **Typed authorization decision (permit)** — (1, 3, 6) the decision established once and carried as a receipt that may hold the artifact it authorizes — scope, filter, grant; a bool discards both the reason for denial and everything the decision established.
 - **Ownership / single writer** — (6) one authority per mutable fact; interleavings collapse to a sequence.
 - **Immutability by default** — (6) what cannot change cannot be interfered with; mutability becomes a deliberate grant.
 - **Actor / message passing** — (6) mutation serialized through the owner; others hold a channel, not the state.
@@ -487,7 +488,7 @@ Or, at aphorism length:
 | 3 — distinctions in the medium | newtypes, typed errors (`domain-modeling.md`); naming as testimony (SKILL.md); fitness functions over docs (`testing-and-governance.md`); rejected wrapper ceremony (`structure-and-boundaries.md`) |
 | 4 — representable ↔ meaningful | illegal states, absence as a state, exhaustiveness, typestate (`domain-modeling.md`); the exhaustive Deny arm (`authorization.md`); test what the types could not hold (`testing-and-governance.md`) |
 | 5 — interaction, not size | narrow module API and observable surface, composition over inheritance, CQS, indirection as an edge (`structure-and-boundaries.md`); incidental observability (`events-and-consistency.md`); specification as an edge (`domain-modeling.md`) |
-| 6 — authority defines interference | state ownership, composition root, capability dependencies, CQS (`structure-and-boundaries.md`); policies as one home, persistence authority (`domain-modeling.md`); copies of facts (`events-and-consistency.md`); `can*` policies and role→permission data (`authorization.md`) |
+| 6 — authority defines interference | state ownership, composition root, capability dependencies, CQS (`structure-and-boundaries.md`); policies as one home, persistence authority (`domain-modeling.md`); copies of facts (`events-and-consistency.md`); the action's `can` as one home, role→permission data (`authorization.md`) |
 | 7 — hidden inputs | no ambient authority, composition root (`structure-and-boundaries.md`); functional core with clock and randomness as inputs, typed config (`domain-modeling.md`); `Actor` as an input (`authorization.md`); Inputs check (SKILL.md) |
 | 8 — uncertainty inward | parse once at the boundary, fail-fast config, framework extractors as parsers (`domain-modeling.md`); anti-corruption translation (`structure-and-boundaries.md`) |
 | 9 — failure with a frame | error taxonomy (`domain-modeling.md`); retry only infrastructure errors, per-branch failure behavior, preserve the causal trail (`events-and-consistency.md`) |
@@ -495,4 +496,4 @@ Or, at aphorism length:
 | 11 — consistency scope | direct-call vs event, declared consistency, outbox, intermediate states, skewed reads (`events-and-consistency.md`); rich-object trigger (b) as an aggregate drawn no larger than its invariant (`domain-modeling.md`) |
 | 12 — lifetime | state ownership, scope-bound resources, structured concurrency (`structure-and-boundaries.md`); cancellation (`events-and-consistency.md`); typestate lifecycle (`domain-modeling.md`) |
 | 13 — counterfactual change | Evolution Path, North Star, avoid-by-default (SKILL.md); capability folders, slices, `platform/`, the seam rule (`structure-and-boundaries.md`); event and API contracts (`events-and-consistency.md`); ADRs (`testing-and-governance.md`); roles as data (`authorization.md`) |
-| 14 — local checkability | North Star and business-language naming (SKILL.md); module README (`structure-and-boundaries.md`); test colocation, contract tests (`testing-and-governance.md`); `can*` policies grouped for their auditor (`authorization.md`) |
+| 14 — local checkability | North Star and business-language naming (SKILL.md); module README (`structure-and-boundaries.md`); test colocation, contract tests (`testing-and-governance.md`); authorization read beside the action it governs (`authorization.md`) |

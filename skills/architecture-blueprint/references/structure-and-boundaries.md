@@ -71,11 +71,15 @@ Technical-layer folders (`controllers/`, `services/`, `repositories/`, `models/`
 ```text
 refund-order/
 ├── handler
+├── command           # the action type
+├── authorization     # impl Can for the action (see authorization.md)
 ├── schema
 ├── events
 ├── tests       # colocated (owns this slice)
 └── README
 ```
+
+A slice small enough MAY hold all of these in one file; the split happens when it earns it.
 
 ## Command / query separation
 
@@ -304,7 +308,7 @@ Rules for using it:
 | Role | Responsibility | Where it lives / caveat |
 | --- | --- | --- |
 | `authentication` | Establishes who the actor is | Edge / `platform/` |
-| `authorization` | `can*` policy: may this actor do this | `policies/` or beside the slice; checked at use-case entry, deny-by-default |
+| `authorization` | `impl Can` for the action: may this actor do this, returning `Permit<G>` | In the slice, beside its action; checked at use-case entry, deny-by-default |
 | `guard` | Enforcement point that *invokes* an authorization policy | Edge. MUST NOT contain the decision itself or any role conditional |
 
 ### Platform substrate
@@ -338,7 +342,7 @@ specific role name  →  utils  →  helpers
 ❌ utils/parse.ts          ✅ parser.ts
 ❌ utils/transform.ts      ✅ mapper.ts
 ❌ helpers/save.ts         ✅ store.ts (narrow functions over the ORM)
-❌ helpers/checkAccess.ts  ✅ policies/canRefundOrder.ts
+❌ helpers/checkAccess.ts  ✅ refund-order/authorization.ts
 ```
 
 The ledger rejects `utils`/`common` modules for cohabitation without a shared reason for change (13) — a module named for having no name. `utils` is tolerated for exactly the code that passes that test: small, generic, business-free, dependency-free functions with no reason to change at all — stdlib-shaped code with no owning capability. Those belong in `platform/`, not at a module's top level, and the first entry with a business or infrastructure reason to change MUST move out:

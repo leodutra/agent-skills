@@ -27,7 +27,7 @@ You SHOULD escalate to behavior-on-objects (`order.cancel()` instead of mutating
 - (d) Same invariant enforced from 2+ slices (6 — one authoritative home, so copies cannot drift; decisions live with the authority over their subject).
 - (e) High cost of violation (money, inventory, compliance) (frame — the chosen currency must *reliably* discharge the obligation; where a miss is costly, only structure is reliable enough).
 
-Absent a trigger, a rich object is over-engineering. When trigger (b) fires, the object MUST be drawn no larger than its invariants demand (11 — every fact added taxes every change within); an object that swallows a whole module to guard one invariant is the scope drawn wrong. Authorization is NOT one of these invariants. "Who may act" MUST stay in a `can*` policy at use-case entry (see `authorization.md`); the entity guards ONLY business invariants.
+Absent a trigger, a rich object is over-engineering. When trigger (b) fires, the object MUST be drawn no larger than its invariants demand (11 — every fact added taxes every change within); an object that swallows a whole module to guard one invariant is the scope drawn wrong. Authorization is NOT one of these invariants. "Who may act" MUST stay in the action's `can` at use-case entry (see `authorization.md`); the entity guards ONLY business invariants.
 
 ## Newtypes — identity distinction
 
@@ -128,7 +128,7 @@ The same technique applies to **component lifecycle** (`Created → Initialized 
 
 ## Policies vs. specifications
 
-(6 — one authoritative home per piece of knowledge; 1 — a stored decision beats a repeated decision) **Policy = the default for business decisions.** Answers "what is the rule/decision?" Bundles related decisions and calculations for one area; owns no infrastructure; pure and testable. `can*` names are reserved for authorization (`authorization.md`); business eligibility reads `isRefundable`, `isEligible`.
+(6 — one authoritative home per piece of knowledge; 1 — a stored decision beats a repeated decision) **Policy = the default for business decisions.** Answers "what is the rule/decision?" Bundles related decisions and calculations for one area; owns no infrastructure; pure and testable. `can` is reserved for the authorization protocol (`authorization.md`); business eligibility reads `isRefundable`, `isEligible`.
 
 ```ts
 class RefundPolicy {
@@ -141,14 +141,14 @@ A blueprint policy is a *stored decision* with one home. The ledger's "strategy 
 
 **Specification = a specialized tool, NOT a building block** (5 — indirection is an edge, not a virtue). Answers "does this satisfy criteria?" One composable predicate (`isSatisfiedBy(x): boolean`). You SHOULD introduce a specification object ONLY when actually composing predicates (`.and()/.or()/.not()`) or driving dynamic queries (`repository.find(spec)`). Heuristic: ~10–20 policies per specification in business systems (predicate-heavy domains may run higher). Otherwise write a method/function (`customer.isEligible()`).
 
-The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in the slice. The folder SHOULD emerge ONLY when decision logic is shared by 2+ slices (6 — one home the moment a second copy would exist). EXCEPTION: authorization `can*` policies MAY be grouped in `policies/` for auditability even when slice-specific (see `authorization.md`).
+The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in the slice. The folder SHOULD emerge ONLY when decision logic is shared by 2+ slices (6 — one home the moment a second copy would exist). Authorization is NOT an exception: an action's `can` belongs to its slice, and only a decision genuinely evaluated by 2+ slices graduates here (see `authorization.md`).
 
 ```text
 orders/
 ├── domain/
 ├── create-order/
 ├── refund-order/
-└── policies/        # shared by 2+ slices, or authorization can* policies
+└── policies/        # shared by 2+ slices
 ```
 
 **Naming:** use intent-revealing names (`RefundPolicy`, `PricingPolicy`). Reactive when-then logic is named **process/handler/reaction**, never policy (*convention*, motivated by 3 — different meanings, different names).
