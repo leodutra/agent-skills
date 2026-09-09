@@ -33,6 +33,17 @@ stops shipping the tools that cost turns by design.
 - **Add** `codegraph-block.md` as a third installer-read text file, so the two
   installers cannot drift on the per-checkout block the way they once drifted on
   the contract. [D60](DECISIONS.md#d60), D30
+- **Fix** `npm install -g` picks a writable prefix instead of crashing. On a
+  distro whose npm comes from the system package manager (Arch: prefix `/usr`)
+  the global install died with EACCES and a 30-line stack trace, for a step this
+  script declares non-fatal. It now checks `npm root -g` first and falls back to
+  `--prefix $HOME/.local` — where `claude` itself already lives — warning only if
+  that bin dir is not on PATH. Applies to codegraph and opensrc, on both
+  platforms: the Windows equivalent falls back to `%LOCALAPPDATA%\npm-global` and
+  probes writability by writing, since an inherited deny makes a directory look
+  writable until the install fails. Rarer there — the official Node MSI sets a
+  user-writable `%APPDATA%\npm` prefix — but a machine-wide Node install
+  reproduces it exactly.
 - **Add** backlog item B8: Claude Code's native `LSP` tool and its `lspServers`
   key exist in `claude` 2.1.265 but start no server and expose no tool when
   configured, so Serena's retrieval trio stays until the plugin route is retested.

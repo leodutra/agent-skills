@@ -203,6 +203,38 @@ inject_condensed_contract() {
   else say "  no agent files at $dir — skipping condensed contract injection"; fi
 }
 
+# `npm install -g` into a root-owned prefix. On a distro that ships npm from the
+# system package manager (Arch: /usr), `npm config get prefix` is /usr and the
+# global install dies with EACCES and a 30-line stack trace — for a step this
+# script declares non-fatal, which made an unusable warning out of a fixable
+# condition. So: pick the prefix BEFORE running, rather than reporting the crash
+# after.
+#
+# $HOME/.local is the fallback, not a private directory of our own: it is where
+# `claude` itself already lives on such a box, so $HOME/.local/bin is on PATH by
+# the time anyone runs this. stack-init.ps1 carries the equivalent
+# (Install-NpmGlobal) — the failure is rarer on Windows, where the official Node
+# MSI sets a user-writable %APPDATA%\npm prefix, but a machine-wide Node install
+# reproduces it exactly. The two are NOT translations of each other: on Windows
+# npm puts global shims in the prefix directory itself rather than <prefix>/bin,
+# so the directory to add to PATH differs.
+npm_install_global() {
+  local pkg="$1" root
+  root="$(npm root -g 2>/dev/null)" || root=""
+  # -w on the parent when the dir itself does not exist yet: npm would have to
+  # create it, and that is the same permission.
+  if [ -n "$root" ] && { [ -w "$root" ] || { [ ! -d "$root" ] && [ -w "$(dirname "$root")" ]; }; }; then
+    npm install -g "$pkg"
+    return
+  fi
+  say "  npm's global prefix ($(npm config get prefix 2>/dev/null)) is not writable — installing under \$HOME/.local instead"
+  npm install -g --prefix "$HOME/.local" "$pkg" || return 1
+  case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) warn "$HOME/.local/bin is not on PATH — add it, or $pkg will not resolve" ;;
+  esac
+}
+
 check_deps() {
   local miss=0
   # python3 is required, not optional: every settings.json mutation (the two
@@ -854,7 +886,7 @@ install_global() {
   # manual install.
   if have codegraph; then say "  codegraph present ($(codegraph version 2>/dev/null | head -1))"
   elif have npm; then
-    npm install -g @colbymchenry/codegraph && say "  codegraph installed (npm -g)" \
+    npm_install_global @colbymchenry/codegraph && say "  codegraph installed (npm -g)" \
       || warn "npm install -g @colbymchenry/codegraph failed — orientation (contract rule 6) stays unowned"
   else warn "npm not found — skipping codegraph (npm install -g @colbymchenry/codegraph later)"
   fi
@@ -878,7 +910,7 @@ install_global() {
   # skill, not the contract. Non-fatal like every extra below.
   if have opensrc; then say "  opensrc present"
   elif have npm; then
-    npm install -g opensrc && say "  opensrc installed (npm -g)" \
+    npm_install_global opensrc && say "  opensrc installed (npm -g)" \
       || warn "npm install -g opensrc failed — install later, stack unaffected"
   else warn "npm not found — skipping opensrc (npm install -g opensrc later)"
   fi

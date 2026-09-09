@@ -215,6 +215,48 @@ function Invoke-InjectCondensedContract {
   Say "  condensed contract injected into $Dir\*.md"
 }
 
+# `npm install -g` into a prefix this user cannot write. The official Node MSI
+# sets the prefix to %APPDATA%\npm, which is user-writable and never hits this -
+# but a machine-wide install (Node under C:\Program Files\nodejs with the prefix
+# left at the install directory, which some Chocolatey and enterprise MSI options
+# produce) needs Administrator, and npm then dies with the same EPERM/EACCES wall
+# stack-init.sh used to print. Non-fatal steps must not report a fixable
+# condition as a crash, so the prefix is chosen BEFORE the install runs.
+#
+# The Windows fallback is not a translation of the Unix one. On Windows npm puts
+# a global package's shims in the PREFIX DIRECTORY ITSELF, not in <prefix>\bin,
+# so the directory to place on PATH - and the one to check - is the prefix.
+# %LOCALAPPDATA%\npm-global is used rather than %APPDATA%\npm because the latter
+# is the default that may be exactly what just failed.
+function Install-NpmGlobal {
+  param([string]$Package)
+  $root = (npm root -g 2>$null | Out-String).Trim()
+  $global:LASTEXITCODE = 0
+  $probe = if ($root -and (Test-Path $root)) { $root } elseif ($root) { Split-Path $root } else { $null }
+  $writable = $false
+  if ($probe -and (Test-Path $probe)) {
+    # Probe by writing. Windows ACLs are not readable from a Test-Path, and an
+    # inherited deny or a redirected Program Files write can make a directory
+    # that LOOKS writable fail at install time.
+    $t = Join-Path $probe ([System.IO.Path]::GetRandomFileName())
+    try { New-Item -ItemType File -Path $t -ErrorAction Stop | Out-Null; Remove-Item -Force $t; $writable = $true }
+    catch { $writable = $false }
+  }
+  if ($writable) {
+    npm install -g $Package
+    return ($LASTEXITCODE -eq 0)
+  }
+  $prefix = Join-Path $env:LOCALAPPDATA 'npm-global'
+  Say "  npm's global prefix ($(npm config get prefix 2>$null)) is not writable - installing under $prefix instead"
+  New-Item -ItemType Directory -Force -Path $prefix | Out-Null
+  npm install -g --prefix $prefix $Package
+  if ($LASTEXITCODE -ne 0) { return $false }
+  if (($env:PATH -split ';') -notcontains $prefix.TrimEnd('\')) {
+    Warn "$prefix is not on PATH - add it, or $Package will not resolve"
+  }
+  return $true
+}
+
 function Check-Deps {
   $miss = $false
   foreach ($d in 'git','claude') { if (-not (Have $d)) { Err "missing required: $d"; $miss = $true } }
@@ -783,8 +825,7 @@ function Install-Global {
   # exists) and a permissions wildcard into settings.json.
   if (Have 'codegraph') { Say "  codegraph present ($(codegraph version 2>$null | Select-Object -First 1))" }
   elseif (Have 'npm') {
-    npm install -g '@colbymchenry/codegraph'
-    if ($LASTEXITCODE -eq 0) { Say "  codegraph installed (npm -g)" }
+    if (Install-NpmGlobal '@colbymchenry/codegraph') { Say "  codegraph installed (npm -g)" }
     else { Warn "npm install -g @colbymchenry/codegraph failed (exit $LASTEXITCODE) - orientation (contract rule 6) stays unowned" }
     $global:LASTEXITCODE = 0
   } else { Warn "npm not found - skipping codegraph (npm install -g @colbymchenry/codegraph later)" }
@@ -809,8 +850,7 @@ function Install-Global {
   # test $LASTEXITCODE explicitly, then reset it so it can't leak as our own.
   if (Have 'opensrc') { Say "  opensrc present" }
   elseif (Have 'npm') {
-    npm install -g opensrc
-    if ($LASTEXITCODE -eq 0) { Say "  opensrc installed (npm -g)" }
+    if (Install-NpmGlobal 'opensrc') { Say "  opensrc installed (npm -g)" }
     else { Warn "npm install -g opensrc failed (exit $LASTEXITCODE) - install later, stack unaffected" }
     $global:LASTEXITCODE = 0
   } else { Warn "npm not found - skipping opensrc (npm install -g opensrc later)" }
