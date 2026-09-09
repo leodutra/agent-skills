@@ -1,6 +1,6 @@
 # Claude Code Context Stack
 
-A pre-configured setup for Claude Code, built on one rule: **eliminate waste at its source, never compress downstream.** Two components — **Serena** (LSP symbol tools via MCP, *opt-in per session*) and **ponytail** (minimal-code discipline, default-on) — plus a global routing contract. Install the global layer once; that's the whole setup, and there is no per-repo step. 3.0 removed graphify, RTK, and Headroom: the stack no longer intercepts anything and holds no per-repo state (D51, D52).
+A pre-configured setup for Claude Code, built on one rule: **eliminate waste at its source, never compress downstream.** Three components — **Serena** (LSP symbol tools via MCP, *opt-in per session*, trimmed to nine tools), **ponytail** (minimal-code discipline, default-on) and **codegraph** (orientation, one MCP tool, indexed per checkout) — plus a global routing contract. Install the global layer once; the only per-repo step is `stack-init codegraph`, and only where you want an index. 3.0 removed graphify, RTK and Headroom: the stack still intercepts nothing (D51, D52, D60, D61).
 
 No intent/docs layer: this stack is only the parts that move tokens, plus the global routing contract.
 
@@ -12,9 +12,10 @@ No intent/docs layer: this stack is only the parts that move tokens, plus the gl
 | `DECISIONS.md` | Every "why", as numbered append-only decisions (D1–D48). A decision's body is never rewritten: when one is reversed or its stated reason turns out to be wrong, a new entry is appended and the old one gets a pointer. | When you want to know why something is the way it is — or before changing it. |
 | `CHANGELOG.md` | What changed and when, one terse line per change, each citing the decision it implements. | To see what moved between versions. |
 | `BACKLOG.md` | Open defects in the decision set, one item each, ordered by cost. Carries no rationale — closing an item means appending a decision and deleting the item, so the file empties itself. | Before starting work on the stack, and when a decision looks wrong. |
-| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack; `skills` deploys the repo's domain skills into the current repo's `.claude/skills/` (D48); also `verify`, `verify --docs` (checks this repo's own `§`/`D<n>` references — Unix-only, D42) and `contract`. | `stack-init` once, ever. `skills` per repo, as needed. |
+| `stack-init.sh` | The installer (Linux/macOS). Self-documenting and self-installing. `global` mode wires the whole stack; `skills` deploys the repo's domain skills into the current repo's `.claude/skills/` (D48); `codegraph` builds this checkout's index and writes its CLI block (D60); also `verify`, `verify --docs` (checks this repo's own `§`/`D<n>` references — Unix-only, D42) and `contract`. | `stack-init` once, ever. `skills` per repo, as needed. |
 | `stack-init.ps1` | The Windows installer (PowerShell). Same command surface and functional guarantees, equally idempotent; platform-native integrations differ where necessary. | `.\stack-init.ps1` once, ever. |
 | `contract.md` / `contract-condensed.md` | The routing contract itself, as the installers write it: the full form into `~/.claude/CLAUDE.md`, the short form into every agent file. Both installers read these, so the two platforms cannot drift on the one artifact they both produce. ASCII-only — Windows PowerShell 5.1 decodes a BOM-less file as ANSI. | Edit here to change the contract; never edit the managed block in `CLAUDE.md`. |
+| `codegraph-block.md` | The CodeGraph CLI section `stack-init codegraph` writes into a checkout's `CLAUDE.local.md` — what subagents and Bash need, since the MCP server's own guidance only reaches the main agent. Same ASCII-only rule, same no-drift reason (D60). | Edit here to change what an indexed repo tells its agents. |
 
 Keep the scripts inside the repo (symlink onto PATH rather than copying) — they deploy the [`skills/`](../skills/) extras and read `contract*.md` repo-relative.
 
@@ -30,7 +31,14 @@ ln -s "$PWD/stack-init.sh" ~/.local/bin/stack-init          # symlink onto PATH
 stack-init                                                  # = stack-init global
 #   Windows: run  .\stack-init.ps1  from the repo's config\ directory
 
-# 2. That's it — there is no per-repo step and no new shell needed.
+# 2. Optional, per repo: build a CodeGraph index for orientation (contract
+#    rule 6). Not global and not automatic — indexing walks the whole tree,
+#    and `codegraph explore` on an unindexed path fails and costs a turn, so
+#    the CLI block only exists where the index does (D60).
+cd /path/to/project && stack-init codegraph
+stack-init codegraph --remove       # drop the index and the block again
+
+#    Nothing else is per-repo, and no new shell is needed.
 #    Serena stays OFF until a session turns it on with /mcp (D53).
 
 # 3. Check the wiring any time
@@ -51,12 +59,13 @@ Escape hatches: `CLAUDE_STACK_NO_SERENA_INIT=1` (or a `.serena-skip` file in a r
 
 | Tool | Owns | Never used for |
 | --- | --- | --- |
-| Serena *(opt-in)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it |
+| Serena *(opt-in, 9 tools)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it; memory or onboarding — those tools are gone (D61) |
 | ponytail *(always on)* | minimal-code discipline, injected at session start | routing any question |
+| codegraph *(on; indexed per repo)* | orientation — what connects X to Y, blast radius, one call | current file content; unindexed checkouts, where it answers with guidance instead |
 
-Two waste sources are deliberately **unowned**: orientation (graphify's old job) and tool-output noise (RTK's). Nothing compresses wire traffic either. Keeping output small is a routing choice now — prefer targeted commands over ones that dump (D51, D52).
+One waste source stays deliberately **unowned**: tool-output noise (RTK's old job). Nothing compresses wire traffic. Keeping output small is a routing choice — prefer targeted commands over ones that dump (D51). Orientation was unowned from 3.0 until codegraph took it (D52, D60).
 
-Source of truth: the LSP when Serena is enabled. Nothing in the stack derives or caches a second model of the code, so there is no precedence conflict left to resolve (doc §5).
+Source of truth: the LSP when Serena is enabled is live. codegraph is the one derived model — a pre-built index that auto-syncs but can lag an edit made seconds ago, so it beats grep on structure and never beats the LSP or the file on disk on current content (doc §5, D60).
 
 ## Extra tools (outside the contract)
 
@@ -78,8 +87,8 @@ Worktrees stay indistinguishable from any other checkout via one rule — *a wor
 
 ## Prerequisites
 
-Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, and a language server per language used (rust-analyzer / typescript-language-server / pyright). On Linux/macOS also `python3` — every `settings.json` merge goes through it. On Windows: PowerShell 5.1+ and Git for Windows (its bundled bash runs the post-commit hook).
+Arch Linux (adaptable) or Windows, Claude Code, `git`, `cargo`, `uv`, `pip`, `npm` (codegraph, opensrc), and a language server per language used (rust-analyzer / typescript-language-server / pyright). On Linux/macOS also `python3` — every `settings.json` and `serena_config.yml` merge goes through it. On Windows: PowerShell 5.1+ and Git for Windows (its bundled bash runs the post-commit hook).
 
 ## Versioning
 
-Docs are at **v2.5** — see [`CHANGELOG.md`](CHANGELOG.md). `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and the source of truth for *behavior*, kept functionally equivalent across their platform-native implementations. [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why*. Change behavior in the scripts, record the reasoning as a new decision, add a changelog line.
+Docs are at **v3.1** — see [`CHANGELOG.md`](CHANGELOG.md). `stack-init.sh` (Unix) and `stack-init.ps1` (Windows) are the canonical executables and the source of truth for *behavior*, kept functionally equivalent across their platform-native implementations. [`DECISIONS.md`](DECISIONS.md) is the source of truth for *why*. Change behavior in the scripts, record the reasoning as a new decision, add a changelog line.

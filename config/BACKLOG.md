@@ -34,6 +34,45 @@ the gate and delete this item. Zero -> append a decision removing Serena *and*
 
 ---
 
+## B8 — Retest Claude Code's native LSP, then cut Serena's retrieval trio
+
+**Touches:** [D61](DECISIONS.md#d61), [D53](DECISIONS.md#d53)
+
+Claude Code carries a built-in `LSP` tool (goToDefinition, findReferences,
+hover, documentSymbol, workspaceSymbol, goToImplementation, call hierarchy) and
+an `lspServers` settings key whose `diagnostics` option pushes
+`publishDiagnostics` into the agent context after every edit. That last part is
+the prize: it collapses edit -> run -> read error -> fix into edit -> fix, and
+it would make Serena's `find_symbol` / `find_referencing_symbols` /
+`get_symbols_overview` / `get_diagnostics_for_file` redundant.
+
+**Evidence it does not run here (2026-09-08, `claude` 2.1.265):** `lspServers`
+configured with `rust-analyzer` on a real cargo project, supplied both via
+`--settings <file>` and via `.claude/settings.json`. No server process spawned
+(`ps` showed only a pre-existing VS Code rust-analyzer, never
+`~/.cargo/bin/rust-analyzer`), no `[LSP MANAGER]` debug output, no `LSP` tool in
+the session, and no schema warning even with a deliberately invalid `command`.
+The init path reads `if (isFeatureDisabled("lspServers")) return;` followed by a
+second gate keyed on `CLAUDE_CODE_REMOTE`.
+
+**Retest via the plugin route,** which is how the feature is currently
+distributed: `/plugin install typescript-lsp@claude-plugins-official`, the
+rust-analyzer community plugin, or a local marketplace entry with
+`strict: false`. Plugins declare `lspServers` in their manifest, which may take
+a different path than the settings key.
+
+**Pass criterion:** `claude --debug` prints `[LSP MANAGER]` lines and the `LSP`
+tool answers a `goToDefinition` on a real file.
+
+**Done looks like:** on pass — delete `find_symbol`,
+`find_referencing_symbols` and `get_symbols_overview` from `SERENA_FIXED_TOOLS`
+in both installers, add the LSP-over-grep rule to `contract.md` (LSP for
+definitions/references/diagnostics, Grep for non-code), append the decision, and
+delete this item. On a second failure at a later version — record that and keep
+the trio.
+
+---
+
 ## No other open items
 
 B1–B6 closed in 2.4 as D39–D44. Four were closed by deciding rather than

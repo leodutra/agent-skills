@@ -5,7 +5,7 @@
 =============================================================================
 
   WHAT THIS IS
-  A routing contract plus two components, built on one rule learned the hard
+  A routing contract plus three components, built on one rule learned the hard
   way: eliminate waste at its source, never compress downstream.
 
     Serena    symbols    LSP over MCP (rust-analyzer / tsserver / pyright).
@@ -20,45 +20,60 @@
                          injects a minimal-code ruleset. Default-on. Kills code
                          that never needed writing. Intercepts nothing - its
                          whole mechanism is text reaching the model (D54).
+    codegraph orientation A pre-built code graph over MCP, ONE tool
+                         (codegraph_explore). Owns the question rule 6 says has
+                         no tool - "what connects X to Y", blast radius - in one
+                         call instead of a read-and-search sweep. Enabled, not
+                         opt-in: deferred tools mean its schema costs one
+                         ToolSearch the first time it is used and nothing after
+                         (D60). Global install, per-checkout index.
 
   REMOVED IN 3.0: graphify, RTK and Headroom. Headroom went on measurement -
   only 25% of the tokens it reported saving ever reached the wire, and four
   prefix-cache busts cost more than everything it saved (D49, D50, D51). RTK
   went because its numbers were never checked and it was inert in practice
-  (D51). graphify went with all per-repo state (D52). Orientation and
-  tool-output noise are now explicitly UNOWNED - the honest state, not a gap.
+  (D51). graphify went with all per-repo state (D52). Orientation was UNOWNED
+  from 3.0 until codegraph took it in 3.1 (D60), and it is owned per checkout,
+  not globally. Tool-output noise is still unowned - the honest state, not a gap.
 
   DESIGN PRINCIPLE: prefer instructing over intercepting. Every layer removed
   in 3.0 sat in a path (before the shell, before the API, on disk) and each
   broke in a way that was a property of being there.
 
   WHAT IS GLOBAL vs PER-REPO
-    Global (run once): Serena at user scope (registered, disabled) +
-      serena-autoinit SessionStart hook (Serena does NOT activate from cwd on
-      its own - it needs a .serena\project.yml, which that hook writes per
-      checkout), the ponytail plugin, and the routing contract in
-      %USERPROFILE%\.claude\CLAUDE.md.
-    Per-repo: nothing. 3.0 holds no per-repo state and installs no git hooks.
+    Global (run once): Serena at user scope (registered, disabled, and trimmed
+      to a nine-tool fixed set - D61) + serena-autoinit SessionStart hook
+      (Serena does NOT activate from cwd on its own - it needs a
+      .serena\project.yml, which that hook writes per checkout), the ponytail
+      plugin, the codegraph CLI and its MCP registration, and the routing
+      contract in %USERPROFILE%\.claude\CLAUDE.md.
+    Per-repo: the codegraph INDEX only, and only when you ask for it
+      (`.\stack-init.ps1 codegraph`). Nothing else, and still no git hooks.
 
   USAGE
     .\stack-init.ps1            # or: .\stack-init.ps1 global -> global install
     .\stack-init.ps1 skills     # list this repo's deployable skills
     .\stack-init.ps1 skills <name>...  # junction domain skills into this repo's
                                 # .claude\skills (--copy for a committable copy)
+    .\stack-init.ps1 codegraph  # inside a repo -> build this checkout's index
+                                # and write the CLI block into CLAUDE.local.md.
+                                # NOT global: `codegraph explore` on an
+                                # unindexed path fails and costs a turn (D60)
+    .\stack-init.ps1 codegraph --remove   # drop the index and the block again
     .\stack-init.ps1 verify     # check everything is wired
     .\stack-init.ps1 contract   # print the routing contract it installs
     .\stack-init.ps1 contract --condensed  # short form injected into agents
     .\stack-init.ps1 help       # print this banner
 
-  The contract text itself is NOT in this script: it lives in contract.md and
-  contract-condensed.md next to it, which stack-init.sh reads too, so the two
-  installers cannot drift on the one artifact they both write.
+  The contract text itself is NOT in this script: it lives in contract.md,
+  contract-condensed.md and codegraph-block.md next to it, which stack-init.sh
+  reads too, so the two installers cannot drift on what they both write.
 
   NOTE: `verify --docs` is deliberately NOT mirrored here (D42) - it is a
   maintenance check for whoever edits the doc set, not something a user runs.
 
   PREREQS: git, claude (Claude Code CLI), python3, node (ponytail's hooks), uv
-  (Serena), Git for Windows. A language server per language. First run may need
+  (Serena), npm (codegraph, opensrc), Git for Windows. A language server per language. First run may need
   Set-ExecutionPolicy -Scope CurrentUser RemoteSigned (or -ExecutionPolicy Bypass).
 =============================================================================
 #>
@@ -113,13 +128,28 @@ function Read-Text ($Path) {
   return ($t -replace "^$([char]0xFEFF)", '')
 }
 
-function Write-ManagedBlock ($Path, $Block) {
+function Write-ManagedBlock ($Path, $Block, $Marker = 'claude-context-stack') {
   # Replace our delimited block, leaving everything else in the file alone.
   # TrimEnd/TrimStart normalise to exactly one blank line before the block no
   # matter how the host document was left, so re-running never drifts.
+  # $Marker parameterises the fence because there are now two managed blocks
+  # with different lifetimes: the routing contract (global CLAUDE.md) and the
+  # codegraph CLI section (per-checkout CLAUDE.local.md). One writer, two
+  # fences - not two near-identical writers.
+  $m = [regex]::Escape($Marker)
   $stripped = [regex]::Replace((Read-Text $Path),
-    '(?s)# >>> claude-context-stack >>>.*?# <<< claude-context-stack <<<\r?\n?', '')
+    "(?s)# >>> $m >>>.*?# <<< $m <<<\r?\n?", '')
   Write-Utf8 $Path (($stripped.TrimEnd() + "`r`n`r`n" + $Block).TrimStart())
+}
+
+function Remove-ManagedBlock ($Path, $Marker) {
+  if (-not (Test-Path $Path)) { return $false }
+  $text = Read-Text $Path
+  $m = [regex]::Escape($Marker)
+  $stripped = [regex]::Replace($text, "(?s)# >>> $m >>>.*?# <<< $m <<<\r?\n?", '')
+  if ($stripped -eq $text) { return $false }
+  Write-Utf8 $Path ($stripped.TrimEnd())
+  return $true
 }
 
 # The contract text is NOT duplicated in this script. Both installers read the
@@ -626,6 +656,67 @@ function Set-SerenaDashboardConfig {
   }
 }
 
+# See stack-init.sh's set_serena_tool_set for the full reasoning. In short:
+# Serena ships 30 tools, --context claude-code leaves 24, and most of the
+# remainder (the six memory tools, onboarding, initial_instructions,
+# get_current_config, open_dashboard) cost turns by design. `fixed_tools`
+# REPLACES the base set rather than subtracting from it, so this list must be
+# complete - anything absent is gone.
+#
+# activate_project and get_diagnostics_for_file are not symbol tools and are not
+# optional: Serena is registered without --project, so nothing could ever
+# activate a project without the first, and contract rule 3 points at the second.
+# The retrieval trio stays until Claude Code's native LSP is verified live
+# (BACKLOG B8) - see D61.
+$SerenaFixedTools = @(
+  'activate_project'
+  'find_symbol'
+  'find_referencing_symbols'
+  'get_symbols_overview'
+  'get_diagnostics_for_file'
+  'rename_symbol'
+  'replace_symbol_body'
+  'insert_after_symbol'
+  'insert_before_symbol'
+)
+
+function Set-SerenaToolSet {
+  $cfg = Join-Path $env:USERPROFILE '.serena\serena_config.yml'
+  if (-not (Test-Path $cfg)) {
+    Say "  serena_config.yml not found (Serena writes it on first launch) - rerun global later to apply the fixed tool set"
+    return
+  }
+  $text = Read-Text $cfg
+  # Each pattern eats the key line AND any `- item` block under it, so this is
+  # idempotent across `fixed_tools: []` (first run) and the nine-line list
+  # (every run after). [^\r\n] rather than `.`: in .NET regex `.` matches \r,
+  # which would eat the CR of a CRLF file and dirty the diff on every run.
+  $setList = {
+    param($t, $key, $values)
+    $body = if ($values.Count -eq 0) { "${key}: []" }
+            else { "${key}:`r`n" + (($values | ForEach-Object { "- $_" }) -join "`r`n") }
+    $pat = "(?m)^$([regex]::Escape($key)):[^\r\n]*(?:\r?\n[ \t]*-[^\r\n]*)*"
+    $rx = [regex]::new($pat)
+    if (-not $rx.IsMatch($t)) { return $t }
+    # An instance Replace with a MatchEvaluator and a count: the STATIC
+    # Replace has no count overload, and a plain replacement string would let
+    # a literal `$` in the body be read as a substitution group.
+    $ev = [System.Text.RegularExpressions.MatchEvaluator]{ param($m) $body }
+    return $rx.Replace($t, $ev, 1)
+  }
+  # Serena refuses to start if fixed_tools is set alongside either of these
+  # (serena_config.py raises), so both are emptied here.
+  $new = & $setList $text 'excluded_tools' @()
+  $new = & $setList $new 'included_optional_tools' @()
+  $new = & $setList $new 'fixed_tools' $SerenaFixedTools
+  if ($new -ne $text) {
+    Write-Utf8 $cfg $new
+    Say "  serena trimmed to a fixed 9-tool set (24 -> 9; memory/onboarding dropped, D61)"
+  } else {
+    Say "  serena fixed tool set already applied (9 tools)"
+  }
+}
+
 function Install-Global {
   Check-Deps
   # One health-check pass: `claude mcp list` spawns every registered server and
@@ -676,12 +767,37 @@ function Install-Global {
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   Set-GlobalEnvVar 'MCP_TIMEOUT' '120000'
   Set-SerenaDashboardConfig
+  Set-SerenaToolSet
 
   Say "serena autoinit - per-checkout project, automated (SessionStart hook)"
   Install-SerenaAutoInit
 
   Say "ponytail - minimal-code discipline (Claude Code plugin, default-on)"
   Install-Ponytail
+
+  Say "codegraph - orientation over MCP (one tool; index is per checkout)"
+  # INSIDE the routing contract, unlike opensrc/worktrunk below: it owns rule 6,
+  # the one question 3.0 left unowned (D60). Registered by hand rather than with
+  # codegraph's own `codegraph install --yes`, which would also write a CLI block
+  # into the global CLAUDE.md (wrong: that block is only valid where an index
+  # exists) and a permissions wildcard into settings.json.
+  if (Have 'codegraph') { Say "  codegraph present ($(codegraph version 2>$null | Select-Object -First 1))" }
+  elseif (Have 'npm') {
+    npm install -g '@colbymchenry/codegraph'
+    if ($LASTEXITCODE -eq 0) { Say "  codegraph installed (npm -g)" }
+    else { Warn "npm install -g @colbymchenry/codegraph failed (exit $LASTEXITCODE) - orientation (contract rule 6) stays unowned" }
+    $global:LASTEXITCODE = 0
+  } else { Warn "npm not found - skipping codegraph (npm install -g @colbymchenry/codegraph later)" }
+  if ((($mcpList -split "`r?`n") | Where-Object { $_ -match '^codegraph[: ]' })) {
+    Say "  codegraph already registered - skipped"
+  } elseif (Have 'codegraph') {
+    claude mcp add --scope user codegraph -- codegraph serve --mcp
+    if ($LASTEXITCODE -eq 0) { Say "  codegraph registered at user scope (one tool: codegraph_explore)" }
+    else { Warn "could not register codegraph - run: claude mcp add --scope user codegraph -- codegraph serve --mcp" }
+    $global:LASTEXITCODE = 0
+  }
+  # Left ENABLED, unlike Serena (D53): one tool, and on a model with deferred
+  # tools its schema is not in the prefix until something searches for it (D60).
 
   Say "opensrc - dependency source fetcher (context tool, OUTSIDE the routing contract)"
   # Also not a routing layer: it answers a question neither component covers -
@@ -901,6 +1017,68 @@ function Deploy-RepoSkills {
 # these replace spelled each label twice (once per branch) and had drifted to
 # three different column widths, so adding a longer label silently misaligned a
 # row. Same shape and widths as stack-init.sh's row helpers.
+# Per-checkout codegraph index (`codegraph`). See stack-init.sh's
+# init_codegraph for why this is an explicit verb rather than a SessionStart
+# hook (indexing is not free, and the CLI block must exist only where the index
+# does) and why the block lives in CLAUDE.local.md rather than CLAUDE.md
+# (CLAUDE.md is tracked; this describes machine-local state).
+function Initialize-Codegraph {
+  param([string[]]$CgArgs = @())
+  $remove = $false
+  foreach ($a in $CgArgs) {
+    if ($a -in '--remove', '-remove') { $remove = $true }
+    else { Err "unknown flag: $a"; Write-Host "usage: .\stack-init.ps1 codegraph [--remove]"; exit 1 }
+  }
+  if (-not (Test-InGitRepo)) { Err "run from a git repo - the index and its block are per checkout"; exit 1 }
+  $top = git rev-parse --show-toplevel 2>$null
+  if (-not $top) { Err "could not resolve the repo root"; exit 1 }
+  $top = $top -replace '/', '\'
+  if (-not (Have 'codegraph')) { Err "codegraph not on PATH - run '.\stack-init.ps1 global' first"; exit 1 }
+  $cgd = git -C $top rev-parse --git-common-dir 2>$null
+  if (-not $cgd) { $cgd = git -C $top rev-parse --git-dir 2>$null }
+  if (-not [System.IO.Path]::IsPathRooted($cgd)) { $cgd = Join-Path $top $cgd }
+  $claudeLocal = Join-Path $top 'CLAUDE.local.md'
+  $marker = 'claude-context-stack: codegraph'
+
+  if ($remove) {
+    # Order matters: strip the block first, so a half-failed uninit never leaves
+    # instructions pointing at an index that is no longer whole.
+    if (Remove-ManagedBlock $claudeLocal $marker) { Say "  codegraph block removed from CLAUDE.local.md" }
+    # A CLAUDE.local.md that held nothing but our block is ours to delete; one
+    # with the user's own text in it is not.
+    if ((Test-Path $claudeLocal) -and -not (Read-Text $claudeLocal).Trim()) {
+      Remove-Item -Force $claudeLocal; Say "  CLAUDE.local.md was empty - removed"
+    }
+    Push-Location $top
+    try { codegraph uninit --force; if ($LASTEXITCODE -ne 0) { Warn "codegraph uninit failed - remove $top\.codegraph yourself" } }
+    finally { Pop-Location; $global:LASTEXITCODE = 0 }
+    Remove-ExcludeLine $cgd '/.codegraph/'
+    Remove-ExcludeLine $cgd '/CLAUDE.local.md'
+    Say "codegraph removed from $top"
+    return
+  }
+
+  # --yes: this runs from a script, and a prompt would hang an install the user
+  # reasonably expects to finish on its own.
+  Say "indexing $top (first run walks the whole tree)"
+  Push-Location $top
+  try {
+    codegraph init --yes
+    if ($LASTEXITCODE -ne 0) { $global:LASTEXITCODE = 0; Pop-Location; Err "codegraph init failed - nothing written"; exit 1 }
+  } finally { if ((Get-Location).Path -eq $top) { Pop-Location } }
+  $global:LASTEXITCODE = 0
+  Add-ExcludeLine $cgd '/.codegraph/'
+  Add-ExcludeLine $cgd '/CLAUDE.local.md'
+  # .git\info\exclude cannot hide a file git already tracks. Say so rather than
+  # letting the next `git add -A` sweep a machine-local claim into a branch.
+  git -C $top ls-files --error-unmatch CLAUDE.local.md 2>$null | Out-Null
+  if ($LASTEXITCODE -eq 0) { Warn "CLAUDE.local.md is TRACKED in this repo - the block will show up in git status; untrack it (git rm --cached CLAUDE.local.md) if you don't want to commit it" }
+  $global:LASTEXITCODE = 0
+  Write-ManagedBlock $claudeLocal (Get-Contract 'codegraph-block.md') $marker
+  Say "  CLI block written to CLAUDE.local.md (machine-local; excluded from git)"
+  Say "restart Claude Code to pick the block up; the index auto-syncs from here on"
+}
+
 function Write-Row {
   param([string]$Label, [string]$Value)
   Write-Host ("  {0,-17} {1}" -f "${Label}:", $Value)
@@ -953,6 +1131,15 @@ function Invoke-Verify {
   Write-RowHook 'contract-refresh' 'contract refresh'
   if (Find-WtBin) { Write-Row 'worktrunk' 'OK (workflow tool - outside the contract)' }
   else { Write-Row 'worktrunk' 'NOT installed (optional)' }
+  if (($mcpOut -split "`r?`n") | Where-Object { $_ -match '^codegraph[: ]' }) { Write-Row 'codegraph (mcp)' 'OK (user scope, enabled)' }
+  else { Write-Row 'codegraph (mcp)' 'NOT registered - rerun global' }
+  Write-RowHave 'codegraph' 'codegraph' 'OK (orientation - contract rule 6)' 'NOT installed - npm install -g @colbymchenry/codegraph'
+  # The trim is the whole point of D61: an untrimmed Serena is the 24-tool
+  # default, and it is silent - nothing in a session says which set loaded.
+  $serenaCfg = Join-Path $env:USERPROFILE '.serena\serena_config.yml'
+  if ((Test-Path $serenaCfg) -and ((Read-Text $serenaCfg) -match '(?m)^- get_diagnostics_for_file$')) {
+    Write-Row 'serena tools' 'OK (fixed 9-tool set - D61)'
+  } else { Write-Row 'serena tools' 'UNTRIMMED (24 tools) - rerun global' }
   Write-RowHave 'opensrc' 'opensrc' 'OK (context tool - outside the contract)' 'NOT installed (optional)'
   Write-RowSkill 'opensrc'
   Write-RowSkill 'worktrunk'
@@ -988,6 +1175,16 @@ function Invoke-Verify {
     $serenaYml = Join-Path $top '.serena/project.yml'
     if (Test-Path $serenaYml) { Write-Row 'serena project' 'OK (.serena\project.yml)' }
     else { Write-Row 'serena project' 'none - autoinits next session' }
+    # Index and block are reported together AND separately: a block without an
+    # index tells the agent to run a command that fails, and an index without a
+    # block is invisible to every subagent.
+    $cgIdx = Test-Path (Join-Path $top '.codegraph')
+    $cgLocal = Join-Path $top 'CLAUDE.local.md'
+    $cgBlk = (Test-Path $cgLocal) -and ((Read-Text $cgLocal) -match '>>> claude-context-stack: codegraph >>>')
+    if ($cgIdx -and $cgBlk) { Write-Row 'codegraph index' 'OK (.codegraph\ + CLAUDE.local.md block)' }
+    elseif (-not $cgIdx -and -not $cgBlk) { Write-Row 'codegraph index' 'none (optional - build: .\stack-init.ps1 codegraph)' }
+    elseif ($cgIdx) { Write-Row 'codegraph index' 'index present, block MISSING - rerun: .\stack-init.ps1 codegraph' }
+    else { Write-Row 'codegraph index' 'block present, index MISSING - rerun: .\stack-init.ps1 codegraph' }
     # Repo-local skills deployed by `skills` (or by hand - anything with a
     # SKILL.md counts, annotated by how it got here).
     $repoSkills = @()
@@ -1013,7 +1210,7 @@ function Invoke-Verify {
   }
 }
 
-$Usage = "usage: .\stack-init.ps1 [global|init|skills [--copy] [<name>...]|verify|contract [--condensed]|stats|help]"
+$Usage = "usage: .\stack-init.ps1 [global|skills [--copy] [<name>...]|codegraph [--remove]|verify|contract [--condensed]|help]"
 
 # Anything the binder could not place lands in $Rest, INCLUDING dash-prefixed
 # words that match no parameter. That made `.\stack-init.ps1 --help` leave
@@ -1038,6 +1235,7 @@ switch ($Command.ToLower()) {
     Install-Global
   }
   'skills'   { Deploy-RepoSkills $Rest }
+  'codegraph'{ Initialize-Codegraph $Rest }
   'verify'   {
     # --docs validates THIS REPO's documentation, not an installation, and is
     # deliberately Unix-only (the decisions log records why). Say so rather than

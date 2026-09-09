@@ -4,7 +4,7 @@
 # =============================================================================
 #
 #  WHAT THIS IS
-#  A routing contract plus two components, built on one rule learned the hard
+#  A routing contract plus three components, built on one rule learned the hard
 #  way: eliminate waste at its source, never compress downstream.
 #
 #    Serena    symbols    LSP over MCP (rust-analyzer / tsserver / pyright).
@@ -19,26 +19,36 @@
 #                         injects a minimal-code ruleset. Default-on. Kills code
 #                         that never needed writing. Intercepts nothing — its
 #                         whole mechanism is text reaching the model (D54).
+#    codegraph orientation A pre-built code graph over MCP, ONE tool
+#                         (codegraph_explore). Owns the question rule 6 says has
+#                         no tool — "what connects X to Y", blast radius — in one
+#                         call instead of a read-and-search sweep. Enabled, not
+#                         opt-in: deferred tools mean its schema costs one
+#                         ToolSearch the first time it is used and nothing after
+#                         (D60). Global install, per-checkout index.
 #
 #  REMOVED IN 3.0: graphify, RTK and Headroom. Headroom went on measurement —
 #  only 25% of the tokens it reported saving ever reached the wire, and four
 #  prefix-cache busts cost more than everything it saved (D49, D50, D51). RTK
 #  went because its numbers were never checked and it was inert in practice
-#  (D51). graphify went with all per-repo state (D52). Orientation and
-#  tool-output noise are now explicitly UNOWNED — that is the honest state, not
-#  a gap to paper over.
+#  (D51). graphify went with all per-repo state (D52). Orientation was UNOWNED
+#  from 3.0 until codegraph took it in 3.1 (D60) — and it is owned per checkout,
+#  not globally. Tool-output noise is still explicitly unowned: that is the
+#  honest state, not a gap to paper over.
 #
 #  DESIGN PRINCIPLE: prefer instructing over intercepting. Every layer removed
 #  in 3.0 sat in a path (before the shell, before the API, on disk) and each
 #  broke in a way that was a property of being there.
 #
 #  WHAT IS GLOBAL vs PER-REPO
-#    Global (run once): Serena at user scope (registered, disabled) +
-#      serena-autoinit SessionStart hook (Serena does NOT activate from cwd on
-#      its own — it needs a .serena/project.yml, which that hook writes per
-#      checkout), the ponytail plugin, and the routing contract in
-#      ~/.claude/CLAUDE.md.
-#    Per-repo: nothing. 3.0 holds no per-repo state and installs no git hooks.
+#    Global (run once): Serena at user scope (registered, disabled, and trimmed
+#      to a nine-tool fixed set — D61) + serena-autoinit SessionStart hook
+#      (Serena does NOT activate from cwd on its own — it needs a
+#      .serena/project.yml, which that hook writes per checkout), the ponytail
+#      plugin, the codegraph CLI and its MCP registration, and the routing
+#      contract in ~/.claude/CLAUDE.md.
+#    Per-repo: the codegraph INDEX only, and only when you ask for it
+#      (`stack-init codegraph`). Nothing else, and still no git hooks.
 #
 #  USAGE
 #    stack-init            # or: stack-init global    -> global install (once)
@@ -46,6 +56,12 @@
 #    stack-init skills <name>...  # inside a repo -> symlink domain skills into
 #                          # .claude/skills/ (--copy for a committable copy);
 #                          # domain skills stay OUT of the global install (D48)
+#    stack-init codegraph  # inside a repo -> build this checkout's index and
+#                          # write the CLI block into its CLAUDE.local.md.
+#                          # NOT global: `codegraph explore` on an unindexed
+#                          # path fails and costs a turn, so the block only
+#                          # exists where .codegraph/ does (D60).
+#    stack-init codegraph --remove  # drop the index and the block again
 #    stack-init verify     # check everything is wired
 #    stack-init verify --docs  # check THIS REPO's docs: every section and
 #                          # decision reference resolves (maintenance, not install)
@@ -53,12 +69,13 @@
 #    stack-init contract --condensed  # print the short form injected into agents
 #    stack-init help       # or -h / --help -> print this banner
 #
-#  The contract text itself is NOT in this script: it lives in contract.md and
-#  contract-condensed.md next to it, which stack-init.ps1 reads too, so the two
-#  installers cannot drift on the one artifact they both write.
+#  The contract text itself is NOT in this script: it lives in contract.md,
+#  contract-condensed.md and codegraph-block.md next to it, which stack-init.ps1
+#  reads too, so the two installers cannot drift on the artifacts they both write.
 #
-#  PREREQS: git, claude (Claude Code CLI), python3 (settings.json merges), node
-#  (ponytail's hooks; must be on the NON-INTERACTIVE shell's PATH), uv (Serena).
+#  PREREQS: git, claude (Claude Code CLI), python3 (settings.json and
+#  serena_config.yml merges), node (ponytail's hooks; must be on the
+#  NON-INTERACTIVE shell's PATH), uv (Serena), npm (codegraph, opensrc).
 #  A language server per language (rust-analyzer via
 #  `rustup component add rust-analyzer`, etc.).
 # =============================================================================
@@ -106,6 +123,7 @@ print_contract_file() {
 }
 print_contract()           { print_contract_file contract.md; }
 print_contract_condensed() { print_contract_file contract-condensed.md; }
+print_codegraph_block()    { print_contract_file codegraph-block.md; }
 
 # The globally deployed skills (gauntlet-loop, opensrc, worktrunk, good-readme,
 # sdd-spec).
@@ -321,6 +339,88 @@ set_serena_dashboard_config() {
     say "  serena dashboard: auto-open off; no tray host on this desktop, so it stays"
     say "  reachable manually (ask Claude to open it, or localhost:24282)"
   fi
+}
+
+# Serena ships 30 tools; --context claude-code drops six (shell/read/file-search)
+# and leaves 24. Most of the remaining 15 cost turns BY DESIGN — the memory set
+# (write_memory, read_memory, list_memories, delete_memory, edit_memory,
+# rename_memory) plus onboarding exist to make the agent stop and write notes,
+# and initial_instructions / get_current_config / open_dashboard / restart_-
+# language_server / find_file-style utilities duplicate what Claude Code already
+# does natively. `fixed_tools` replaces the base set outright rather than
+# subtracting from it (serena/agent.py: `tool_names = set()` then adds only the
+# listed names), which is why the list below must be COMPLETE — anything absent
+# is gone, not merely deprioritised.
+#
+# Two entries here are not "symbol tools" and are not optional:
+#   activate_project      — Serena is registered with no --project, so it starts
+#                           with NO active project; without this tool nothing can
+#                           ever activate one and every other tool answers "No
+#                           active project" forever. The serena-autoinit hook and
+#                           contract rule 2 both depend on it. (single_project in
+#                           claude-code.yml would disable it, but that only
+#                           applies when a project IS given at startup.)
+#   get_diagnostics_for_file — contract rule 3 routes compile/type/lint state
+#                           here. Drop it and rule 3 points at nothing.
+# The retrieval trio (find_symbol, find_referencing_symbols,
+# get_symbols_overview) stays until Claude Code's native LSP tool is verified
+# live on this machine — see BACKLOG B8. Removing them before that leaves
+# contract rule 2 unowned, which is the one thing this stack does not do.
+SERENA_FIXED_TOOLS="activate_project
+find_symbol
+find_referencing_symbols
+get_symbols_overview
+get_diagnostics_for_file
+rename_symbol
+replace_symbol_body
+insert_after_symbol
+insert_before_symbol"
+
+set_serena_tool_set() {
+  local cfg="$HOME/.serena/serena_config.yml"
+  if [ ! -f "$cfg" ]; then
+    say "  serena_config.yml not found (Serena writes it on first launch) — rerun global later to apply the fixed tool set"
+    return
+  fi
+  # python3, not sed: this replaces a KEY WHOSE VALUE IS A BLOCK. `fixed_tools:
+  # []` on the first run and a nine-line list on every run after, so a
+  # line-oriented substitution would either miss the list form or leave its tail
+  # behind as stray YAML. python3 is already a hard prerequisite (check_deps).
+  # Serena refuses to start if fixed_tools is set alongside excluded_tools or
+  # included_optional_tools (serena_config.py raises), so both are emptied here.
+  local out
+  out="$(python3 - "$cfg" <<'PYEOF' "$SERENA_FIXED_TOOLS"
+import re, sys
+path, tools = sys.argv[1], [t for t in sys.argv[2].split('\n') if t.strip()]
+with open(path, encoding='utf-8') as fh:
+    text = fh.read()
+
+def set_list(text, key, values):
+    # Matches `key: []`, `key:` and `key:` followed by a `- item` block, and
+    # nothing else — a key that only APPEARS inside a comment is left alone
+    # because the anchor is start-of-line.
+    body = ('%s: []' % key) if not values else \
+        '%s:\n%s' % (key, '\n'.join('- %s' % v for v in values))
+    pat = re.compile(r'^%s:[^\n]*\n(?:[ \t]*-[^\n]*\n)*' % re.escape(key), re.M)
+    if not pat.search(text):
+        return text, False
+    new = pat.sub(lambda m: body + '\n', text, count=1)
+    return new, new != text
+
+changed = False
+for key, values in (('excluded_tools', []), ('included_optional_tools', []),
+                    ('fixed_tools', tools)):
+    text, hit = set_list(text, key, values)
+    changed = changed or hit
+if changed:
+    with open(path, 'w', encoding='utf-8') as fh:
+        fh.write(text)
+print('changed' if changed else 'unchanged')
+PYEOF
+)" || { warn "could not write serena's fixed tool set to $cfg"; return; }
+  if [ "$out" = changed ]
+  then say "  serena trimmed to a fixed 9-tool set (24 -> 9; memory/onboarding dropped, D61)"
+  else say "  serena fixed tool set already applied (9 tools)"; fi
 }
 
 # Both settings.json mutations below run through one helper: same load rules,
@@ -732,12 +832,43 @@ install_global() {
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   set_global_env_var MCP_TIMEOUT 120000
   set_serena_dashboard_config
+  set_serena_tool_set
 
   say "serena autoinit — per-checkout project, automated (SessionStart hook)"
   install_serena_autoinit
 
   say "ponytail — minimal-code discipline (Claude Code plugin, default-on)"
   install_ponytail
+
+  say "codegraph — orientation over MCP (one tool; index is per checkout)"
+  # INSIDE the routing contract, unlike opensrc/worktrunk below: it owns rule 6,
+  # the one question 3.0 left unowned (D60).
+  #
+  # `claude mcp add` rather than codegraph's own `codegraph install --yes`. That
+  # installer would do the MCP registration correctly, but it also writes a
+  # marker-fenced CLI section into ~/.claude/CLAUDE.md and a permissions wildcard
+  # into settings.json. Both are wrong here: the CLI block must be PER CHECKOUT
+  # (an unindexed path makes `codegraph explore` fail and burns a turn — D60), and
+  # this script already owns ~/.claude/CLAUDE.md through one managed block. The
+  # registration below is the exact form codegraph's own README documents for a
+  # manual install.
+  if have codegraph; then say "  codegraph present ($(codegraph version 2>/dev/null | head -1))"
+  elif have npm; then
+    npm install -g @colbymchenry/codegraph && say "  codegraph installed (npm -g)" \
+      || warn "npm install -g @colbymchenry/codegraph failed — orientation (contract rule 6) stays unowned"
+  else warn "npm not found — skipping codegraph (npm install -g @colbymchenry/codegraph later)"
+  fi
+  if printf '%s\n' "$mcp_list" | grep -qi '^codegraph[: ]'; then
+    say "  codegraph already registered — skipped"
+  elif have codegraph; then
+    claude mcp add --scope user codegraph -- codegraph serve --mcp \
+      && say "  codegraph registered at user scope (one tool: codegraph_explore)" \
+      || warn "could not register codegraph with claude — run: claude mcp add --scope user codegraph -- codegraph serve --mcp"
+  fi
+  # Left ENABLED, unlike Serena (D53). The reasoning that disables Serena is a
+  # per-session manifest tax; codegraph exposes ONE tool and, on a model with
+  # deferred tools, that schema is not in the prefix until something searches for
+  # it. There is no standing cost to disable (D60).
 
   say "opensrc — dependency source fetcher (context tool, OUTSIDE the routing contract)"
   # Also not a routing layer: it answers one question the four tools can't —
@@ -819,6 +950,7 @@ install_global() {
   have rust-analyzer || warn "rust-analyzer not on PATH — Serena needs it for Rust (rustup component add rust-analyzer)"
   echo; say "Global install done. No new shell needed and no per-repo step."
   say "Serena is registered but OFF — enable it per session with /mcp (D53)."
+  say "codegraph is ON but indexes nothing until you run '$(basename "$0") codegraph' in a repo."
   say "ponytail is on by default; run '$(basename "$0") verify' to confirm both."
 }
 
@@ -943,6 +1075,88 @@ deploy_repo_skills() {
   [ "$fail" = 0 ] || exit 1
 }
 
+# Per-checkout codegraph index (`codegraph`). Deliberately NOT part of the
+# global install and deliberately NOT driven by a SessionStart hook, which is
+# where every other per-checkout concern in this stack ended up:
+#
+#   - Indexing is not free the way writing a .serena/project.yml is. A cold
+#     `codegraph init` walks the whole tree and then leaves a file watcher
+#     running, so autobuilding it in every repo the user happens to open is the
+#     graphify mistake (D52) with a different binary.
+#   - The CLI block must exist ONLY where .codegraph/ does. Put it in the global
+#     CLAUDE.md and a subagent in an unindexed repo runs `codegraph explore`,
+#     gets "not initialized", and spends a turn learning that. The MCP tool
+#     degrades cleanly on an unindexed path; the CLI does not.
+#
+# So it is an explicit per-repo verb, the same shape as `skills`.
+#
+# The block goes in CLAUDE.local.md, not CLAUDE.md: CLAUDE.md is tracked and
+# this describes machine-local state (an index that exists on THIS checkout).
+# .git/info/exclude is the machine-local channel the rest of the stack already
+# uses, and it covers every linked worktree through the common git dir.
+init_codegraph() {
+  local mode=init a top cgd claude_local
+  for a in "$@"; do
+    case "$a" in
+      --remove) mode=remove ;;
+      *) err "unknown flag: $a"
+         echo "usage: $(basename "$0") codegraph [--remove]"; exit 1 ;;
+    esac
+  done
+  in_git_repo || { err "run from a git repo — the index and its block are per checkout"; exit 1; }
+  top="$(git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$top" ] || { err "could not resolve the repo root"; exit 1; }
+  have codegraph || { err "codegraph not on PATH — run '$(basename "$0") global' first"; exit 1; }
+  cgd="$(cd "$top" && { git rev-parse --git-common-dir 2>/dev/null || git rev-parse --git-dir; })"
+  case "$cgd" in /*) ;; *) cgd="$top/$cgd" ;; esac
+  claude_local="$top/CLAUDE.local.md"
+
+  if [ "$mode" = remove ]; then
+    # Order matters: strip the block first. If `codegraph uninit` fails halfway
+    # the block would otherwise still be telling the agent to use an index that
+    # is no longer whole.
+    if [ -f "$claude_local" ] && grep -q '>>> claude-context-stack: codegraph >>>' "$claude_local"; then
+      local tmp; tmp="$(mktemp)"
+      if awk '/>>> claude-context-stack: codegraph >>>/{s=1} !s{print} /<<< claude-context-stack: codegraph <<</{s=0}' \
+        "$claude_local" > "$tmp" && mv "$tmp" "$claude_local"; then
+        say "  codegraph block removed from CLAUDE.local.md"
+      else rm -f "$tmp"; warn "could not strip the block from $claude_local"; fi
+      # A CLAUDE.local.md that held nothing but our block is ours to delete;
+      # one with the user's own text in it is not.
+      [ -s "$claude_local" ] || { rm -f "$claude_local"; say "  CLAUDE.local.md was empty — removed"; }
+    fi
+    (cd "$top" && codegraph uninit --force) \
+      || warn "codegraph uninit failed — remove $top/.codegraph yourself"
+    exclude_line_remove "$cgd" "/.codegraph/"
+    exclude_line_remove "$cgd" "/CLAUDE.local.md"
+    say "codegraph removed from $top"
+    return 0
+  fi
+
+  # --yes: this runs from a script, and a prompt here would hang a `stack-init`
+  # that the user reasonably expects to finish on its own.
+  say "indexing $top (first run walks the whole tree)"
+  (cd "$top" && codegraph init --yes) \
+    || { err "codegraph init failed — nothing written"; exit 1; }
+  exclude_line_add "$cgd" "/.codegraph/"
+  exclude_line_add "$cgd" "/CLAUDE.local.md"
+  # .git/info/exclude cannot hide a file git already tracks. Say so rather than
+  # letting the next `git add -A` sweep a machine-local claim ("this checkout is
+  # indexed") into a shared branch.
+  git -C "$top" ls-files --error-unmatch CLAUDE.local.md >/dev/null 2>&1 \
+    && warn "CLAUDE.local.md is TRACKED in this repo — the block below will show up in git status; untrack it (git rm --cached CLAUDE.local.md) if you don't want to commit it"
+  touch "$claude_local"
+  if grep -q '>>> claude-context-stack: codegraph >>>' "$claude_local"; then
+    local tmp; tmp="$(mktemp)"
+    awk '/>>> claude-context-stack: codegraph >>>/{s=1} !s{print} /<<< claude-context-stack: codegraph <<</{s=0}' \
+      "$claude_local" > "$tmp" && mv "$tmp" "$claude_local"
+  fi
+  end_with_blank_line "$claude_local"
+  print_codegraph_block >> "$claude_local"
+  say "  CLI block written to CLAUDE.local.md (machine-local; excluded from git)"
+  say "restart Claude Code to pick the block up; the index auto-syncs from here on"
+}
+
 # One aligned printf for every verify line. The hand-spaced echo pairs it
 # replaces spelled each label twice (once per branch) and had drifted to three
 # different column widths, so adding a longer label silently misaligned a row.
@@ -993,6 +1207,15 @@ verify() {
   row_hook contract-refresh "contract refresh"
   if have wt || have git-wt; then row worktrunk "OK (workflow tool — outside the contract)"
   else row worktrunk "NOT installed (optional)"; fi
+  if claude mcp list 2>/dev/null | grep -qi '^codegraph[: ]'; then row "codegraph (mcp)" "OK (user scope, enabled)"
+  else row "codegraph (mcp)" "NOT registered — rerun global"; fi
+  row_have codegraph "codegraph" "OK (orientation — contract rule 6)" "NOT installed — npm install -g @colbymchenry/codegraph"
+  # The trim is the whole point of D61: an untrimmed Serena is the 24-tool
+  # default every guide warns about, and it is silent - nothing in a session
+  # says which tool set loaded.
+  if grep -q '^- get_diagnostics_for_file$' "$HOME/.serena/serena_config.yml" 2>/dev/null
+  then row "serena tools" "OK (fixed 9-tool set — D61)"
+  else row "serena tools" "UNTRIMMED (24 tools) — rerun global"; fi
   row_have opensrc "opensrc" "OK (context tool — outside the contract)" "NOT installed (optional)"
   row_skill opensrc
   row_skill worktrunk
@@ -1028,6 +1251,16 @@ verify() {
     if [ -f "$top/.serena/project.yml" ]
     then row "serena project" "OK (.serena/project.yml)"
     else row "serena project" "none — autoinits next session"; fi
+    # Index and block are reported together and separately: a block without an
+    # index tells the agent to run a command that fails, and an index without a
+    # block is invisible to every subagent.
+    local cg_idx=no cg_blk=no
+    [ -d "$top/.codegraph" ] && cg_idx=yes
+    grep -q '>>> claude-context-stack: codegraph >>>' "$top/CLAUDE.local.md" 2>/dev/null && cg_blk=yes
+    if [ "$cg_idx$cg_blk" = yesyes ]; then row "codegraph index" "OK (.codegraph/ + CLAUDE.local.md block)"
+    elif [ "$cg_idx$cg_blk" = nono ]; then row "codegraph index" "none (optional — build: $(basename "$0") codegraph)"
+    elif [ "$cg_idx" = yes ]; then row "codegraph index" "index present, block MISSING — rerun: $(basename "$0") codegraph"
+    else row "codegraph index" "block present, index MISSING — rerun: $(basename "$0") codegraph"; fi
     # Repo-local skills deployed by `skills` (or by hand — anything with a
     # SKILL.md counts, annotated by how it got here).
     local rskills="" sd
@@ -1074,7 +1307,7 @@ root = sys.argv[1]
 SPEC = 'claude-code-context-stack.md'
 DEC = 'DECISIONS.md'
 DOCS = [SPEC, DEC, 'README.md', 'CHANGELOG.md', 'BACKLOG.md',
-        'contract.md', 'contract-condensed.md']
+        'contract.md', 'contract-condensed.md', 'codegraph-block.md']
 
 
 def read(name):
@@ -1137,6 +1370,7 @@ PYEOF
 case "${1:-global}" in
   global|"")  install_global ;;
   skills)     shift; deploy_repo_skills "$@" ;;
+  codegraph)  shift; init_codegraph "$@" ;;
   # Not `[ ... ] && verify_docs || verify`: that idiom runs the full install
   # check as a "fallback" the moment --docs legitimately reports a broken
   # reference and exits non-zero.
@@ -1146,5 +1380,5 @@ case "${1:-global}" in
   # '2,57p' range silently truncated it mid-sentence once the header moved -
   # by the time this was noticed it was cutting the PREREQS line off.
   -h|--help|help) awk 'NR==1{next} /^#/{sub(/^# ?/,""); print; next} {exit}' "$0" ;;
-  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|skills [--copy] [<name>...]|verify [--docs]|contract [--condensed]|help]"; exit 1 ;;
+  *) err "unknown command: $1"; echo "usage: $(basename "$0") [global|skills [--copy] [<name>...]|codegraph [--remove]|verify [--docs]|contract [--condensed]|help]"; exit 1 ;;
 esac

@@ -6,6 +6,38 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 3.1
+
+Orientation gets an owner again — without anything sitting in a path — and Serena
+stops shipping the tools that cost turns by design.
+
+- **Add** codegraph (`@colbymchenry/codegraph`) as the third component: one MCP
+  tool (`codegraph_explore`), installed globally and registered at user scope,
+  left **enabled** because a single deferred tool has no standing prefix cost.
+  Its index is per checkout and opt-in — `stack-init codegraph` builds it, writes
+  the CLI block into that repo's `CLAUDE.local.md`, and excludes both via
+  `.git/info/exclude`; `--remove` reverses all three. No SessionStart hook and no
+  git hooks: indexing is not free, so it is a verb the operator types.
+  [D60](DECISIONS.md#d60)
+- **Change** contract rule 6 routes orientation to `codegraph_explore` in one
+  narrow call instead of naming it unowned, and §5 gains a second precedence
+  tier: codegraph is a derived index that beats grep on structure and never beats
+  the LSP or the file on disk on current content. [D60](DECISIONS.md#d60)
+- **Change** Serena is pinned to a fixed nine-tool set via `fixed_tools` — the
+  retrieval trio, the four symbol edits, plus `activate_project` and
+  `get_diagnostics_for_file`. Dropped: all six memory tools, `onboarding`,
+  `initial_instructions`, `get_current_config`, `open_dashboard`,
+  `restart_language_server`, `find_declaration`, `find_implementations`,
+  `safe_delete_symbol`, `replace_content`, `replace_in_files`. 24 tools -> 9.
+  [D61](DECISIONS.md#d61)
+- **Add** `codegraph-block.md` as a third installer-read text file, so the two
+  installers cannot drift on the per-checkout block the way they once drifted on
+  the contract. [D60](DECISIONS.md#d60), D30
+- **Add** backlog item B8: Claude Code's native `LSP` tool and its `lspServers`
+  key exist in `claude` 2.1.265 but start no server and expose no tool when
+  configured, so Serena's retrieval trio stays until the plugin route is retested.
+  [D61](DECISIONS.md#d61)
+
 ## 3.0
 
 The stack stops intercepting and starts instructing. Three of the four tools are

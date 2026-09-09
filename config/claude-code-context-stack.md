@@ -1,8 +1,8 @@
 # Claude Code Context Stack — Setup & Specification
 
-> **Version:** 3.0
+> **Version:** 3.1
 > **Status:** Active
-> **Scope:** Two components — **Serena** (LSP symbol tools, opt-in per session; D53) and **ponytail** (minimal-code discipline, default-on; D54) — plus the global routing contract. 3.0 removed graphify, RTK, and Headroom (D51, D52): the stack no longer intercepts anything, holds no per-repo state, and adds no compression layer. Orientation and tool-output noise are explicitly unowned (§2.3). No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
+> **Scope:** Three components — **Serena** (LSP symbol tools, opt-in per session, trimmed to a fixed nine-tool set; D53, D61), **ponytail** (minimal-code discipline, default-on; D54) and **codegraph** (orientation, one MCP tool, indexed per checkout; D60) — plus the global routing contract. 3.0 removed graphify, RTK and Headroom (D51, D52); 3.1 gives orientation an owner again without giving anything a path to sit in. Tool-output noise stays explicitly unowned (§2.3). No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-init.sh` (Linux/macOS) and `stack-init.ps1` (Windows). They are self-documenting and self-installing, and they are the source of truth for **behavior** (D2). This document is the source of truth for **what the stack is and how to operate it**.
 > **Rationale lives elsewhere.** Every "why" is a numbered decision in [`DECISIONS.md`](DECISIONS.md), cited here as `D<n>` and never restated. What changed and when is one line per change in [`CHANGELOG.md`](CHANGELOG.md). Three files, three jobs — the split and its enforcement are D36.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
@@ -17,7 +17,7 @@ Claude Code's effectiveness on a real codebase is bounded by context quality, no
 | --- | --- | --- |
 | **Retrieval & editing** | Whole-file dumps, grep walls, regex edits that miss aliased refs | Serena — **only when enabled** (§2.1, D53) |
 | **Code that didn't need writing** | Wrappers, abstraction layers, "future-proofing" the task didn't ask for | ponytail (§2.2, D54) |
-| **Orientation** | Re-reading dozens of files to learn what connects to what | *unowned* since 3.0 (D52) |
+| **Orientation** | Re-reading dozens of files to learn what connects to what | codegraph — **in indexed checkouts** (§2.4, D60); unowned 3.0–3.1 (D52) |
 | **Tool-output noise** | Thousands of tokens of passing-test boilerplate per `cargo test` | *unowned* since 3.0 (D51) |
 | **Wire-level residue** | `Read`-tool file dumps, growing conversation history | *unowned* since 3.0 (D51) |
 
@@ -68,13 +68,27 @@ These are structural, not instructional: the tools simply aren't in Serena's sur
 
 ### 2.3 What the stack no longer owns
 
-Two waste sources have **no owner** in 3.0, and saying so plainly is the point:
+One waste source has **no owner**, and saying so plainly is the point:
 
 - **Tool-output noise** — RTK compressed it until 3.0. Nothing does now; keeping it small is a routing choice (§4 rule 5), not a layer.
-- **Orientation** — graphify answered "what connects X to Y" until 3.0. Nothing does now; cold orientation is reading and searching again, and it is the most expensive thing the agent does. There is no successor and none is planned (D52).
+
+**Orientation was on this list until 3.1.** graphify answered "what connects X to Y" until 3.0, and D52 said there was no successor and none was planned. codegraph is that successor (§2.4, D60) — and the reasoning that removed graphify was not overturned to admit it: graphify was per-repo state maintained by git hooks in a path, and codegraph is an opt-in per-checkout index whose watcher is a daemon outside the agent loop. In a checkout with no index, orientation is exactly what §2.3 said it was — reading and searching, scoped — and the tool says so rather than failing.
 
 Wire-level residue (`Read`-tool dumps, growing history) is likewise unowned (D51).
 
+### 2.4 codegraph — orientation (on; indexed per checkout)
+
+**Answers:** "How does X work?", "How does X reach Y?", "What breaks if I change S?" — the questions §2.3 said had no owner. One MCP tool, `codegraph_explore`, returns the relevant symbols' **verbatim source grouped by file**, the call paths between them (including dynamic-dispatch hops grep cannot follow), and a blast-radius summary.
+
+**Mechanism:** a local index built by `codegraph init`, kept current by a native file watcher running as a **daemon outside the agent loop**. Nothing sits in a path: no git hook, no shell wrapper, no proxy. This is the distinction from graphify, not a restatement of it (D52, D60).
+
+**Why it is enabled while Serena is not:** D53 disables Serena because a 24-tool manifest is a fixed per-session tax paid whether or not a symbol tool is called. codegraph exposes **one** tool, and on a model with deferred tools its schema is not in the prefix until something searches for it — one `ToolSearch` round-trip on first use, nothing after. There is no standing cost to disable.
+
+**Its real cost is resident context, and the mitigation is behavioural.** The payloads are dense and verbatim: they cut tool calls per structural question by roughly an order of magnitude and leave more in the window, which pulls compaction closer. No setting changes that. Ask narrow questions and **name the file or symbol** so one body comes back instead of a subsystem; prefer a fresh session per feature over riding one all day.
+
+**Boundaries:** it is not a source of truth for current file content (§5). It is not for symbol lookup when Serena is on — that is rule 2. And its **CLI** is not global: `codegraph explore` on an unindexed path fails outright, so the CLI surface is documented only in an indexed checkout's `CLAUDE.local.md` (§6.4, D60). The MCP tool itself degrades cleanly on such a path, answering with guidance instead of data.
+
+---
 ---
 
 ## 3. `[AGENT]` Routing matrix
@@ -91,14 +105,16 @@ Route every information need to exactly one layer. **Rows naming Serena apply on
 | Renaming / refactoring a symbol | Serena symbol-level edits | search-and-replace | Avoids missed aliased imports and false hits |
 | Any of the above, **Serena not enabled** | Claude Code's native Read/Grep/Glob/Edit | asking for Serena to be turned on | Off is the normal state, not a misconfiguration |
 | Running tests / builds / linters / git / docker | Bash | — | Serena exposes no shell tool to route to (§2.1) |
-| "How is this organized / what connects A to B?" | reading and searching, kept scoped | — | Unowned since 3.0 (§2.3, D52); no tool answers it |
+| "How is this organized / what connects A to B?" | codegraph (`codegraph_explore`), one call, naming the file or symbol | a read-and-search sweep; a second confirming grep | The index already did the walk; its answer is verbatim source, so treat it as read |
+| Any of the above, **checkout not indexed** | reading and searching, kept scoped | — | The tool answers with guidance, not data; that is the signal (§2.4, D60) |
 
 **Tie-breakers:**
 
 - Serena's tools **absent** → use native tools and move on. Do not ask for it to be enabled.
 - Question names a **specific symbol** and Serena is on → Serena, always.
 - Anything that **executes** → Bash.
-- Orientation → scoped search. Budget it deliberately; nothing downstream will trim the result.
+- Orientation → codegraph in an indexed checkout, scoped search otherwise. Either way budget it deliberately; nothing downstream will trim the result.
+- codegraph vs. the file on disk → the file. The index is derived and can lag your own edit (§5).
 
 ponytail doesn't appear in this matrix because it never routes a question — it injects instructions and is invisible to routing (§2.2).
 
@@ -110,7 +126,9 @@ The global installer writes this contract into `~/.claude/CLAUDE.md` between sen
 
 The text itself is **not reproduced here**. It lives in [`contract.md`](contract.md) — the single file both installers read and `stack-init contract` prints — and the condensed form injected into agent files is [`contract-condensed.md`](contract-condensed.md). One copy is deliberate: a normative text quoted in three places drifts, and this one had already started to (the two installers disagreed on punctuation while claiming to write the same block).
 
-The six rules in brief — 1 Serena is opt-in and usually off, so check before routing to it, 2 symbols → Serena when enabled, 3 diagnostics → Serena when enabled, 4 symbol-level edits → Serena when enabled, 5 anything that executes → Bash, 6 orientation has no owner. Source of truth: the LSP when enabled (§5).
+The six rules in brief — 1 Serena is opt-in and usually off, so check before routing to it, 2 symbols → Serena when enabled, 3 diagnostics → Serena when enabled, 4 symbol-level edits → Serena when enabled (and Serena carries nine tools, no more), 5 anything that executes → Bash, 6 orientation → codegraph in one narrow call, reading and searching where there is no index. Source of truth: the LSP when enabled; codegraph is derived (§5).
+
+A **second** managed block exists as of 3.1, and only per checkout: [`codegraph-block.md`](codegraph-block.md), written into an indexed repo's `CLAUDE.local.md` by `stack-init codegraph`. It carries the `codegraph` CLI surface for subagents and Bash, which never see the MCP server's initialize-time guidance. It is not part of the global contract and must not be — the CLI fails outright on an unindexed path (D60).
 
 Rule 1 is the **guard** the whole contract now hangs on. A global contract that ordered the agent to use tools which are usually not loaded would be wrong in most sessions, and the failure would be silent — the agent would either hallucinate the tools or treat their absence as breakage. Rule 1 makes "off" the documented normal state, which is what makes rules 2–4 safe to state unconditionally within it. This replaces 2.x's conditional rule 1, which guarded against a *graph* that might not exist yet (D52).
 
@@ -120,13 +138,18 @@ ponytail's minimal-code ruleset is **not** part of this contract — it is injec
 
 ## 5. `[AGENT]` Source of truth
 
-3.0 has only one source of derived knowledge about the code, so the tiered precedence spec earlier versions carried has nothing left to arbitrate (D52).
-
-When Serena is enabled, the LSP is **ground truth by construction** — it is the compiler's live model, reflecting the working tree right now including uncommitted changes. It is never stale. Nothing else in the stack derives, indexes, or caches a second model of the code, so there is no second tier and no conflict rule.
+When Serena is enabled, the LSP is **ground truth by construction** — it is the compiler's live model, reflecting the working tree right now including uncommitted changes. It is never stale.
 
 When Serena is not enabled, the working tree read directly is the only source, with the ordinary caveat that a search result is evidence a string occurs, not evidence a symbol is used.
 
-**What was removed and why it mattered:** until 3.0 the stack carried a precomputed graph whose whole epistemic risk was that it *trailed* the working tree, and §5 existed to say the LSP wins and the graph must be rebuilt. Removing graphify removes the staleness class entirely. That is a real simplification, not a bookkeeping one: the stack no longer has any way to be confidently wrong about code that has since changed.
+**codegraph is derived, and 3.1 reintroduces one tier because of it.** Its index auto-syncs on file change, but a sync is debounced and can lag an edit made seconds ago. So:
+
+1. The LSP (when enabled) and the file on disk — current content, always wins.
+2. codegraph — structure and reach. Outranks grep on "how does this fit together"; never outranks tier 1 on "what does this say right now".
+
+After your own edits, read codegraph's staleness banner rather than trusting a result silently.
+
+**Why this section shrank in 3.0 and grew back:** until 3.0 the stack carried a precomputed graph whose whole epistemic risk was that it trailed the working tree, and §5 existed to say the LSP wins and the graph must be rebuilt. Removing graphify removed the staleness class entirely, and 3.0 could honestly say nothing derived a second model. codegraph is such a model, so the tier is back — stated rather than quietly reintroduced, which is the failure mode this doc set exists to prevent (D60).
 
 ---
 
@@ -197,6 +220,8 @@ Why the language set is derived rather than delegated to Serena's own detection,
 
 `stack-init verify` checks the wiring (Serena registered and **registered-but-disabled** as intended, serena-autoinit and contract-refresh hooks registered, ponytail marketplace added and plugin installed, `node` resolvable, contract present, and — in a repo — `.serena/project.yml` present; in a linked worktree it reports that the checkout carries its own Serena project over shared hooks). It cannot confirm the agent actually *activated* the Serena project, which is per-session; the autoinit hook's activation note (§6.3) covers that. Nor can it tell whether a given session chose to enable Serena at all — that is the point of D53, not a gap. Its repo-local checks resolve against `git rev-parse --show-toplevel`, not the current directory, so running it from a subdirectory (`config\`, as §6.5 suggests on Windows) reports the repo's real state. `stack-init contract` prints the routing contract for inspection; `stack-init contract --condensed` prints the short form injected into subagent files (§6.x). `stack-init verify --docs` checks this repo's own documentation rather than an installation: every `§` reference resolves to a real heading in this file, every `D<n>` citation resolves to an entry in `DECISIONS.md`. It is **Unix-only and deliberately not mirrored** in `stack-init.ps1` (D42) — it is a maintenance check for whoever edits the doc set, not something a user of the stack runs, and it is the one sanctioned exception to D2's equivalence rule, which still binds for everything that touches a user's machine. `stack-init help` (also `-h`/`--help`) prints the command list — on Windows this is load-bearing rather than a courtesy, because an unrecognised flag would otherwise be swallowed as a remaining argument and leave the default `global` command to run a full unattended install.
 
+`stack-init codegraph` is the one per-repo verb 3.1 adds: it runs `codegraph init --yes` at the checkout's root, writes [`codegraph-block.md`](codegraph-block.md) into that repo's `CLAUDE.local.md` between its own sentinel markers, and adds `.codegraph/` and `CLAUDE.local.md` to `.git/info/exclude` — the machine-local channel every other per-checkout artifact uses. `stack-init codegraph --remove` reverses all three, stripping the block *before* running `codegraph uninit` so a half-failed removal never leaves instructions pointing at a broken index, and deleting `CLAUDE.local.md` only if our block was the only thing in it. It is a verb and not a SessionStart hook on purpose: indexing walks the whole tree and leaves a watcher running, so autobuilding it in whatever repo happens to be open is graphify's mistake with a different binary (D52, D60). `verify` reports the index and the block **separately** — a block without an index tells the agent to run a command that fails, and an index without a block is invisible to every subagent.
+
 `stack-init init` and `stack-init stats` are **gone** in 3.0. `init` existed to build a repo's graph eagerly and there is no graph (D52); `stats` reported `rtk gain` and `headroom savings` and both tools are gone (D51, retiring D29).
 
 ### 6.5 Windows
@@ -244,12 +269,15 @@ The user-global copies do not wait for the next install: a **contract-refresh Se
 claude mcp list | grep -i serena             # registered, no --project arg
 claude mcp list | grep -i serena             # ...and NOT enabled by default (D53)
 claude plugin list | grep -i ponytail        # plugin installed
+claude mcp list | grep -i codegraph          # registered AND enabled (D60)
+grep -c '^- ' ~/.serena/serena_config.yml    # fixed_tools pinned to 9 (D61)
 command -v node                              # required by ponytail's hooks (§6.2)
 grep -q "Context routing" ~/.claude/CLAUDE.md  # contract present
 
 # Per repo
 cat .serena/project.yml                      # exists; language_servers covers this
                                              # checkout's languages, a real language first
+ls .codegraph/ && grep -q codegraph CLAUDE.local.md   # both, or neither (D60)
 
 # Behavior, in a Claude session
 #  - default session: Serena's tools are ABSENT and the agent uses native
@@ -262,8 +290,12 @@ cat .serena/project.yml                      # exists; language_servers covers t
 #  - get_diagnostics_for_file on a planted type error -> structured error, no dump
 #  - agent tool list shows NO serena execute_shell_command / read_file
 #    (structural: nothing in the contract needs to mention it, D56)
-#  - an architecture question is answered by scoped reading/searching, and the
-#    agent does NOT claim a graph tool is missing (unowned since 3.0, §2.3)
+#  - in an INDEXED repo: an architecture question is one codegraph_explore call
+#    naming the file or symbol, and the agent does NOT re-grep to confirm it
+#  - in an UNINDEXED repo: codegraph_explore answers with guidance, and the
+#    agent falls back to scoped reading/searching instead of retrying (§2.4)
+#  - after an edit, the agent checks codegraph's staleness banner rather than
+#    trusting a structural answer silently (§5)
 
 # Cost of the optional layer — MEASURED (D55), no longer an open follow-on
 claude plugin details ponytail               # component inventory + projected token cost

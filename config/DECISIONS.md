@@ -1714,3 +1714,129 @@ meaning of the word "spec".
 requirements work they did not ask for — a test file being the likeliest way —
 it goes back to per-repo, where its canonical copy works unchanged
 (`stack-init skills sdd-spec`).
+
+---
+
+## D60 — codegraph added; orientation stops being unowned, per checkout
+
+**Version:** 3.1 · **Status:** Active — amends [D52](#d52)'s "orientation is
+UNOWNED", narrows contract rule 6
+
+3.0 removed graphify and wrote down what that cost: rule 6 named orientation
+("what connects X to Y", blast radius, how this repo is organized) and answered
+it with "no dedicated tool — read and search, keep it scoped." That was honest
+and it was expensive. Read-and-search is the most token-costly thing a session
+does, and rule 6 was the only rule in the contract that routed to nothing.
+
+codegraph (`@colbymchenry/codegraph`, MIT, self-contained) takes it. One MCP
+tool, `codegraph_explore`, returning the relevant symbols' verbatim source
+grouped by file, the call paths between them, and a blast-radius summary.
+
+**Why this is not graphify again.** graphify was removed because it kept
+per-repo state that every session had to maintain and every worktree had to
+replicate, wired through git hooks this stack now refuses to install (D52). The
+differences are structural, not cosmetic:
+
+- The watcher is a daemon outside the agent loop, not a hook in a path. Nothing
+  runs before the shell, before the API, or on commit. The design principle 3.0
+  was built on — prefer instructing over intercepting — is not violated.
+- It is opt-in per checkout and stays that way. `stack-init codegraph` is a
+  verb the operator types; there is no SessionStart hook that indexes whatever
+  repo happens to be open. Indexing walks the whole tree and leaves a watcher
+  running; autobuilding that everywhere is exactly graphify's mistake.
+- Its MCP tool degrades cleanly. On a path with no `.codegraph/` it answers
+  with guidance to use built-in tools rather than failing, so a session in an
+  unindexed repo loses nothing.
+
+**Why it is ENABLED while Serena is not.** D53 disables Serena because its tool
+manifest is a fixed per-session tax paid whether or not a symbol tool is ever
+called. codegraph exposes ONE tool, and on a model with deferred tools that
+schema is not in the prefix at all until something searches for it — one
+ToolSearch round-trip on first use, nothing after. There is no standing cost to
+disable. A stdio crash or reconnect only appends, so it cannot bust the prefix
+cache either.
+
+**The real cost, and why the mitigation is behavioural.** codegraph's payloads
+are dense and verbatim. They cut tool calls per structural question by roughly
+an order of magnitude and leave more context resident, which pulls compaction
+closer. There is no config for that. The contract now says what to do instead:
+one call, naming the file or symbol so a body comes back rather than a
+subsystem. Session hygiene — a fresh session per feature rather than riding one
+all day — belongs in the operator's habits, and this log is not where habits
+are enforced.
+
+**Why the CLI block is per checkout and not global.** codegraph's own installer
+writes a marker-fenced CLI section into the agent's instructions file, because
+subagents and non-MCP harnesses never see the MCP server's initialize-time
+guidance. That section is correct and it must not be global: `codegraph
+explore` on a path with no index fails outright, so a subagent in an unindexed
+repo would run it, read "not initialized", and spend a turn learning that. The
+graceful degradation is a property of the MCP tool, not the CLI. So
+`stack-init codegraph` writes the block into the checkout's `CLAUDE.local.md`
+and excludes it via `.git/info/exclude` — the machine-local channel every other
+per-checkout artifact in this stack already uses. `codegraph install` is not
+called at all: it would also write that block globally and a permissions
+wildcard into `settings.json`, and this script already owns both files.
+
+**Source-of-truth precedence, stated because it is now needed.** Until 3.1 the
+contract could say "nothing here derives or caches a second model of the code,
+so there is no precedence conflict to resolve." codegraph is exactly such a
+model. It auto-syncs on file change and can still lag an edit made seconds ago,
+so it outranks grep on structure and never outranks the LSP or the file on disk
+on current content. Saying otherwise would have made the contract false.
+
+**What would reverse this.** The same shape as D57's gate: if sessions never
+call `codegraph_explore`, or if the resident-context cost shows up as earlier
+compaction without a matching drop in tool calls, it goes — and unlike
+graphify, removing it is `stack-init codegraph --remove` per checkout plus one
+`claude mcp remove`, with no git hooks to clean up.
+
+---
+
+## D61 — Serena trimmed to a fixed nine-tool set
+
+**Version:** 3.1 · **Status:** Active — narrows [D53](#d53), amends
+[D55](#d55)'s measurement
+
+Serena ships 30 tools. `--context claude-code` excludes six (shell, read,
+file-search) for the permission reason D56 records, leaving 24. `fixed_tools`
+in `serena_config.yml` now pins that to nine.
+
+Dropped: the six memory tools, `onboarding`, `initial_instructions`,
+`get_current_config`, `open_dashboard`, `restart_language_server`,
+`find_declaration`, `find_implementations`, `safe_delete_symbol`,
+`replace_content`, `replace_in_files`. The memory set and `onboarding` are the
+load-bearing removals — they exist to make the agent stop and write notes, which
+is an extra turn by design, and this stack has held since D52 that it keeps no
+per-repo state.
+
+**Why a fixed set and not an exclusion list.** `fixed_tools` REPLACES the base
+set (`serena/agent.py`: `tool_names = set()`, then only the listed names are
+added) rather than subtracting from it. That makes the list the complete answer
+to "what is Serena" and means a future Serena release cannot quietly add a tool
+back. It also cannot be combined with `excluded_tools` or
+`included_optional_tools` — Serena raises on startup — so the installer empties
+both.
+
+**Two entries are not symbol tools and are not optional.** The list as first
+drafted was seven: the retrieval trio plus the four symbol edits. Both omissions
+would have broken a contract rule that had nowhere else to go:
+
+- `activate_project`. Serena is registered with no `--project`, so it starts
+  with NO active project. `single_project: true` in `claude-code.yml` disables
+  `activate_project`, but only when a project IS supplied at startup — which is
+  not this registration. Without the tool, nothing can ever activate a project
+  and every other tool answers "No active project" permanently. Contract rule 2
+  and the entire serena-autoinit hook (D43's successor) depend on it.
+- `get_diagnostics_for_file`. Contract rule 3 routes compile/type/lint state
+  here. Drop it and rule 3 points at nothing.
+
+**Why the retrieval trio stays for now.** The case for cutting
+`find_symbol` / `find_referencing_symbols` / `get_symbols_overview` is that
+Claude Code's native LSP tool duplicates them. On this machine it does not: see
+B8. The tool exists in the binary (name `LSP`, the settings key `lspServers`,
+push-diagnostics after edits) but configuring a server starts no process and
+exposes no tool, on `claude` 2.1.265, via both `--settings` and
+`.claude/settings.json`. Cutting the trio on the strength of a feature that does
+not run would leave contract rule 2 unowned — the one thing this stack does not
+do. Phase 2 is three deleted lines, once B8 passes.
