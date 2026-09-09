@@ -121,6 +121,8 @@ Permit::check(actor.has(Permission::CancelAppointment), Denial::NotAllowed(Reaso
     .grant(grant)
 ```
 
+Helpers — the builder above, or a derive macro — MUST make the policy easier to read, never hide it: the conceptual implementation stays ordinary code a reader can follow. A macro is an ergonomic optimisation, OPTIONAL and outside the core (frame — an abstraction must earn its existence).
+
 ## The decision is pure
 
 (7 — receive dependencies, do not discover them) `can` MUST evaluate information already available: actor traits, action fields, loaded aggregates, results already fetched from an external policy engine (OPA/Cedar/SpiceDB). It MUST NOT perform hidden I/O. Acquisition happens first, in the slice's shell:
