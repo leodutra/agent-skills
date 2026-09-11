@@ -85,9 +85,9 @@ Each requirement is observable. Where the template fields (actor, trigger, preco
 
 ### FR-1. Blindness on the filesystem
 
-- **FR-1.1** Each role is a subagent definition under `agents/`, installed into the target repo's `.claude/agents/`, with a `tools:` allowlist: `reader` (critic): `Read, Glob, Grep, Bash`; `editor` (builder): `Read, Edit, Write, Glob, Grep, Bash`; `editor-fast` (smoother): the same tools at lower effort and a cheaper model; `author` (floor author and reference freezer): `Read, Write, Edit, Glob, Grep, Bash, WebFetch`. No role definition includes `SendMessage`, the Agent tool, the Artifact tools, graph, LSP or web search tools; those belong to the lead.
+- **FR-1.1** Each role is a subagent definition under `agents/`, installed into the target repo's `.claude/agents/`, with a `tools:` allowlist: `reader` and `reader-alt` (first and confirming critic; identical body, tools and hook, `model:` pinned to two different families named by the policy, FR-17.13): `Read, Glob, Grep, Bash`; `editor` (builder): `Read, Edit, Write, Glob, Grep, Bash`; `editor-fast` (smoother): the same tools at lower effort and a cheaper model; `author` (floor author and reference freezer): `Read, Write, Edit, Glob, Grep, Bash, WebFetch`. No role definition includes `SendMessage`, the Agent tool, the Artifact tools, graph, LSP or web search tools; those belong to the lead.
 - **FR-1.2** Definition names describe what the agent may touch, never a role, piece or round.
-- **FR-1.3** The `reader` definition carries an agent-scoped `PreToolUse` hook that denies any `Read`, `Glob` or `Grep` whose path resolves outside the live pair directory tree (`.gauntlet/pairs/`), and any `Bash` command that names a path outside it or names `state.json`, `events.jsonl`, `.gauntlet/private`, `reference/`, `heldout/`, the workbench or `CLAUDE.md`. Every block is logged (`BLIND_BLOCK` event with agent id and path) and the denial reason says only "outside your working set".
+- **FR-1.3** The `reader` and `reader-alt` definitions carry an agent-scoped `PreToolUse` hook that denies any `Read`, `Glob` or `Grep` whose path resolves outside the live pair directory tree (`.gauntlet/pairs/`), and any `Bash` command that names a path outside it or names `state.json`, `events.jsonl`, `.gauntlet/private`, `reference/`, `heldout/`, the workbench or `CLAUDE.md`. Every block is logged (`BLIND_BLOCK` event with agent id and path) and the denial reason says only "outside your working set".
 - **FR-1.4** State that would break blindness lives under `.gauntlet/`, outside every worktree and every pair: the state file and event log at `.gauntlet/state.json` and `.gauntlet/events.jsonl`, the reference manifest, A/B mapping and run secret under `.gauntlet/private/`, verdicts under `.gauntlet/verdicts/`. A session-wide permission deny for `Read` and `Edit` on `.gauntlet/private/**`, `.gauntlet/state.json` and `.gauntlet/events.jsonl` is part of the shipped allowlist; the lead reaches them only through the controller.
 - **FR-1.5** At most one live pair per piece exists under `.gauntlet/pairs/`; the first-critic pair is archived under private storage when the confirmation pair is produced. A reader can therefore never see both orders of the same piece.
 - **FR-1.6** Round zero records the active enforcement tier. Tier 1, isolated: a process or filesystem boundary the critic cannot cross (a container per critic, or the sandbox with read denies covering everything but the pair); only this tier may be described as "cannot reach". Tier 2, harness-enforced: tool allowlists and hooks present in checked-in settings; file-tool reads are denied by path, the shell restriction is a best-effort string match, and the claim is "enforced policy", never isolation. Tier 3, advisory: prompt only, reported as "blind by instruction". The status line, workbench and report carry the tier. The controller detects it from installed files and settings; the lead never asserts it.
@@ -139,7 +139,7 @@ Fewer pieces and rounds:
 
 Done once:
 
-- **FR-6.5** The reference half of every pair is prepared once per piece at round zero (`gauntletctl freeze` and `pair --prepare`): matched module extracted, names stripped, adapter attached, reference floor outputs attached. A round copies ours and assigns labels. In champion-challenger only the challenger changes.
+- **FR-6.5** The reference half of every pair is prepared once per piece at round zero (`gauntletctl freeze`, then `freeze-verify` under isolation, then `pair --prepare`): matched module extracted, names stripped, adapter attached, reference floor outputs attached. A round copies ours and assigns labels. In champion-challenger only the challenger changes.
 - **FR-6.6** Floor outputs land in the pair as files: the reference's once per run, ours once per round. The critic prompt says to rerun anything it doubts.
 - **FR-6.7** The confirming critic receives the same files under swapped labels; nothing is rendered again after freezing.
 - **FR-6.8** The lead's own rerun of one cited command applies to wins only.
@@ -153,7 +153,7 @@ Scripted:
 Off the lead:
 
 - **FR-6.12** A floor author (`author` agent) writes the required suite, held-out set, hostile script and benchmark from the lead's brief, returns paths, and is discarded. The lead reviews and keeps custody.
-- **FR-6.13** Reference freezing is a throwaway `author` job; the lead holds the manifest, never the bytes.
+- **FR-6.13** Reference freezing is a throwaway `author` job that handles data only: it runs `gauntletctl freeze` (fetch or clone, strip, inspect, manifest) and never executes the reference's scripts, installs its dependencies, builds or renders it (FR-15.8). The lead holds the manifest, never the bytes.
 - **FR-6.14** Both are conditional on size thresholds stated in `running-the-loop.md` and the policy file (reference beyond N files, floors beyond N lines); below them the lead does the work itself.
 - **FR-6.15** Builder briefs carry the matched module extract, not the reference tree.
 
@@ -211,13 +211,13 @@ Less loaded:
 
 ### FR-13. Self-measurement
 
-- **FR-13.1** `gauntletctl metrics` computes from the event log: rounds per confirmed piece; red-floor share of rounds; confirmation flip rate; discarded-verdict rate; accepted `NOT REPRODUCED` rate; parked pieces; escalations per piece by trigger (repeated gap or spent allocation); invocations per confirmed piece; local, escalation and whole-gate spend against allocation; unused reserve; ceiling-hit rate; plus every value-column metric in the mechanism table (FR-M.3).
+- **FR-13.1** `gauntletctl metrics` computes from the event log: rounds per confirmed piece; red-floor share of rounds; confirmation flip rate; discarded-verdict rate; accepted `NOT REPRODUCED` rate; parked pieces; escalations per piece by trigger (repeated gap or spent allocation); invocations per confirmed piece; lead turns per confirmed piece and, where the harness exposes usage, lead tokens per confirmed piece, reported separately from controller operations per confirmed piece (machine-side chatter is not model context); worker-minutes per confirmed piece; local, escalation and whole-gate spend against allocation; unused reserve; ceiling-hit rate; plus every value-column metric in the mechanism table (FR-M.3).
 - **FR-13.2** The report template carries every metric; the example run's report fills them.
 - **FR-13.3** The README carries the reading guide; nothing in a run acts on a metric. Three runs minimum before any metric changes the skill; safety floors never change on a metric.
 
 ### FR-14. A secure stop
 
-- **FR-14.1** Every run has an envelope no agent grades: agent invocations and wall-clock, apportioned at `RUN_STARTED` into local, escalation reserve and whole-gate reserve. Defaults come from the policy file's per-piece estimate and the piece count; a user-named budget replaces the total and is apportioned the same way.
+- **FR-14.1** Every run has an envelope no agent grades: agent invocations (`E`, a count of subagent spawns) and elapsed run wall-clock (`T`, measured from `RUN_STARTED` on one clock, never summed across parallel workers), apportioned at `RUN_STARTED` into local, escalation reserve and whole-gate reserve. Defaults come from the policy file's per-piece estimate and the piece count; a user-named budget replaces the total and is apportioned the same way.
 - **FR-14.2** The paste prompt's first line carries the second exit: "or N invocations or T hours are spent", with defaults filled by write mode when the user names none.
 - **FR-14.3** The status line carries spend against the envelope every turn.
 - **FR-14.4** No piece debits the whole-gate reserve. A piece may exhaust its allocation and the escalation reserve and park.
@@ -233,7 +233,8 @@ Less loaded:
 - **FR-15.4** `commit` runs a secret scan over the artifact set and refuses on a hit; a verdict quoting a secret is redacted before filing.
 - **FR-15.5** A reference's dependencies are installed once, at freeze, and only under detected isolation (FR-15.7); builders never install them. The shipped allowlist limits builder shell to git, build, test and render commands, and the sandbox network allowlist to package registries.
 - **FR-15.6** Stripping, the secret refusal, the secret scan and the allowlist run on every run. Sandbox and network restriction are detected at round zero and reported; no containment level is chosen per run.
-- **FR-15.7** Reference code may be stored, stripped and read without isolation; it may execute (install, build, test, render from source) only inside isolation the controller detected at round zero: the sandbox with network limited to registries, or a container the harness file describes. Without it the freeze completes as bytes plus manifest, and every floor, pair or reference render that needs the reference to execute is `BLOCKED` with class `execution`, written under open questions with the one-line fix (enable the sandbox, or run in a container). Pieces that compare without executing the reference proceed. The lead cannot waive this.
+- **FR-15.7** Reference code may be stored, stripped and read without isolation; it may execute (install, build, test, render from source) only inside isolation the controller detected at round zero: the sandbox with network limited to registries, or a container the harness file describes. Without it `freeze` completes (bytes plus manifest), `freeze-verify` refuses, and every floor, pair or reference render that needs the reference to execute is `BLOCKED` with class `execution`, written under open questions with the one-line fix (enable the sandbox, or run in a container). Pieces that compare without executing the reference proceed. The lead cannot waive this.
+- **FR-15.8** `freeze` never executes: it copies or clones, strips, inspects and writes the manifest, and installs nothing. Every execution of reference code (dependency install, build, the reference's floors, render from source) belongs to `freeze-verify`, a separate phase that runs only under detected isolation and records `REFERENCE_VERIFIED` with the isolation it ran under. Freezing is the data boundary; verification is the execution boundary.
 
 ### FR-16. Failure classes
 
@@ -254,7 +255,8 @@ Less loaded:
 - **FR-17.9** Authorities are fixed: model judges; controller transitions and accounts; scripts establish facts; humans handle exceptions (new bar as a new run, scope change, resume, PR approval, policy version).
 - **FR-17.10** A run that finds itself wanting a helper script marks the piece `BLOCKED` and parks it; it never writes tooling. The controller ships with tests.
 - **FR-17.11** One lead model; no meta-agents.
-- **FR-17.12** Verdict provenance. Every critic dispatch creates an immutable attempt record: run, piece, round, pair id, attempt id, expected agent type, expected model. A verdict is accepted only when the harness's subagent-stop hook delivered it to the controller from an agent of the expected type, it names the open attempt's pair id, and its observed model matches the attempt (and differs from the first critic's for a confirmation). `CRITIC_WIN`, `CRITIC_LOSS`, `CONFIRMATION_WIN`, `CONFIRMATION_LOSS` and `VERDICT_INVALID` are derived by the controller from the attested verdict and the mapping; the lead cannot submit them. The same path attests `BUILDER_DONE` from `editor` agents. The lead may route a critic; it cannot manufacture its result.
+- **FR-17.12** Verdict provenance. Every critic dispatch creates an immutable attempt record: run, piece, round, pair id, attempt id, expected agent type (`reader` for a first critic, `reader-alt` for a confirmation). A verdict is accepted only when the harness's subagent-stop hook delivered it to the controller from a registered, not-yet-attested agent whose attested type equals the attempt's, and it names the open attempt's pair id; the model recorded is the one pinned in that definition (FR-17.13), never a string the lead supplied. `CRITIC_WIN`, `CRITIC_LOSS`, `CONFIRMATION_WIN`, `CONFIRMATION_LOSS` and `VERDICT_INVALID` are derived by the controller from the attested verdict and the mapping; the lead cannot submit them. The same path attests `BUILDER_DONE` from `editor` agents. Origin authentication is tier-dependent and stated as such (§8.4.6): Tier 1 authenticates the hook as the source; Tier 2 enforces provenance structure and detects forgery by collision but does not authenticate origin. The lead may route a critic; it cannot manufacture a standing result.
+- **FR-17.13** Model identity is dispatch identity. The policy file names the two reader definitions and the model family each must pin; `init` reads the installed definitions, refuses to start when either pin is missing or the two are equal, and records both in `RUN_STARTED`. A first critic is always dispatched as `reader` and a confirmation as `reader-alt`; a `CONFIRMATION_WIN` whose attested agent type is not `reader-alt` is rejected. "Different model" is a deterministic property checked at round zero, not a claim checked after the fact.
 
 ### FR-M. The mechanism table
 
@@ -318,7 +320,7 @@ gauntlet-loop/
   bin/gauntletctl                  the controller, one executable
   policy/v1.json                   pinned policy (see 8.4.5)
   hooks/                           critic-blind, builder-boundary, protect-floors, controller-only
-  agents/                          reader.md, editor.md, editor-fast.md, author.md
+  agents/                          reader.md, reader-alt.md, editor.md, editor-fast.md, author.md
   permissions/allowlist.json       minimal allow and deny rules for a run
   eval/                            write-mode cases, critic pairs, check script, runner, baseline
   tests/                           controller tests
@@ -348,7 +350,7 @@ tests/required/  heldout/  bench/  lead-owned floors
 
 ### 8.3 Run mode flow
 
-1. **Round zero.** Read `running-the-loop.md`, the domain file, the harness file. `gauntletctl init` (run id, secret, policy version, tier detection, containment detection, CLAUDE.md warning). Freeze (via `author` when over threshold), strip, manifest. Bar sentences. Split coarse-first with referent per piece; champion-challenger mode where no referent part exists. Floors (via `author` when over threshold), marked DERIVED where the user supplied none. Envelope apportioned. `pair --prepare` per piece. `commit --plan`. Attended: stop for approval. Open pieces.
+1. **Round zero.** Read `running-the-loop.md`, the domain file, the harness file. `gauntletctl init` (run id, secret, policy version, tier detection, containment detection, CLAUDE.md warning). Freeze (via `author` when over threshold): fetch, strip, manifest, no execution. `freeze-verify` under detected isolation: install once, build, the reference's floors, renders; refused without isolation (FR-15.7). Bar sentences. Split coarse-first with referent per piece; champion-challenger mode where no referent part exists. Floors (via `author` when over threshold), marked DERIVED where the user supplied none. Envelope apportioned. `pair --prepare` per piece. `commit --plan`. Attended: stop for approval. Open pieces.
 2. **A round.** The builder returns one line; the `SubagentStop` hook attests it and the controller records `BUILDER_DONE`. `floors <piece>` runs held-out, hostile and benchmark (the builder already ran required) and records `FLOOR_PASS` or `FLOOR_FAIL`. Red: gap routed, round over. Green: `pair <piece>` copies ours, assigns labels, writes `PROMPT.md`, opens the attempt; the lead spawns a `reader` with the pair path; the hook attests the verdict and the controller records `CRITIC_RESULT`, checks shape and citations, and translates `WINNER` through the mapping into `CRITIC_WIN`, `CRITIC_LOSS` or `VERDICT_INVALID`. Loss: the lead routes the gap. Win: `swap <piece>`; the lead spawns a `reader` on a different model; the same path yields `CONFIRMATION_WIN` or `CONFIRMATION_LOSS`. `next` after every event.
 3. **Escalation.** `GAP_REPEATED` or `ALLOCATION_SPENT` advances the ladder; the controller names the rung; the lead performs the judgment part and records it.
 4. **Wave boundary.** `WAVE_COMPLETE`; smoother (`editor-fast`) only if a shared edge is recorded; floors; recheck only judgment-visible diffs; `INTEGRATED`.
@@ -362,14 +364,15 @@ tests/required/  heldout/  bench/  lead-owned floors
 | Command | Kind | Does |
 | --- | --- | --- |
 | `init` | mechanical | Creates `.gauntlet/`, run id, secret (0600), pins policy version, detects tier and containment, writes `RUN_STARTED` |
-| `freeze <src> <dst>` | mechanical | Copies or clones, strips instruction files and credentials, installs dependencies once, writes manifest and `REFERENCE_FROZEN` |
+| `freeze <src> <dst>` | mechanical, data only | Copies or clones, strips instruction files and credentials, inspects, writes manifest and `REFERENCE_FROZEN`; executes nothing |
+| `freeze-verify` | fact, isolated only | Refuses unless isolation was detected at `init`; installs dependencies once, builds, runs the reference's floors, renders; records `REFERENCE_VERIFIED` with the isolation used |
 | `piece open|split|referent|mode` | judgment recorded | Opens pieces with parent, referent, mode, allocation; `PIECE_OPENED` |
 | `floor add|amend|list` | mechanical | Registers floors with `DERIVED` flag and command; `amend` logs old and new |
 | `floors <piece>` | mechanical | Runs lead-side floors on ours; writes outputs; `FLOOR_PASS` or `FLOOR_FAIL` |
 | `pair <piece> [--prepare]` | mechanical | Reference half once; ours per round; labels from seed; strip; refuse on secrets; emit prompt |
 | `swap <piece>` | mechanical | Confirmation pair, order inverted, same files |
 | `event <name> [k=v...]` | judgment record | Accepts judgment events only (§8.4.6); validates required fields and referenced facts; applies the transition or rejects |
-| `attest` | fact, hook-invoked | Reads the `SubagentStop` payload on stdin; records `BUILDER_DONE`, `CRITIC_RESULT`, `SMOOTHER_DONE` or `FLOORS_AUTHORED` bound to agent id, agent type, attempt and observed model; derives win, loss or invalid from the verdict and the mapping |
+| `attest` | fact, hook-invoked | On `SubagentStart` registers the agent id and type; on `SubagentStop` records `BUILDER_DONE`, `CRITIC_RESULT` or `SMOOTHER_DONE` bound to a registered, single-use agent id, its attested type, the open attempt and the pinned model; derives win, loss or invalid from the verdict and the mapping; requires the hook key at Tier 1; voids on collision |
 | `next` | mechanical | Legal actions now; which are mechanical, which need the lead |
 | `rerun <piece> <cmd>` | fact | Re-executes a cited command for `NOT REPRODUCED` and the win-side rerun |
 | `status [--full]` | mechanical | The status line verbatim; `--full` is the resume view |
@@ -395,6 +398,7 @@ tests/required/  heldout/  bench/  lead-owned floors
 | `ACTIVE` | `GAP_REPEATED` / `ALLOCATION_SPENT` | `ACTIVE` | ladder rung advanced |
 | `CONFIRMED` | `WAVE_COMPLETE` (+ floors green, recheck if any) | `INTEGRATED` | merge commit; floor outputs |
 | `INTEGRATED` | `RECHECK_LOSS` | `ACTIVE` | verdict file |
+| `AWAITING_CONFIRMATION` / `CONFIRMED` | `ATTEST_CONFLICT` | `ACTIVE` | both attestations voided; conflict record |
 | `INTEGRATED` | `PR_MERGED` | `PROMOTED` | remote merge evidence |
 | `ACTIVE` / `AWAITING_CONFIRMATION` | `PIECE_BLOCKED` / `LEASE_EXPIRED` | `BLOCKED` | reason; class `execution` |
 | `BLOCKED` | `BLOCKER_CLEARED` | `ACTIVE` | note |
@@ -405,7 +409,7 @@ Rejected explicitly: `ACTIVE → PROMOTED`, `PARKED → PROMOTED`, `→ CONFIRME
 
 #### 8.4.3 Budgets
 
-Envelope `E` in invocations and `T` in hours. Accounts: local `L`, escalation reserve `R`, whole-gate reserve `G`, proportions from policy. Per-piece allocation `a = L / pieces` at open; a split gives each child the parent's remainder split evenly. Debits: one per subagent spawn, recorded with the event that caused it. `a` reaching zero emits `ALLOCATION_SPENT`; ladder rungs beyond the piece's allocation debit `R`; `R` at zero with the ladder unfinished parks the piece. `G` is debited only by the `whole` piece. `E` or `T` reached emits `BUDGET_EXHAUSTED` and ends the run with a report.
+Envelope `E` in subagent invocations and `T` in elapsed hours since `RUN_STARTED`; parallel pieces share one clock, so `T` is never additive across workers, and worker-minutes are recorded per agent for metrics only. Accounts: local `L`, escalation reserve `R`, whole-gate reserve `G`, proportions from policy. Per-piece allocation `a = L / pieces` at open; a split gives each child the parent's remainder split evenly. Debits: one per subagent spawn, recorded with the event that caused it. `a` reaching zero emits `ALLOCATION_SPENT`; ladder rungs beyond the piece's allocation debit `R`; `R` at zero with the ladder unfinished parks the piece. `G` is debited only by the `whole` piece. `E` or `T` reached emits `BUDGET_EXHAUSTED` and ends the run with a report.
 
 #### 8.4.4 Leases and idempotence
 
@@ -413,29 +417,32 @@ Lease: owner (agent id), attempt id, expiry (policy default, hours). `status` ch
 
 #### 8.4.5 Policy `v1.json`
 
-Fields: `version`; envelope proportions and per-piece estimate; wall-clock default per piece; lease hours; ladder order and variant counts (2 then 1); shared-by-rule globs; builder boundary path and command patterns; instruction-file strip list; credential file globs; offload thresholds (reference files, floor lines); secret-scan patterns. Absent by design: anything about critic count, strength, confirmation, blindness, win.
+Fields: `version`; confirmation identities (the two reader definition names and the model family each must pin; `init` checks the installed files against them); envelope proportions and per-piece estimate; wall-clock default per piece; lease hours; ladder order and variant counts (2 then 1); shared-by-rule globs; builder boundary path and command patterns; instruction-file strip list; credential file globs; offload thresholds (reference files, floor lines); secret-scan patterns. Absent by design: whether confirmation happens, critic count or strength, blindness, or what a win is. The policy names which two models, never whether.
 
 #### 8.4.6 Event classes and provenance
 
 **Judgment events**, the only names `event` accepts from the lead, each with the lead as actor: `SPLIT_DECIDED`, `REFERENT_SELECTED`, `MODE_SELECTED`, `VARIANT_APPROACHES_SELECTED`, `GAP_SAME_AS_LAST`, `GAP_ROUTED`, `NOT_REPRODUCED_ACCEPTED` (must reference a `RERUN_OBSERVED` fact), `PARK_REQUESTED` (reason, class), `BLOCK_REQUESTED` (reason), `SHARED_EDGE_RECORDED`, `SCOPE_FAILURE_FILED`.
 
-**Fact events**, produced only by the controller from something it observed or derived: `RUN_STARTED`; `REFERENCE_FROZEN` (`freeze`); `FLOOR_PASS`, `FLOOR_FAIL` (`floors`); `CRITIC_DISPATCHED` (`pair`, `swap`); `BUILDER_DONE`, `CRITIC_RESULT`, `SMOOTHER_DONE`, `FLOORS_AUTHORED` (`attest`, from the harness's `SubagentStop` hook); `CRITIC_WIN`, `CRITIC_LOSS`, `CONFIRMATION_WIN`, `CONFIRMATION_LOSS`, `VERDICT_INVALID` (derived from `CRITIC_RESULT` and the mapping); `GAP_REPEATED` (derived from `GAP_SAME_AS_LAST`); `ALLOCATION_SPENT`, `BUDGET_EXHAUSTED` (accounting); `LEASE_EXPIRED` (`status`); `RERUN_OBSERVED` (`rerun`); `SCAN_PASSED`, `SCAN_FAILED` (`scan`); `PLAN_COMMITTED`, `ARTIFACTS_COMMITTED` (`commit`); `PR_OPENED` (`promote`); `PR_MERGED` (`status` against the remote); `BLIND_BLOCK`, `BOUNDARY_BLOCK` (hooks); `PIECE_PARKED`, `PIECE_BLOCKED` (derived from a request, the ladder or accounting); `PIECE_OPENED`, `WAVE_COMPLETE`; `HUMAN_RESUMED` (`resume`, actor human).
+**Fact events**, produced only by the controller from something it observed or derived: `RUN_STARTED`; `REFERENCE_FROZEN` (`freeze`); `REFERENCE_VERIFIED` (`freeze-verify`); `FLOOR_PASS`, `FLOOR_FAIL` (`floors`); `CRITIC_DISPATCHED` (`pair`, `swap`); `AGENT_REGISTERED` (`attest`, from `SubagentStart`); `BUILDER_DONE`, `CRITIC_RESULT`, `SMOOTHER_DONE` (`attest`, from `SubagentStop`); `ATTEST_CONFLICT` (`attest`, two attestations for one agent id); `CRITIC_WIN`, `CRITIC_LOSS`, `CONFIRMATION_WIN`, `CONFIRMATION_LOSS`, `VERDICT_INVALID` (derived from `CRITIC_RESULT` and the mapping); `GAP_REPEATED` (derived from `GAP_SAME_AS_LAST`); `ALLOCATION_SPENT`, `BUDGET_EXHAUSTED` (accounting); `LEASE_EXPIRED` (`status`); `RERUN_OBSERVED` (`rerun`); `SCAN_FAILED` (`scan`); `PLAN_COMMITTED`, `ARTIFACTS_COMMITTED` (`commit`); `PR_OPENED` (`promote`); `PR_MERGED` (`status` against the remote); `BLIND_BLOCK`, `BOUNDARY_BLOCK` (hooks); `PIECE_PARKED`, `PIECE_BLOCKED` (derived from a request, the ladder or accounting); `PIECE_OPENED`, `WAVE_COMPLETE`; `HUMAN_RESUMED` (`resume`, actor human). An event is recorded only when it changes state, accounting or policy-relevant history; what a command did along the way goes to that command's output files, never to the log.
 
-**Provenance.** `pair` and `swap` open a dispatch attempt: run id, piece, round, pair id, attempt id, expected agent type, expected model, opened-at. The `SubagentStop` hook, matched on the role definitions, pipes its payload (`agent_id`, `agent_type`, `last_assistant_message`, `transcript_path`) to `attest`. `attest` accepts a verdict only when the agent type is `reader`, the verdict's first line names an open attempt's pair id, the pair is still live, the observed model (C11) equals the attempt's expected model and, for a confirmation, differs from the first critic's, and the verdict has the shape with at least one citation. Otherwise it records `CRITIC_RESULT` with `valid: false` and the reason, which becomes `VERDICT_INVALID`. `CONFIRMED` therefore means a qualifying reader execution produced the result, not that the lead reported one. The guarantee is as strong as the run's tier: at Tier 2 a lead could still reach `attest` through an unmatched shell form, and the ledger says so.
+**Provenance.** `pair` and `swap` open a dispatch attempt: run id, piece, round, pair id, attempt id, expected agent type (`reader` first, `reader-alt` confirming), opened-at. The `SubagentStart` hook registers each role agent's id and type (`AGENT_REGISTERED`); the `SubagentStop` hook pipes its payload (`agent_id`, `agent_type`, `last_assistant_message`, `transcript_path`) to `attest`. `attest` accepts a verdict only when the agent id was registered by `SubagentStart` and not yet attested (single use), the attested agent type equals the attempt's expected type, the verdict's first line names the open attempt's pair id, the pair is still live, and the verdict has the shape with at least one citation; the model it records is the one the policy pins for that definition (FR-17.13). Otherwise it records `CRITIC_RESULT` with `valid: false` and the reason, which becomes `VERDICT_INVALID`.
+
+**Origin authentication is tier-dependent, and the ledger says which applies.** At Tier 1 the hook command carries an attestation key from private storage that the sandbox's read deny keeps from every tool; a payload without the key is refused outright, so the harness is the authenticated source. At Tier 2 the key is only string-match protected, so `attest` enforces provenance structure but does not authenticate origin. A forged payload for a live agent id then collides with the genuine `SubagentStop` when it fires (`maxTurns` guarantees it fires): the controller records `ATTEST_CONFLICT`, voids both attestations and every transition derived from them, returns the piece to `ACTIVE`, and lists the conflict first in the report. `CONFIRMED` therefore means, at Tier 1, that a qualifying reader execution produced the result, and at Tier 2, that no unresolved conflict stands against it. Neither is called stronger than that.
 
 ### 8.5 Enforcement
 
 | Hook | Where | Event and matcher | Denies | For whom |
 | --- | --- | --- | --- | --- |
-| `critic-blind` | `agents/reader.md` frontmatter | `PreToolUse` on `Read|Glob|Grep|Bash` | paths outside `.gauntlet/pairs/`; commands naming private state, reference, held-out, workbench, `CLAUDE.md` | readers only |
+| `critic-blind` | `agents/reader.md` and `agents/reader-alt.md` frontmatter | `PreToolUse` on `Read|Glob|Grep|Bash` | paths outside `.gauntlet/pairs/`; commands naming private state, reference, held-out, workbench, `CLAUDE.md` | readers only |
 | `builder-boundary` | `agents/editor.md`, `editor-fast.md` frontmatter | `PreToolUse` on `Edit|Write|Bash` | policy path and command patterns; anything outside the worktree | builders and smoother |
 | `protect-floors` | target repo `.claude/settings.json` | `PreToolUse` on `Edit|Write|Bash` | writes to `tests/required/`, `heldout/`, `reference/`, `bench/`, eval set, unless `agent_type` is `author` during round zero or the command is `gauntletctl floor` | every agent and the lead |
 | `controller-only` | target repo `.claude/settings.json` | `PreToolUse` on `Edit|Write|Bash` | writes to `.gauntlet/private/`, `events.jsonl`, `state.json`, `bin/gauntletctl`, `policy/`, `hooks/`, `agents/`; `git add|commit` touching `.gauntlet/` unless via `gauntletctl commit`; any tool invocation of `gauntletctl attest` | every agent and the lead |
-| `attest` | target repo `.claude/settings.json` | `SubagentStop`, matcher `reader|editor|editor-fast|author` | nothing; pipes the payload to `gauntletctl attest`, which records the fact | every role |
+| `register` | target repo `.claude/settings.json` | `SubagentStart`, matcher `reader|reader-alt|editor|editor-fast|author` | nothing; pipes the payload to `gauntletctl attest --start`, which registers the agent id | every role |
+| `attest` | target repo `.claude/settings.json` | `SubagentStop`, matcher `reader|reader-alt|editor|editor-fast|author` | nothing; pipes the payload and, at Tier 1, the attestation key to `gauntletctl attest`, which records the fact | every role |
 
 Each denial returns `permissionDecision: deny` with a reason that names the rule and the expected next step. Hooks in the target repo's settings fire inside subagents and carry `agent_id` and `agent_type`; `SubagentStop` also carries the agent's last message (verified, §14.1). The Bash checks are string matches, so Tier 2 is reported as enforced policy, never as isolation.
 
-Agent definitions: `tools:` as in FR-1.1; no `SendMessage` in any role (so the sibling roster is never shown); the `reader` body is the critic protocol (FR-1.8); `model:` unset for `reader` and `editor` (the lead passes it per call) unless C11 pins two reader definitions, `sonnet`-class for `editor-fast`; `effort:` unset for `reader` and `editor` (inherit the session's `xhigh`), `high` for `editor-fast` and `author`; no `memory:`; no `skills:`.
+Agent definitions: `tools:` as in FR-1.1; no `SendMessage` in any role (so the sibling roster is never shown); the `reader` and `reader-alt` bodies are the critic protocol (FR-1.8); `model:` pinned in `reader` and `reader-alt` to the two families the policy names (FR-17.13), unset for `editor` (the lead passes it per call), `sonnet`-class for `editor-fast`; `effort:` unset for `reader`, `reader-alt` and `editor` (inherit the session's `xhigh`), `high` for `editor-fast` and `author`; `maxTurns:` set on every role so `SubagentStop` always fires; no `memory:`; no `skills:`.
 
 Allowlist (`permissions/allowlist.json`): allow `git`, the domain's build, test and render commands, `gauntletctl`; deny `Read`/`Edit` on `.gauntlet/private/**`, `.gauntlet/state.json`, `.gauntlet/events.jsonl`, secrets and env files; `permissions.blockReadsOutsideWorkingDirectories: true`; a recommended sandbox block with `network.allowedDomains` limited to registries and `credentials` deny entries. The controller must run outside sandbox read denies that cover private storage (§16, C5).
 
@@ -531,9 +538,9 @@ Everything else runs only when its trigger fired, and every trigger is a recorde
 - **AC-12.1** Write mode accepts a `spec.md` path and the resulting prompt carries its "never" invariants. **AC-12.2** The example run ends with a PR whose description links manifest, workbench and whole-gate verdicts. **AC-12.3** README states what is advisory and what is enforced for outcome 12.
 - **AC-13.1** The report template has every FR-13.1 field; the example report fills them. **AC-13.2** README has the reading guide.
 - **AC-14.1** Template and all three examples carry the second exit. **AC-14.2** Workbench shows the envelope and per-piece spend. **AC-14.3** A run with an unreachable bar and no named budget ends on its own with a report and an untouched whole-gate reserve until the gate (controller test with a scripted event stream).
-- **AC-15.1** Freezing a reference containing `CLAUDE.md` yields a copy without it and a manifest line naming it. **AC-15.2** `pair` on a tree with a `.env` exits non-zero. **AC-15.3** The example shows the allowlist; the report template has a containment line. **AC-15.4** With no isolation detected, `freeze` completes and `floors` for a piece that needs the reference to execute records `PIECE_BLOCKED` with class `execution`; with the sandbox detected, the same run proceeds.
+- **AC-15.1** Freezing a reference containing `CLAUDE.md` yields a copy without it and a manifest line naming it. **AC-15.2** `pair` on a tree with a `.env` exits non-zero. **AC-15.3** The example shows the allowlist; the report template has a containment line. **AC-15.4** With no isolation detected, `freeze` completes without executing anything (no dependency directory or build output in the frozen copy), `freeze-verify` exits non-zero, and `floors` for a piece that needs the reference to execute records `PIECE_BLOCKED` with class `execution`; with the sandbox detected, `freeze-verify` runs and the same run proceeds.
 - **AC-16.1** Every gap-log entry in the example carries a class; `metrics` counts by class; the example shows all four.
-- **AC-17.1** `controller.md` fits one page and lists states, events, transitions, artifacts, budgets, escalation, authorities. **AC-17.2** Controller tests cover every rejected transition in §8.4.2. **AC-17.3** The example run is an event log. **AC-17.4** `status` output equals the status line in the example verbatim. **AC-17.5** `pair` twice for the same run, piece and round yields identical files and mapping. **AC-17.6** Controller test: `event` with any fact event name is rejected. **AC-17.7** Controller test: `attest` with a verdict naming a closed or unknown attempt, a mismatched agent type, or a mismatched model records `VERDICT_INVALID`; a matching one yields the derived win or loss through the mapping, and a confirmation on the first critic's model is rejected.
+- **AC-17.1** `controller.md` fits one page and lists states, events, transitions, artifacts, budgets, escalation, authorities. **AC-17.2** Controller tests cover every rejected transition in §8.4.2. **AC-17.3** The example run is an event log. **AC-17.4** `status` output equals the status line in the example verbatim. **AC-17.5** `pair` twice for the same run, piece and round yields identical files and mapping. **AC-17.6** Controller test: `event` with any fact event name is rejected. **AC-17.7** Controller test: `attest` with a verdict naming a closed or unknown attempt, an unregistered or already-attested agent id, or an agent type other than the attempt's records `VERDICT_INVALID`; a matching one yields the derived win or loss through the mapping, and a confirmation attested from `reader` instead of `reader-alt` is rejected. **AC-17.8** Controller test: an `attest` payload supplied outside a matching `SubagentStop` invocation cannot produce a standing `CRITIC_RESULT`: at Tier 1 it is refused for lack of the key; at Tier 2 the genuine `SubagentStop` for the same agent id produces `ATTEST_CONFLICT`, both attestations are voided, the piece is back in `ACTIVE`, and the report lists the conflict first. **AC-17.9** `init` refuses to start when `reader` and `reader-alt` pin the same model or either pin is missing.
 - **AC-M.1** README carries the table; `running-the-loop.md` states bound and exit per mechanism; `metrics` emits every value-column metric.
 
 ## 14. Dependencies and assumptions
@@ -547,6 +554,7 @@ Everything else runs only when its trigger fired, and every trigger is a recorde
 | PreToolUse denies with exit 2 or `permissionDecision: deny` plus reason | verified | §8.5 |
 | Subagent frontmatter supports `tools`, `disallowedTools`, `model`, `effort`, `permissionMode`, `maxTurns`, `hooks`, `memory`, `isolation`; `tools` is an allowlist | verified | FR-1.1, FR-6.16 |
 | `SubagentStop` fires per subagent, matched on agent type, with `agent_id`, `agent_type`, `last_assistant_message` and `transcript_path` | verified | FR-17.12, §8.4.6 |
+| `SubagentStart` fires per subagent, matched on agent type, with `agent_id` and `agent_type` | verified | §8.4.6 registration |
 | Frontmatter `effort` overrides the session level for that agent | verified | FR-6.16 |
 | The sibling roster appears only when the subagent's tools include `SendMessage` | verified | FR-1.1, D8 |
 | Default 20 concurrent subagents; `CLAUDE_CODE_MAX_CONCURRENT_SUBAGENTS`; ultracode sessions exempt; spawning fails (not queued) at the cap | verified | harness file, FR-6.16 |
@@ -556,12 +564,13 @@ Everything else runs only when its trigger fired, and every trigger is a recorde
 | `disableAllHooks` exists at every scope | verified | tier detection: its presence forces Tier 3 |
 | `/goal` semantics (first token, ≤ 4,000 chars, transcript-only evaluator, defers while subagents run, `/goal clear`) | verified 2026-08-25, not re-checked | FR-14.6, status line |
 | PreToolUse `updatedInput` rewriting; `claude -p` flags for a restricted tool list | not verified | C3, C4 |
-| The subagent's model is readable from the transcript the hook names | not verified | C11 |
+| The subagent's model is readable from the transcript the hook names | not verified | optional cross-check only; FR-17.13 removes the dependency |
+| Hook commands run outside the Bash sandbox and can read a file the sandbox denies to tools | not verified | Tier 1 attestation key, §8.4.6, C11 |
 
 ### 14.2 Other assumptions
 
 - Baseline README cost estimate (about ten invocations per piece before the gate) is the seed for the envelope defaults until three measured runs exist.
-- A "different model" is a different model family or generation as listed in the harness file; Fable and Mythos count as the same model.
+- A "different model" is what the policy pins for `reader` and `reader-alt`: two different model families or generations as the harness file lists them; Fable and Mythos count as the same model.
 - The existing seven domain files' floors and inspection steps remain correct; only their pair-preparation lines change.
 
 ## 15. Alternatives and trade-offs
@@ -572,6 +581,8 @@ Everything else runs only when its trigger fired, and every trigger is a recorde
 - **`xhigh` versus `ultracode`.** Ultracode's workflow orchestration competes with `next`; its cap exemption is reachable through the variable. Chosen: `xhigh` (reverses D15's second half; README entry).
 - **Spec as input versus free text only.** A spec carries invariants and acceptance criteria the loop would otherwise rediscover. Cost: parsing rules. Chosen: accept both.
 - **Attribution versus originality.** See C1.
+- **Pinned reader definitions versus a per-call model.** A per-call model is a string the lead supplies and nothing attests; a pinned definition makes the harness-attested agent type prove the model. Cost: two files that name models and age with the harness. Chosen: pinned.
+- **A hook key versus collision detection for attestation origin.** The key authenticates origin where the sandbox protects it; collision detection needs no secret and works at Tier 2, but voids a forgery only after the genuine stop fires. Chosen: both, reported by tier.
 
 ## 16. Concerns and unresolved decisions
 
@@ -605,8 +616,8 @@ Issue: a critic's blindness cannot exclude what the harness injects. Recommended
 **C10. `slash-commands/gauntlet-goal.md` duplicates the paste prompt.**
 Issue: it restates the loop in its own words and will drift from the new rules. Recommended: regenerate it from the template with the second exit and the different-model rule, or retire it in favour of the prompt. Owner: the user.
 
-**C11. Observing the critic's model.**
-Issue: the different-model rule is a non-negotiable and provenance must record the model a reader actually ran on, but the hook payload lists no model field. Options: read the model from the subagent transcript the hook names (unverified); pin the model in two reader definitions (`reader` and `reader-alt`, same body and tools, `model:` fixed to two families) so the harness-attested agent type proves the model; both. Recommended: the two pinned definitions, since the agent type needs no transcript parsing; keep the transcript check as a cross-check when it works. Owner: technical, during planning.
+**C11. Attestation origin at Tier 1.**
+Issue: FR-17.13 settles the model question (pinned reader definitions; the harness-attested agent type proves the model). What remains is origin authentication at Tier 1, which assumes hook commands run outside the sandbox and can read the attestation key the sandbox denies to tools (§14.1, not verified). Options: verify in the plan and keep the key file; if hooks are sandboxed too, carry the key in the hook command string in managed settings; if neither holds, Tier 1 attestation is reported as Tier 2 attestation. Recommended: verify first, key file if it holds. Owner: technical, during planning.
 
 **C12. Isolation required to execute reference code.**
 Issue: FR-15.7 blocks executable reference evaluation on a machine with neither the sandbox nor a container, which is stricter than the intent's "recommend, detect, report". Why it matters: the reference is untrusted input, and installing its dependencies is code execution before any check has run; without the rule the run's threat model has a hole at freeze time. Options: keep the block (a one-line fix, `/sandbox`, on macOS, Linux and WSL2); allow with a report line only. Recommended: keep the block. Owner: the user.
@@ -631,9 +642,9 @@ Issue: FR-15.7 blocks executable reference evaluation on a machine with neither 
 | 12 Pipeline | FR-12.1–12.5 | AC-12.1–12.3 |
 | 13 Measurement | FR-13.1–13.3 | AC-13.1–13.2 |
 | 14 Secure stop | FR-14.1–14.7 | AC-14.1–14.3 |
-| 15 Untrusted input | FR-15.1–15.7 | AC-15.1–15.4 |
+| 15 Untrusted input | FR-15.1–15.8 | AC-15.1–15.4 |
 | 16 Failure classes | FR-16.1–16.3 | AC-16.1 |
-| 17 Control plane | FR-17.1–17.12 | AC-17.1–17.7 |
+| 17 Control plane | FR-17.1–17.13 | AC-17.1–17.9 |
 | Mechanism table | FR-M.1–M.4 | AC-M.1 |
 | Delivery order | C-items 2, 3, 5, 11 resolved before the controller change set; order 1, 2, 3, 4, 5, 14, 15, 16, 17, 6, 6b, 7–13 as the intent states | the release commit's README ledger |
 | Done means | every AC above; README entry per changed decision; examples and example run updated; eval green and wired; `SKILL.md` alone writes a correct prompt | AC-6b.2, AC-11.1 |
