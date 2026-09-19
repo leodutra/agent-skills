@@ -8,7 +8,8 @@ import shutil
 import tempfile
 import unittest
 
-SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL = os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop")
 spec = importlib.util.spec_from_file_location("claude_code", os.path.join(SKILL, "install", "claude_code.py"))
 installer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)

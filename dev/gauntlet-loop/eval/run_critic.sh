@@ -2,7 +2,7 @@
 # Run the reader definition on every frozen pair in both orders (flags: harness-claude-code.md, S7) and check the verdicts.
 # run_critic.sh [--only domain[/pair-N]] [--baseline]
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"; skill="$(dirname "$here")"; only=""; check=()
+here="$(cd "$(dirname "$0")" && pwd)"; skill="$(cd "$here/../../../skills/gauntlet-loop" && pwd)"; only=""; check=()
 while [ $# -gt 0 ]; do case "$1" in --only) only="$2"; shift 2;; --baseline) check+=(--baseline); shift;; *) echo "unknown: $1" >&2; exit 2;; esac; done
 out="${GAUNTLET_EVAL_OUT:-$(mktemp -d)}"; mkdir -p "$out"
 model="${GAUNTLET_EVAL_CRITIC_MODEL:-$(python3 -c "import json;print(json.load(open('$here/critic/suite.json'))['model'])")}"

@@ -7,9 +7,9 @@ import re
 import unittest
 
 import make_example
-from _util import SKILL, ctl
+from _util import HERE, SKILL, ctl
 
-EVENTS = [json.loads(line) for line in pathlib.Path(SKILL, "tests", "fixtures", "example-events.jsonl").read_text().splitlines()]
+EVENTS = [json.loads(line) for line in pathlib.Path(HERE, "fixtures", "example-events.jsonl").read_text().splitlines()]
 DOC = pathlib.Path(SKILL, "references", "example-run.md").read_text()
 
 

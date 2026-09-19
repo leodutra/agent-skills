@@ -1,6 +1,6 @@
 # A run, turn by turn
 
-One coding run from paste to pull request, told through the controller's own output. Every status line below is what `gauntletctl status` printed; the event stream behind it is `tests/fixtures/example-events.jsonl` (220 events), and a test folds it through the machine and compares these lines, so this page cannot drift from the code. Read it on a first run or an empty workbench only.
+One coding run from paste to pull request, told through the controller's own output. Every status line below is what `gauntletctl status` printed; the event stream behind it is kept with the skill's tests (220 events), and a test folds it through the machine and compares these lines, so this page cannot drift from the code. Read it on a first run or an empty workbench only.
 
 ## What the user pasted
 

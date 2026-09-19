@@ -4,9 +4,9 @@ import os
 import pathlib
 import shutil
 
-from _util import SKILL, Repo as BaseRepo, ctl, installer
+from _util import HERE, Repo as BaseRepo, ctl, installer
 
-FIXTURE = os.path.join(SKILL, "tests", "fixtures", "reference")
+FIXTURE = os.path.join(HERE, "fixtures", "reference")
 
 
 class Repo(BaseRepo):

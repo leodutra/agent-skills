@@ -5,7 +5,7 @@ import re
 import sys
 
 LIMIT = 270
-skill = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "SKILL.md")
+skill = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..", "skills", "gauntlet-loop", "SKILL.md")
 with open(skill) as f:
     text = f.read()
 template = re.search(r"```text\n(/goal .*?)```", text, re.S).group(1)

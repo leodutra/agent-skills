@@ -6,9 +6,9 @@ import os
 import pathlib
 import sys
 
-from _util import SKILL, Repo, ctl
+from _util import HERE, Repo, ctl
 
-VERDICTS = pathlib.Path(SKILL, "tests", "fixtures", "verdicts")
+VERDICTS = pathlib.Path(HERE, "fixtures", "verdicts")
 
 
 class AttestRepo(Repo):

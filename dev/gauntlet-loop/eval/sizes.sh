@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Byte ceilings from the spec's size table, and the two-line description. Free; runs on every commit and in CI.
 set -euo pipefail
-skill="$(cd "$(dirname "$0")/.." && pwd)"; fail=0
+skill="$(cd "$(dirname "$0")/../../../skills/gauntlet-loop" && pwd)"; fail=0
 check() { local n; n=$(wc -c < "$skill/$1"); if [ "$n" -gt "$2" ]; then echo "FAIL  $1: $n bytes > $2"; fail=1; else echo "ok    $1: $n bytes <= $2"; fi; }
 check SKILL.md 7000
 check references/running-the-loop.md 10239

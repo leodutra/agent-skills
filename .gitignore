@@ -12,3 +12,7 @@ graphify-out/
 .claude/worktrees/
 
 
+
+# Python bytecode
+__pycache__/
+*.pyc

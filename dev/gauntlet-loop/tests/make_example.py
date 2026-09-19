@@ -7,7 +7,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-from _util import SKILL, ctl  # noqa: E402
+from _util import HERE, ctl  # noqa: E402
 
 POLICY = ctl.policy()
 
@@ -208,11 +208,11 @@ def main():
         r.emit("PR_MERGED", source="status", minutes=90 if pid == "parse" else 0, piece=pid, artifact="https://github.com/example/durations/pull/12")
     r.turn("12 merged")
 
-    out = os.path.join(SKILL, "tests", "fixtures", "example-events.jsonl")
+    out = os.path.join(HERE, "fixtures", "example-events.jsonl")
     with open(out, "w") as f:
         f.writelines(json.dumps(e) + "\n" for e in r.tx.new)
     state = r.tx.state
-    print(f"\n{len(r.tx.new)} events -> {os.path.relpath(out, SKILL)}")
+    print(f"\n{len(r.tx.new)} events -> {os.path.relpath(out, HERE)}")
     print("by class:", ctl.metrics(r.tx.new, state)["by_class"])
     if "--metrics" in sys.argv:
         print("\n".join(ctl.metric_lines(ctl.metrics(r.tx.new, state))))

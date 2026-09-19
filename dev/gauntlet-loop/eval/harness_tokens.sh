@@ -2,7 +2,7 @@
 # Harness tokens belong in references/harness-claude-code.md and the Portability section of what-breaks.md, nowhere else.
 # SKILL.md keeps exactly two, `/goal` and `/effort xhigh`: the paste prompt and the line under it are harness text by design.
 set -euo pipefail
-skill="$(cd "$(dirname "$0")/.." && pwd)"; fail=0
+skill="$(cd "$(dirname "$0")/../../../skills/gauntlet-loop" && pwd)"; fail=0
 tokens='/goal|/loop|/effort|/sandbox|ultracode|SendMessage|CLAUDE_CODE_|subagent_type|isolation: worktree|Agent tool|Workflow tool|Artifact tool|as an Artifact|PreToolUse|SubagentStart|SubagentStop|settings\.json|omitClaudeMd|maxTurns|claude -p|worktrunk|\bwt (switch|list|merge|remove)\b'
 scan() { # $1 file, stdin its text with the allowed parts already removed
   local hits; hits=$(grep -nE "$tokens" || true)

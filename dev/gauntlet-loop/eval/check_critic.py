@@ -14,7 +14,7 @@ import os
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-loader = importlib.machinery.SourceFileLoader("gauntletctl", os.path.join(HERE, "..", "bin", "gauntletctl"))
+loader = importlib.machinery.SourceFileLoader("gauntletctl", os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop", "bin", "gauntletctl"))
 spec = importlib.util.spec_from_loader("gauntletctl", loader)
 ctl = importlib.util.module_from_spec(spec)
 loader.exec_module(ctl)  # the shape check is the controller's own

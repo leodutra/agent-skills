@@ -10,7 +10,8 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL = os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop")
 
 
 def load(name, path):

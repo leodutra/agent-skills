@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Run the write-mode cases through `claude -p` (flags: harness-claude-code.md, S7) and check them.
-# run.sh [--upto N] [--only id,id] [--skill-only] [--baseline]   --skill-only runs where references/ does not exist: SKILL.md alone must do.
+# run.sh [--upto N] [--only id,id] [--skill-only] [--baseline]   --skill-only runs in an empty directory. Either way SKILL.md is the only instruction text: write mode reads no reference by default.
 set -euo pipefail
-here="$(cd "$(dirname "$0")" && pwd)"; skill="$(dirname "$here")"; root="$skill"
+here="$(cd "$(dirname "$0")" && pwd)"; skill="$(cd "$here/../../../skills/gauntlet-loop" && pwd)"; root="$(dirname "$here")"
 upto=()
 while [ $# -gt 0 ]; do case "$1" in
   --upto) upto+=(--upto "$2"); shift 2;;

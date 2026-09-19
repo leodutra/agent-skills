@@ -7,7 +7,8 @@ import sys
 import tempfile
 import unittest
 
-SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..")
+HERE = os.path.dirname(os.path.abspath(__file__))
+SKILL = os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop")
 
 
 def run_hook(name, project, tool, tool_input, agent_type="reader", agent_id="a1"):
