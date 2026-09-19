@@ -277,6 +277,20 @@ class EventCommand(Repo):
         self.assertEqual(self.run_ctl("event", "PARK_REQUESTED", "piece=parse")[0], 2)  # no reason, no class
         self.assertEqual(self.run_ctl("event", "GAP_ROUTED", "piece=parse", "class=taste")[0], 2)  # not a class
 
+    def test_referent_and_mode_are_judgments_recorded_before_the_piece_opens(self):  # spec 8.4.1 as amended (A13)
+        self.write("upstream/index.js")
+        self.ok("freeze", os.path.join(self.root, "upstream"), os.path.join(self.root, "reference/ms"))
+        self.ok("event", "SPLIT_DECIDED", "pieces=2")
+        self.assertEqual(self.run_ctl("event", "MODE_SELECTED", "piece=parse", "mode=tournament")[0], 2)  # not a mode
+        self.ok("event", "REFERENT_SELECTED", "piece=parse", "referent=reference/ms")
+        self.ok("event", "MODE_SELECTED", "piece=parse", "mode=champion-challenger")
+        self.ok("piece", "open", "parse")  # no flags: the recorded judgments are what it opens with
+        piece = ctl.load()["pieces"]["parse"]
+        self.assertEqual((piece["referent"], piece["mode"]), ("reference/ms", "champion-challenger"))
+        for late in (("REFERENT_SELECTED", "referent=reference/other"), ("MODE_SELECTED", "mode=reference")):
+            code, _, err = self.run_ctl("event", late[0], "piece=parse", late[1])
+            self.assertEqual((code, "new run" in err), (2, True), late)  # a piece's bar does not move under its verdicts
+
     def test_piece_open_makes_the_worktree_and_split_retires_the_parent(self):
         self.assertEqual(self.run_ctl("piece", "open", "parse", "--referent", "reference/ms")[0], 2)  # nothing frozen
         self.write("upstream/index.js")

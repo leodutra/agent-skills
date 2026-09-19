@@ -88,6 +88,24 @@ class Next(Run):
         self.assertIn("piece split parse", self.ok("next"))  # rung one: split
 
 
+    def test_names_the_policys_offload_sizes_and_shared_by_rule_globs(self):  # FR-6.12, FR-6.13: read, not remembered
+        offload, shared = ctl.POLICY["offload"], ctl.POLICY["shared_by_rule"]
+        out = self.ok("next")  # the split is decided, no piece is open: referents and floors are next
+        self.assertIn(f"floors beyond {offload['floor_lines']} lines", out)
+        self.assertIn(", ".join(shared), out)
+
+
+class NextBeforeTheFreeze(Repo):
+    installed = True
+
+    def test_names_the_size_beyond_which_an_author_freezes(self):
+        self.ok("init", "--invocations", "150", "--hours", "24")
+        self.assertIn(f"beyond {ctl.POLICY['offload']['reference_files']} files", self.ok("next"))
+        self.write("upstream/index.js")
+        self.ok("freeze", self.root + "/upstream", self.root + "/reference/ms")
+        self.assertIn(", ".join(ctl.POLICY["shared_by_rule"]), self.ok("next"))  # the split is the next judgment
+
+
 class Workbench(Run):
     def test_is_regenerated_on_every_event_and_lists_parked_first(self):  # FR-6.11, FR-4.5
         self.open("parse")

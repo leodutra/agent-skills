@@ -49,6 +49,42 @@
     "reference",
     "bench"
   ],
+  "critic_blind": {
+    "forbidden": [
+      "state.json",
+      "events.jsonl",
+      ".gauntlet/private",
+      "reference/",
+      "heldout/",
+      "workbench",
+      "CLAUDE.md"
+    ]
+  },
+  "author_scope": {
+    "beyond_floor_trees": [
+      ".gauntlet/staging"
+    ]
+  },
+  "controller_only": {
+    "trees": [
+      ".gauntlet",
+      ".claude/hooks/gauntlet"
+    ],
+    "files": [
+      ".claude/agents/reader.md",
+      ".claude/agents/reader-alt.md",
+      ".claude/agents/editor.md",
+      ".claude/agents/editor-fast.md",
+      ".claude/agents/author.md"
+    ],
+    "open": [
+      ".gauntlet/wt",
+      ".gauntlet/staging"
+    ],
+    "reader_open": [
+      ".gauntlet/pairs"
+    ]
+  },
   "builder_boundary": {
     "no_read": [
       "heldout",

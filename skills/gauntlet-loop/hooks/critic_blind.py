@@ -4,10 +4,10 @@ import os
 import re
 import shlex
 
-from _paths import allow, binding, deny, glob_base, inside, path_tokens, payload, project, resolve
+from _paths import allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve
 
 ROLES = ("reader", "reader-alt")
-FORBIDDEN = ("state.json", "events.jsonl", ".gauntlet/private", "reference/", "heldout/", "workbench", "CLAUDE.md")
+FORBIDDEN = policy()["critic_blind"]["forbidden"]
 REASON = "outside your working set"
 
 
@@ -30,7 +30,7 @@ def main():
                 deny(REASON, "BLIND_BLOCK", p, command)
         # The body of a quoted heredoc is a script the shell expands nothing in: JS template literals are fine there.
         head, quoted, body = command.partition("<<'")
-        for token in path_tokens(head):
+        for token in path_tokens(head, home):
             # `./$s/src` in a loop over a and b is fine; a path that starts with a variable, or hides a command, is not
             if token.startswith("$") or "$(" in token or "${" in token or "`" in token or not inside(resolve(token, home), home):
                 deny(REASON, "BLIND_BLOCK", p, command)

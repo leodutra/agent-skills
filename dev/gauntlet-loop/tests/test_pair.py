@@ -4,6 +4,7 @@ import json
 import os
 import pathlib
 import shutil
+import subprocess
 
 from _util import Repo, ctl
 
@@ -86,6 +87,34 @@ class Pair(PairRepo):
         self.write(".gauntlet/wt/parse/src/parse.js", "// round 3: fixed what the critic's gap named\nexport const parse = () => 2\n")
         code, _, err = self.run_ctl("pair", "parse")
         self.assertEqual((code, "parse.js:1" in err), (3, True))
+
+    def test_history_is_stripped_and_a_trace_in_a_filename_is_refused(self):  # plan 9c as amended (A13)
+        wt = os.path.join(self.root, ".gauntlet/wt/parse")
+        self.write(".gauntlet/wt/parse/CLAUDE.md", "gauntlet round 2: ours is the challenger\n")
+        for argv in (["add", "-A"], ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "round 2: close the critic's gap"]):
+            subprocess.run(["git", "-C", wt, *argv], check=True, capture_output=True)
+        self.ok("pair", "parse")  # what is not the deliverable is left out, so its traces refuse nothing
+        text = b"\n".join(tree(self.pair_dir).values()).decode()
+        self.assertFalse([w for w in ("round 2", "critic's gap", "challenger") if w in text])
+        self.write(".gauntlet/wt/parse/src/parse-final.js", "export const parse = () => 2\n")
+        code, _, err = self.run_ctl("pair", "parse")  # inside the deliverable: a rename in the copy would break what imports it
+        self.assertEqual((code, "parse-final.js: the filename" in err, "rename it in the artifact" in err), (3, True, True))
+
+    def test_floor_outputs_enter_a_pair_on_both_sides_or_on_neither_and_name_no_side(self):  # FR-1.x: blind on disk
+        self.ok("floor", "add", "heldout", "--cmd", "echo checked $GAUNTLET_OURS && echo in $GAUNTLET_PIECE", "--derived")
+        self.ok("floors", "parse")
+        self.ok("pair", "parse")
+        self.assertFalse([p for p in tree(self.pair_dir) if "FLOORS" in p])  # the reference was never verified: a one-sided file says which side is ours
+        shutil.rmtree(self.pair_dir)
+        self.write("reference/ms/.verify/01.txt", f"$ npm test\nexit 0\nok {self.root}/reference/ms/test.js\n")
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse")
+        files = tree(self.pair_dir)
+        self.assertEqual(sorted(p for p in files if "FLOORS" in p), ["a/FLOORS/01.txt", "b/FLOORS/01.txt"])  # one naming scheme
+        text = b"\n".join(v for k, v in files.items() if "FLOORS" in k).decode()
+        for tell in ("GAUNTLET", "wt/parse", "reference/ms", self.root, "heldout.txt"):
+            self.assertNotIn(tell, text)
+        self.assertIn("checked .", text)
 
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:

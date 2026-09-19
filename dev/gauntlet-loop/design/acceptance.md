@@ -2,6 +2,33 @@
 
 Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-loop/next`. "Test" is `python3 -m unittest discover -s skills/gauntlet-loop/tests` (111 tests, all passing); "eval" is `eval/run.sh` and `eval/run_critic.sh` against `eval/baseline.json`; "live" is a run in a scratch repository with real subagents, recorded in `references/harness-claude-code.md`. Claude Code 2.1.274.
 
+## 2026-09-19: the plan's thin spots, and the first real run (in progress)
+
+Tests now live in `dev/gauntlet-loop/tests` (122, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`). Claude Code 2.1.277.
+
+| Gap | Result | How |
+| --- | --- | --- |
+| a. Phase 9h: three hooks carried their own path lists | closed | `policy/v1.json` holds `critic_blind`, `author_scope` and `controller_only`; test: `PolicyDriven` runs each hook from a copy with an edited policy. The version stays `v1`: the values are the ones the hooks carried, and no run was in flight |
+| b. Phase 9c: `pair` refuses where the plan says strip | closed, decided | What is not the deliverable never enters a pair; a trace inside it, a line or a filename, is refused. README D40, spec A13; test: `test_history_is_stripped_and_a_trace_in_a_filename_is_refused` |
+| c. Spec 8.4.1: `piece referent` and `piece mode` | spec amended (A13) | The judgment events are the interface; `MODE_SELECTED` takes two values; both are rejected for an open piece. Test: `test_referent_and_mode_are_judgments_recorded_before_the_piece_opens` |
+| d. `shared_by_rule` and `offload` read by nothing | closed | `next` names them at the freeze, the split and the referent step; the runbook points at `next` instead of repeating the numbers. Tests: `Next`, `NextBeforeTheFreeze` |
+| e. An author's shell writes unchecked | closed | `author_scope` matches `Bash`; test: `test_an_authors_shell_writes_are_held_to_the_same_trees`; the installer test checks the wiring |
+| f. Harness file, S1 row | closed | The line now says `detect` never reads the folder's trust; test: `test_docs.py` |
+| g. No path without the controller | closed | `## By hand` in `running-the-loop.md`, 10,236 of 10,239 bytes; test: `test_docs.py` |
+
+Found along the way, each with a test: the shared shell matcher ignored bare words, so `rm -rf heldout` passed every hook (`_paths.path_tokens`; `test_shell_writes_are_denied_and_shell_reads_are_not`); floor outputs entered a pair on our side only, under the lead's floor names and with `$GAUNTLET_OURS` on the command line (spec A14; `test_floor_outputs_enter_a_pair_on_both_sides_or_on_neither_and_name_no_side`).
+
+The first real run: `~/Work/bytesize` (installed, checked in, `detect` tier 2 before the run), goal a zero-dependency byte-size library, bar `visionmedia/bytes.js` 3.1.2, two pieces plus the whole, envelope 40 invocations and 3 hours. The lead is a session in another checkout, so every role agent is spawned by a relay: `claude -p` inside the target repository in auto mode, one Agent call with the real definition. Lead-side hooks therefore do not fire on the lead; role-side hooks and the start and stop hooks do. Round zero is done and committed (`commit --plan`); the author and both builders were registered by the start hook. NOT FINISHED at the time of this record: no verdict yet.
+
+| Finding | State |
+| --- | --- |
+| F1. Nothing says what a critic may execute in a pair when the reference was never verified under isolation; FR-15.7 blocks such a pair on paper, `pair` does not know. The lead wrote read-only critic steps by hand | open: test and fix owed |
+| F2. In a folder whose trust dialog was never accepted the harness ignores `permissions.allow` from project settings ("Ignoring 18 permissions.allow entries"), so the shipped allowlist does nothing there; hooks still fire. The operator accepted trust for this folder mid-run | recorded in the harness file, in the "No stalled prompts" row and under "Checks by hand" |
+| F3. A hook's first run left `__pycache__/` beside it, `git status` was no longer clean and `detect` fell to tier 3 for the next run | fixed: the installer writes a `.gitignore` there; the fresh-clone test runs every wired hook, then `detect` |
+| The offload rule for `freeze` counts reference files the lead cannot know before freezing, and `freeze` is one command that prints only the manifest | open: wording |
+
+Still open: AC-15.4 (the sandbox is off in the target repository), spike S1 (trust is now accepted there; not run yet), the mirror refresh.
+
 ## Not done, and why
 
 | Item | State |

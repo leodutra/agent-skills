@@ -43,6 +43,8 @@ class Install(unittest.TestCase):
         commands = [h.get("command") for g in settings["hooks"]["PreToolUse"] for h in g["hooks"]]
         self.assertIn("their-own-hook", commands)
         self.assertEqual(commands.count("python3"), len(installer.HOOKS["PreToolUse"]))
+        shell = [h["args"][0].split("/")[-1] for g in settings["hooks"]["PreToolUse"] if "Bash" in g["matcher"] for h in g["hooks"] if h.get("args")]
+        self.assertIn("author_scope.py", shell)  # an author's shell writes are checked, not only its file tools
         self.assertEqual([g["matcher"] for g in settings["hooks"]["SubagentStop"]], ["reader|reader-alt|editor|editor-fast|author"])
 
     def test_manifest_verifies_until_a_hook_is_edited(self):
@@ -68,6 +70,17 @@ class Install(unittest.TestCase):
         self.assertEqual(subprocess.run(ctl + ["init"], capture_output=True, env=env).returncode, 0)
         status = subprocess.run(ctl + ["status"], capture_output=True, text=True, env=env).stdout
         self.assertIn("tier: 2", status)
+        # Seen in the first real run: a hook's first execution left __pycache__ beside it, git status was no longer
+        # clean, and the next `detect` said tier 3. Run every wired hook as the harness does, then look again.
+        settings = json.loads(pathlib.Path(self.repo, ".claude", "settings.json").read_text())
+        payload = json.dumps({"tool_name": "Read", "tool_input": {"file_path": "x"}, "agent_type": "editor", "agent_id": "a"})
+        clean = {k: v for k, v in env.items() if k != "PYTHONDONTWRITEBYTECODE"}
+        for group in settings["hooks"]["PreToolUse"]:
+            for h in (h for h in group["hooks"] if h.get("args")):
+                argv = [h["command"]] + [a.replace("${CLAUDE_PROJECT_DIR}", self.repo) for a in h["args"]]
+                subprocess.run(argv, input=payload, capture_output=True, text=True, env=clean, cwd=self.repo)
+        facts = json.loads(subprocess.run(ctl + ["detect"], capture_output=True, text=True, env=env).stdout)
+        self.assertEqual((facts["tier"], facts["checked_in"]), (2, True))
 
     def test_the_two_reader_definitions_differ_in_name_and_model_only(self):
         a = pathlib.Path(SKILL, "agents", "reader.md").read_text().splitlines()

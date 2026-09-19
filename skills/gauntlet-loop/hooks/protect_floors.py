@@ -27,7 +27,7 @@ def main():
     if p.get("tool_name") == "Bash":
         command = ti.get("command", "")
         base = shell_base(command, root)
-        hits = [t for t in path_tokens(command) if tree_of(resolve(t, base), TREES, root)] if WRITES.search(command) else []
+        hits = [t for t in path_tokens(command, base) if tree_of(resolve(t, base), TREES, root)] if WRITES.search(command) else []
         target = command if hits else None
     else:
         target = ti.get("file_path") if tree_of(resolve(ti.get("file_path", ""), root), TREES, root) else None

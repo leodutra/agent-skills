@@ -49,7 +49,7 @@ def main():
             if re.search(pattern, command):
                 block(rule, command)
         base = shell_base(command, root)
-        for token in path_tokens(command):
+        for token in path_tokens(command, base):
             real = resolve(token, base)
             check_read(real, command)
             if WRITES.search(command) and not inside(real, home):

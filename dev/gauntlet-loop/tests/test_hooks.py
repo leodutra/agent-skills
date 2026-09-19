@@ -2,6 +2,7 @@
 import json
 import os
 import pathlib
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -11,10 +12,10 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop")
 
 
-def run_hook(name, project, tool, tool_input, agent_type="reader", agent_id="a1"):
+def run_hook(name, project, tool, tool_input, agent_type="reader", agent_id="a1", hooks=None):
     payload = {"hook_event_name": "PreToolUse", "tool_name": tool, "tool_input": tool_input,
                "agent_id": agent_id, "agent_type": agent_type, "cwd": project}
-    out = subprocess.run([sys.executable, os.path.join(SKILL, "hooks", name)], input=json.dumps(payload),
+    out = subprocess.run([sys.executable, os.path.join(hooks or os.path.join(SKILL, "hooks"), name)], input=json.dumps(payload),
                          capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": project})
     assert out.returncode == 0, out.stderr
     return json.loads(out.stdout)["hookSpecificOutput"] if out.stdout.strip() else {}
@@ -161,6 +162,10 @@ class ProtectFloors(Project):
         self.assertEqual(self.hook("Bash", {"command": "rm -rf reference/"}, agent_type=None).get("permissionDecision"), "deny")
         self.assertEqual(self.hook("Bash", {"command": "node --test heldout/"}, agent_type=None), {})
         self.assertEqual(self.hook("Bash", {"command": "rm -rf docs/reference"}, agent_type=None), {})
+        for command in ("rm -rf heldout", "cd heldout && rm x.mjs", "cd heldout && echo x > new.mjs"):  # a bare word is a path too
+            self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
+        self.assertEqual(self.hook("Bash", {"command": "rm -rf src && echo heldout > note.txt"}, agent_type=None).get("permissionDecision"), "deny")  # coarse, by design
+        self.assertEqual(self.hook("Bash", {"command": "rm -rf src dist a=b 2>&1"}, agent_type=None), {})
 
 
 class ControllerOnly(Project):
@@ -196,6 +201,54 @@ class AuthorScope(Project):
         self.assertEqual(hook(".gauntlet/staging/t.mjs", agent_type="author"), {})
         self.assertEqual(hook("src/app.js", agent_type="author").get("permissionDecision"), "deny")
         self.assertEqual(hook("src/app.js", agent_type="editor"), {})
+
+    def test_an_authors_shell_writes_are_held_to_the_same_trees(self):
+        hook = lambda command, **kw: run_hook("author_scope.py", self.root, "Bash", {"command": command}, **{"agent_type": "author", **kw})
+        for command in ("echo x > src/app.js", "cp heldout/x.mjs src/x.mjs", "rm -rf src", "git clone https://example.com/a/b src/b",
+                        "cd src && touch app.js", "tee ../outside.txt < heldout/x.mjs"):
+            self.assertEqual(hook(command).get("permissionDecision"), "deny", command)
+        for command in ("echo x > heldout/new.mjs", "mkdir -p .gauntlet/staging && cp heldout/x.mjs .gauntlet/staging/t.mjs",
+                        "node --test heldout/ 2>&1", "cat src/secret.txt", "git clone https://example.com/a/b reference/b",
+                        "python3 .claude/hooks/gauntlet/gauntletctl freeze https://example.com/a/b reference/b", "touch heldout/new.mjs",
+                        "cd heldout && touch new.mjs"):
+            self.assertEqual(hook(command), {}, command)
+        self.assertEqual(hook("echo x > src/app.js", agent_type="editor"), {})  # other agents pass through
+
+
+class PolicyDriven(Project):
+    """Phase 9h: no hook carries a path list of its own; each reads the pinned policy installed beside it."""
+
+    def hooks_with(self, edit):
+        dest = os.path.join(tempfile.mkdtemp(dir=self.root), "hooks")
+        shutil.copytree(os.path.join(SKILL, "hooks"), dest, ignore=shutil.ignore_patterns("__pycache__"))
+        policy = json.loads(pathlib.Path(SKILL, "policy", "v1.json").read_text())
+        edit(policy)
+        os.makedirs(os.path.join(dest, "policy"))
+        pathlib.Path(dest, "policy", "v1.json").write_text(json.dumps(policy))
+        return dest
+
+    def test_critic_blind_reads_its_forbidden_names_from_the_policy(self):
+        target = {"file_path": self.path(".gauntlet/pairs/parse/a/index.js")}
+        self.assertEqual(run_hook("critic_blind.py", self.root, "Read", target), {})
+        hooks = self.hooks_with(lambda p: p["critic_blind"]["forbidden"].append("index.js"))
+        self.assertEqual(run_hook("critic_blind.py", self.root, "Read", target, hooks=hooks).get("permissionDecision"), "deny")
+
+    def test_author_scope_reads_its_trees_from_the_policy(self):
+        target = {"file_path": self.path("fixtures/case.json")}
+        self.assertEqual(run_hook("author_scope.py", self.root, "Write", target, agent_type="author").get("permissionDecision"), "deny")
+        hooks = self.hooks_with(lambda p: p["floor_trees"].append("fixtures"))
+        self.assertEqual(run_hook("author_scope.py", self.root, "Write", target, agent_type="author", hooks=hooks), {})
+        hooks2 = self.hooks_with(lambda p: p["author_scope"].update(beyond_floor_trees=[]))
+        staged = {"file_path": self.path(".gauntlet/staging/t.mjs")}
+        self.assertEqual(run_hook("author_scope.py", self.root, "Write", staged, agent_type="author", hooks=hooks2).get("permissionDecision"), "deny")
+
+    def test_controller_only_reads_what_is_protected_and_what_is_open_from_the_policy(self):
+        scratch, mine = {"file_path": self.path(".gauntlet/scratch/x")}, {"file_path": self.path(".claude/agents/my-own.md")}
+        self.assertEqual(run_hook("controller_only.py", self.root, "Write", scratch, agent_type=None).get("permissionDecision"), "deny")
+        hooks = self.hooks_with(lambda p: (p["controller_only"]["open"].append(".gauntlet/scratch"),
+                                           p["controller_only"]["files"].append(".claude/agents/my-own.md")))
+        self.assertEqual(run_hook("controller_only.py", self.root, "Write", scratch, agent_type=None, hooks=hooks), {})
+        self.assertEqual(run_hook("controller_only.py", self.root, "Write", mine, agent_type=None, hooks=hooks).get("permissionDecision"), "deny")
 
 
 class LogBlock(Project):

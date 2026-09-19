@@ -72,7 +72,7 @@ def policy():
 POLICY = policy()
 STRIP, SECRETS = tuple(POLICY["strip"]), POLICY["secrets"]
 EXCLUDE, CREDENTIAL_FILES = tuple(POLICY["pair_exclude"]), tuple(POLICY["credential_files"])
-LADDER, FLOOR_TREES = tuple(POLICY["ladder"]), tuple(POLICY["floor_trees"])
+LADDER, FLOOR_TREES, OFFLOAD = tuple(POLICY["ladder"]), tuple(POLICY["floor_trees"]), POLICY["offload"]
 
 
 def read_events():
@@ -427,7 +427,11 @@ def apply(state, e):
     # Piece events: the move must be in the table.
     pid = e["piece"]
     piece = state["pieces"].get(pid)
-    if name in ("REFERENT_SELECTED", "MODE_SELECTED") and piece is None:
+    if name in ("REFERENT_SELECTED", "MODE_SELECTED"):  # recorded before the piece opens; `piece open` reads them
+        if name == "MODE_SELECTED" and e.get("mode") not in ("reference", CC):
+            raise Rejected(f"a piece's mode is reference or {CC}")
+        if piece is not None:
+            raise Rejected(f"{pid} is open: its referent and mode stay fixed under its verdicts; a different bar is a new run")
         state.setdefault("selected", {}).setdefault(pid, {})[name.split("_")[0].lower()] = e.get("referent") or e.get("mode")
         return
     before = piece["state"] if piece else None
@@ -862,8 +866,10 @@ def cmd_event(args):
 
 # --- pair: seeded, idempotent, blind on disk ---------------------------------------------------------
 
-# ponytail: loop traces are found by string match and refused, not rewritten; per-language comment stripping
-# is the upgrade if builders keep tripping it.
+# What is not the deliverable never enters a pair (EXCLUDE: git history, harness files, dependencies, build output, run
+# state). A trace inside the deliverable, in a line or a filename, is refused, never rewritten: a rename in the copy breaks
+# whatever imports or links the file, and the trace would still ship. The builder fixes it at the source, for one round.
+# ponytail: a string match; per-language comment stripping is the upgrade if builders keep tripping it.
 LOOP_TRACES = re.compile(r"(?i)\bgauntlet\b|\bround[ _-]?\d+\b|\b(per|as) the (critic|reviewer|verdict)\b|"
                          r"\b(critic|reviewer)'s (gap|feedback|verdict)\b|\bwhat changed since\b")
 LOOP_NAMES = re.compile(r"(?i)([-_.]final\b|round[-_]?\d+)")
@@ -887,6 +893,17 @@ def copy_side(src, dst):
         shutil.copy(src, dst)
 
 
+def attach_floors(src, dst, *hide):
+    """Floor outputs as a critic may read them: numbered alike on both sides, and every path or variable that names a side made neutral."""
+    os.makedirs(dst, exist_ok=True)
+    for n, name in enumerate(sorted(os.listdir(src)), 1):
+        text = read_text(os.path.join(src, name))
+        for path in sorted(filter(None, hide), key=len, reverse=True):
+            text = text.replace(path, ".")
+        with open(os.path.join(dst, f"{n:02d}.txt"), "w") as f:
+            f.write(re.sub(r"\$\{?GAUNTLET_\w+\}?", ".", text))
+
+
 def refuse_unclean(path):
     """No env or credential file, no secret, no trace of the loop: refuse, and say where."""
     bad = []
@@ -898,7 +915,7 @@ def refuse_unclean(path):
             if any(fnmatch.fnmatch(name, pat) for pat in CREDENTIAL_FILES):
                 bad.append(f"{rel}: an env or credential file")
             elif LOOP_NAMES.search(name):
-                bad.append(f"{rel}: the filename carries a trace of the loop")
+                bad.append(f"{rel}: the filename carries a trace of the loop; rename it in the artifact")
             elif os.path.getsize(full) <= 1_000_000:
                 with open(full, errors="ignore") as f:
                     bad += [f"{rel}:{n}: a trace of the loop" for n, line in enumerate(f, 1) if LOOP_TRACES.search(line)]
@@ -967,8 +984,10 @@ def cmd_pair(args):
         shutil.rmtree(prepared, ignore_errors=True)
         ref = os.path.join(root(), args.reference)
         copy_side(ref, os.path.join(prepared, "ref"))
-        if os.path.isdir(os.path.join(ref, ".verify")):
-            copy_side(os.path.join(ref, ".verify"), os.path.join(prepared, "ref", "FLOORS"))
+        frozen = next((os.path.join(root(), f) for f in (load()["run"] or {}).get("frozen", [])
+                       if ref == os.path.join(root(), f) or ref.startswith(os.path.join(root(), f) + os.sep)), ref)
+        if os.path.isdir(os.path.join(frozen, ".verify")):  # the matched part of a verified reference carries its outputs
+            attach_floors(os.path.join(frozen, ".verify"), os.path.join(prepared, "ref", "FLOORS"), frozen, os.path.relpath(frozen, root()), root())
         if args.adapter:
             copy_side(os.path.join(root(), args.adapter), os.path.join(prepared, "adapter"))
         shutil.copy(os.path.join(root(), args.prompt), os.path.join(prepared, "PROMPT.md"))
@@ -1007,8 +1026,9 @@ def cmd_pair(args):
         live = build_pair(pid, pair_id, sides, prompt)
         floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
         ours_label = "a" if first_is_a else "b"
-        if os.path.isdir(floors) and not args.gap_only:
-            copy_side(floors, os.path.join(live, ours_label, "FLOORS"))
+        # Both sides or neither: outputs on one side alone say which side is ours, so they wait for a verified reference.
+        if os.path.isdir(floors) and os.path.isdir(os.path.join(ref, "FLOORS")) and names == ("ours", "reference"):
+            attach_floors(floors, os.path.join(live, ours_label, "FLOORS"), ours, os.path.relpath(ours, root()), root())
         if os.path.isdir(adapter):
             copy_side(adapter, live)
         write_mapping(pair_id, {"a": names[order[0]], "b": names[order[1]]})
@@ -1322,9 +1342,11 @@ def next_actions(state):
     run, out = state["run"], []
     ctl = "gauntletctl"
     if not run["frozen"]:
-        return [("-", "mechanical", f"{ctl} freeze <src> reference/<name> [--ref <tag>]; then freeze-verify under isolation")]
+        return [("-", "mechanical", f"{ctl} freeze <src> reference/<name> [--ref <tag>]; then freeze-verify under isolation "
+                                    f"(an author runs the freeze for a reference beyond {OFFLOAD['reference_files']} files)")]
     if not state["plan_pieces"]:
-        return [("-", "judgment", f"decide the coarsest split that can still be paired; record: {ctl} event SPLIT_DECIDED pieces=<n>")]
+        return [("-", "judgment", f"decide the coarsest split that can still be paired; record: {ctl} event SPLIT_DECIDED pieces=<n>; "
+                                  f"pieces that touch one of these share an edge by rule: {', '.join(POLICY['shared_by_rule'])}")]
     if run["ended"]:
         if not run.get("committed"):
             out.append(("-", "mechanical", f"{ctl} report; {ctl} commit"))
@@ -1334,7 +1356,9 @@ def next_actions(state):
     live = live_pieces(state)
     if len(live) < state["plan_pieces"] and not any(p["kind"] == "whole" for p in live.values()):
         out.append(("-", "judgment", f"pick each piece's referent (or --champion-challenger); then: {ctl} piece open <id> --referent <path>; "
-                                     f"{ctl} pair <id> --prepare --reference <matched part> --prompt <file>"))
+                                     f"{ctl} pair <id> --prepare --reference <matched part> --prompt <file>; floors: {ctl} floor add, "
+                                     f"written by an author when floors beyond {OFFLOAD['floor_lines']} lines; two pieces that touch one of "
+                                     f"{', '.join(POLICY['shared_by_rule'])} share an edge by rule: {ctl} event SHARED_EDGE_RECORDED pieces=<a,b>"))
     if live and not run["plan_committed"]:
         out.append(("-", "mechanical", f"{ctl} commit --plan, before any builder exists; attended: stop for approval"))
     variants_open = any(p["variants"] for p in live.values())

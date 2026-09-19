@@ -29,7 +29,7 @@ HOOKS = {
         ("Read|Glob|Grep|Edit|Write|Bash", "builder_boundary.py"),
         ("Edit|Write|Bash", "protect_floors.py"),
         ("Edit|Write|Bash", "controller_only.py"),
-        ("Edit|Write", "author_scope.py"),
+        ("Edit|Write|Bash", "author_scope.py"),
     ],
     "SubagentStart": [("reader|reader-alt|editor|editor-fast|author", "register.py")],
     "SubagentStop": [("reader|reader-alt|editor|editor-fast|author", "attest.py")],
@@ -96,6 +96,9 @@ def install(repo):
     if os.path.isdir(os.path.join(SKILL, "policy")):
         copy_tree(os.path.join(SKILL, "policy"), os.path.join(dest, "policy"), manifest, repo)
     copy_tree(os.path.join(SKILL, "agents"), os.path.join(repo, ".claude", "agents"), manifest, repo)
+    # A hook's first run leaves bytecode beside it; untracked, it reads as "not checked in" and `detect` says tier 3.
+    with open(os.path.join(dest, ".gitignore"), "w") as f:
+        f.write("__pycache__/\n")
     merge_settings(repo)
     with open(os.path.join(dest, "MANIFEST.sha256"), "w") as f:
         for rel in manifest:

@@ -55,7 +55,7 @@ def tree_of(path, trees, root):
     return None
 
 
-_WRITE_VERBS = re.compile(r"\b(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|install|chmod|sed\s+-i|git\s+(checkout|restore|rm|mv|apply|stash|clean|reset))\b")
+_WRITE_VERBS = re.compile(r"\b(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|install|chmod|sed\s+-i|git\s+(clone|checkout|restore|rm|mv|apply|stash|clean|reset))\b")
 _REDIRECT = re.compile(r"(^|[\s\d)\"'])>{1,2}(?![&>])")  # a redirect to a file; not `=>`, `->` or `2>&1`
 
 
@@ -86,19 +86,31 @@ def glob_base(pattern):
     return "/".join(keep) or "."
 
 
-def path_tokens(command):
-    """Tokens of a shell command that look like paths. A string match, not a shell parser: Tier 2, never isolation."""
+_OPERAND_VERBS = ("rm", "mv", "cp", "tee", "touch", "mkdir", "rmdir", "truncate", "ln")
+
+
+def path_tokens(command, base=None):
+    """Tokens of a shell command that look like paths. Given a base, a bare word counts too when it exists there, takes a
+    redirect, or is an operand of a plain write verb (`rm -rf heldout`, `> notes`, `touch new.js`).
+    A string match, not a shell parser: Tier 2, never isolation."""
     try:
         lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
         tokens = command.split()
-    out = []
+    out, redirected, operand = [], False, False
     for token in tokens:
+        if token in ("&&", "||", ";", "|", "&"):
+            operand = False
         for part in token.split("="):
-            if part not in SAFE and ("/" in part or part.startswith((".", "~"))):
+            if not part or part in SAFE or "://" in part:  # a URL is not a path
+                continue
+            bare = base and (redirected or (operand and not part.startswith("-")) or os.path.lexists(os.path.join(base, part)))
+            if "/" in part or part.startswith((".", "~")) or bare:
                 out.append(part)
+        redirected = token in (">", ">>")
+        operand = operand or token in _OPERAND_VERBS
     return out
 
 
