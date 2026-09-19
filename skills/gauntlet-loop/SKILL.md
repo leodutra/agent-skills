@@ -1,154 +1,78 @@
 ---
 name: gauntlet-loop
-description: Turns any goal into one short, paste-ready "gauntlet loop" prompt, or runs the loop as lead when asked - set a concrete, fetchable bar (a real product, piece, repo or dataset), split the work into small judgeable pieces, run a builder and a separate blind critic on each, compare the real artifact against the bar with labels stripped, and loop until ours wins. Works for code, writing, UI, research, data analysis, prompts and detection rules. Triggers on "/gauntlet-loop", "gauntlet loop", "gauntlet this", "make a gauntlet prompt", "loop until it beats X", "builder critic loop", "run the gauntlet". Security vulnerability hunting uses the separate security-vuln-gauntlet skill.
+description: Writes one short paste-ready "gauntlet loop" prompt for any goal, or runs the loop as lead - builders and fresh blind critics against a frozen real reference until ours wins twice.
+  Triggers - "/gauntlet-loop", "gauntlet loop", "gauntlet this", "make a gauntlet prompt", "loop until it beats X", "builder critic loop", "run the gauntlet".
 ---
 
 # Gauntlet Loop
 
-The user gives a goal. You give back ONE short prompt they can paste into a fresh agent session. You are not doing the work; you are writing the prompt that makes another agent grind on the work until it beats a real reference. That is write mode, the default.
-
-Run mode - you are that agent - starts when the user says run it, asks you to run a gauntlet loop on a goal, pastes a gauntlet prompt at you, or types `/goal` or `/loop` in front of one. Skip to Run mode at the end.
+The user gives a goal; you give back ONE short prompt to paste into a fresh agent session, which grinds until the work beats a real reference. Run mode (they say run it, or paste a gauntlet prompt at you): read `references/running-the-loop.md`, nothing here. Rationale, bar shapes, other harnesses: `references/what-breaks.md`.
 
 ## Flow
 
-1. **Read the goal.** One-line restatement in your head, not on screen.
-2. **Set the bar.** Read the `references/domains/` file that matches the work, if one does; its "Bars that work" entries, each with a measurable half, are the shapes to pattern candidates on. Test a bar the user supplied against the three tests below, fetchable with the tools this session actually has; if it passes, use it. If it fails one, say which test and offer 2 or 3 replacements; if they supplied none, offer 2 or 3 candidates, one line each. In both of those cases stop and wait for their pick before writing anything.
-3. **Write the prompt.** One block, paste-ready, no preamble, no headings inside it, no narration after it.
-4. **Say how to run it.** One flat line under the prompt: "Paste it as is, here or in a fresh session, with `/effort ultracode` set so builders and critics get the effort. The session needs auto mode, or the first permission prompt stalls it." Not a question.
+1. **Read the goal**, or the `spec.md` or `intent.md` it names.
+2. **Set the bar.** A supplied bar that passes the three tests below is the bar. If it fails one, say which and offer 2 or 3 replacements; none supplied, offer 2 or 3 candidates, one line each. When offering, ask once for a budget (invocations, hours), then stop and wait for the pick.
+3. **Write the prompt**: one fenced `text` block starting with `/goal` (unfenced, a client can swallow that word); nothing after it but step 4.
+4. **One flat line under it**: "Paste it as is with `/effort xhigh`, in auto mode or with the skill's allowlist. Its hooks enforce the rules only if checked in before the run (`install/claude_code.py <repo>`)."
 
-## The bar is the whole trick
+Refuse by name: the name in bold first, why in a sentence, then the offer.
 
-Everything else in a gauntlet loop is scaffolding. The loop only produces quality if the thing it compares against is real.
+- **Manufactured bar.** A second build from the same spec inherits its blind spots; a held-out test at round zero finds what it would have found.
+- **Suite alone.** Tests with no implementation beside them: a floor, never B.
+- After either, offer **per-piece referents**, in those words: each main piece gets a named, fetchable real thing of its kind; one with no match anywhere is judged champion against challenger beside the nearest real referent. Never a suite, expected outputs or a second build as B.
+- **Not a gauntlet.** No referent exists for any piece. Say what a loop would need; write no prompt.
+- **Too small.** One piece, no measurable half, no taste dimension (a rename, a one-line fix): offer to just do it.
 
-A bar has to pass three tests:
+## The bar
 
-- **Named.** A specific thing, not a category. "Stripe's pricing page" works. "Award-winning SaaS sites" does not.
-- **Fetchable.** The lead can actually get it and freeze a copy - screenshot the live page, save the published piece, clone the repo at a commit, download the dataset, capture the footage. If it cannot be obtained, the comparison will be hallucinated.
-- **Comparable.** Both can sit side by side as A and B and a judge who does not know which is which can pick one. If you cannot imagine that pair, it is not a bar.
+A bar is **named** (a specific thing, not a category), **fetchable** (the lead can freeze a copy with the tools it has) and **comparable** (it and ours can sit side by side as A and B before a judge who does not know which is which). Prefer the hardest bar the agent can reach; between two, the less iconic. Out of reach, the run ends on its ceiling: offer that only when the user wants the pull. A measurable half (load time, pass rate, word count) goes in the bar paragraph as a floor: a preference gets averaged into the A/B; a floor gates it.
 
-Bars by goal type:
+## Template
 
-| Goal | Bar that works |
-| --- | --- |
-| Website, app, UI | The live site of a specific best-in-class product, screenshotted at the same viewport |
-| Game, 3D, visual | Real footage or screenshots from a named shipped title, same resolution |
-| Writing | A specific published piece by a named author or publication, same length and format |
-| Code, tooling | A named repo's implementation at a pinned commit, plus a test suite the builder did not write as the floor |
-| Research, analysis | A named analyst report or a paper's methods section; every citation must open and say what is claimed |
-| Data, metrics | A known result or standard method, recomputed independently from raw |
-| Prompts, agents, skills | The current prompt as baseline on a frozen eval set with a held-out split |
-| Detection rule | The MITRE ATT&CK technique's attack data, plus a benign log set it must stay silent on |
-| Deck, doc, deliverable | A real artifact from a firm known for it, same quality and approximate page count |
-
-Prefer the hardest bar the agent can genuinely reach; between two equally hard, the less iconic one, since a critic can recognise a famous page from its pixels. Too easy and the loop exits on round one. Out of reach and the only exit left is the user stopping it - offer one of those only when the user wants the pull, say so, and give the first line a budget or time clause so the run has an end.
-
-Give the goal its measurable half where one exists - load time, token cost, benchmark score, pass rate, word count - and put it inside the bar sentence as a floor, not alongside as a preference. A number stated as a preference gets averaged into the A/B; a number stated as a floor gates it. Taste plus a number beats taste alone.
-
-If no reference comes to mind, the first job of the loop is to find one. Never let the agent start building against a vague target.
-
-## Prompt template
-
-Adapt the wording every time. Fill the brackets, keep it short, keep the first and last lines.
+Fill the slots and change nothing else: no added sentence, no list of pieces, nothing on what the critic should look for.
 
 ```text
-/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the assembled whole. Until then, run a gauntlet loop:
+/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped on a different model, pick ours on every piece and on [WHOLE], or [N] invocations or [T] hours are spent. Until then, run a gauntlet loop:
 
-Build [GOAL].
+[GOAL]
 
-The bar is [BAR]. Fetch the real thing first and freeze a copy; judge against that copy, never a description of it. [It also has to MEASURABLE HALF.]
+[BAR]
 
-Split it into the smallest pieces that can be judged alone. Each piece gets a builder and, every round, a fresh critic. You fetch the bar; the critic never does. Hand it ours and the bar as A and B in random order; it hears the goal, never the bar's name, which is which, or who made either. It opens both, writes what it sees in each, then picks one and names the biggest thing the loser lacks. No ties; a hedge counts as a loss. The builder closes that gap; repeat.
+Split it into the coarsest pieces that can be judged alone; each gets a [MAKER] and a fresh critic every round. [FETCH] The critic gets ours and the bar as A and B in random order and hears the goal, never the bar's name, which is which, or who made either. It opens both, writes what it sees in each, picks one and names the biggest thing the loser lacks. No ties; a hedge is a loss. The [MAKER] closes that gap; repeat.
 
-If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the assembled whole against the bar the same way.
+If the same gap comes back, split that piece, then change [MAKER]s, then fan out variants; never mark it done. When every piece wins, judge the whole the same way.
 
-Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
+Update a progress page after every verdict: piece, round, winner, gap. End every turn with pieces confirmed and what is spent. Questions go there, not to me. Only I end this earlier.
 
 Fan out subagents.
 ```
 
-Rules for what you fill in:
+- `[WHOLE]`: "the assembled whole", or its noun. `[MAKER]`: builder, or writer. `[N]`, `[T]`: the budget named, else 150 and 24; no other budget clause.
+- `[GOAL]`: what perfect looks like, never how to build it. From a spec file: "Build what <path> specifies." and nothing more. GOAL and BAR together: 70 words at most.
+- `[BAR]`: one paragraph: "The bar is X."; how the lead freezes it; "judge against the copy, never a description."; one measurable half ("It must ..."; from a spec, instead: "Its acceptance criteria are floors."); then each "never" or "must not" sentence of the goal or spec, copied whole and unmerged, up to three. A code goal's paragraph always ends: "Write the required tests and a held-out set before any builder starts; no builder edits them." A prompt goal's: "Freeze the eval set with a held-out split first." Per-piece bars: name each referent, and the piece that runs champion against challenger.
+- `[FETCH]`: who fetches, renders or runs, one sentence. Default: "Only you fetch the bar."
 
-- Bake the bar in as a concrete, fetchable thing. URL, product name, repo, title.
-- Say how the lead freezes it, in the words of the goal: screenshots at desktop and mobile, three actual posts, the repo at a pinned commit, the two datasets.
-- Add a budget or time clause as a second exit at the end of the first line - "...or the budget of [X] is spent" - only if the user named one, and always when the bar is out of reach. No default cap otherwise.
-- Add tool names only if the goal needs them (image or video generation, a browser, a deploy target).
-- For code, add one line: you write the required tests and a held-out set before any builder starts, and no builder edits them. For prompts: the eval set is frozen with a held-out split. Other goals carry their floor inside the bar sentence.
-- The first line is the exit and the harness reads it; the last line is the fan-out. Only the noun for the whole and a user-named budget ever change them.
-- Everything else stays out. No architecture, no file layout, no list of pieces, no round count, no stack choice unless the user demanded it. The agent decides those, and it decides better than a spec written before the work started.
+No architecture, file layout, round count, stack or unneeded tool names. 270 words at most; the template is about 200. Count before you answer.
 
-## Length and voice
+## Examples
 
-Short. Around 230 words; a filled prompt runs to 270 at most. If it needs a heading to stay readable, it is too long.
+**Visual.** No budget.
 
-Plain sentences. No bullet lists inside the prompt. It should read like someone telling an agent what perfect looks like and refusing to accept less. Procedure beats adjectives: "no ties; a hedge counts as a loss" does what "be harsh" only asks for.
+- WHOLE: `the whole page` N: `150` T: `24` MAKER: `builder`
+- GOAL: `Build a landing page for a running brand: athletic, green and dark, alive.`
+- BAR: `The bar is Nike's current running campaign page. Freeze screenshots of it at desktop and mobile first; judge against the copy, never a description. It must score 90 on mobile Lighthouse.`
+- FETCH: `Only you render the pages, both at the same viewport.`
 
-## Portability
+**Writing.** A budget.
 
-`/goal`, `/loop` and `ultracode` are Claude Code features; what follows is from the Claude Code docs as of August 2026.
+- WHOLE: `the whole explainer` N: `60` T: `8` MAKER: `writer`
+- GOAL: `Write a 2000-word explainer on vector databases for smart readers who are not engineers.`
+- BAR: `The bar is Julia Evans' explainers on jvns.ca. Freeze three of her posts first; judge against the copy, never a description of her style. It must stay within 2000 words.`
+- FETCH: `Only you pick, per piece, a passage of hers doing the same job at the same length, byline stripped.`
 
-`/goal` has to be the first token; the whole message after it is the condition, up to 4,000 characters. After every turn a small fast model reads the transcript and, unless it finds the condition met, starts the lead's next turn; a turn that ends with subagents still running is not judged until they report. The evaluator cannot run commands or open files, so the count of confirmed pieces the lead ends every turn with is what it reads. It survives a lead that forgets to continue, and it waits for nothing between turns. The user ends the run with `/goal clear`; if the evaluator ever clears the goal as impossible, `/goal` again with the same text and the progress page resumes the run. `/goal` is a hook, so it is unavailable where hooks are disabled.
+**Bespoke.** Per-piece bars, one champion-challenger piece, a human gate, a budget.
 
-Effort is a session setting the user picks before pasting, and it reaches every builder and critic. The default, `high`, shortchanges exactly the two agents that buy quality: `/effort ultracode` is the setting for a gauntlet - `xhigh` for the session, no 20-subagent cap, no workflow approval prompt in auto mode, Shumer's own recommendation - with `/effort xhigh` the fallback where ultracode is unavailable. The word `ultracode` typed inside a prompt does something else: it turns that one turn into a workflow script and changes no effort, and a script is the wrong tool for round zero, so the prompt does not carry it.
-
-Where `/goal` is unavailable, make `/loop` the first token instead, same body: the prompt re-fires as a new turn at a pace the agent picks, one minute or more apart, with one 20-minute fallback if it forgets to reschedule and a seven-day expiry.
-
-For any other agent, replace the first line with "Keep looping until two fresh critics in a row, the second with A and B swapped, pick ours on every piece and the whole. Run a gauntlet loop:" and the last line with "Run the builders and critics as parallel subagents with their own context." The structure carries over unchanged.
-
-## Two filled examples
-
-**Visual goal.** User: "landing page for my running brand, athletic, green and dark, has to feel alive."
-
-Bars offered: A) Nike's current running campaign page B) On Running's homepage C) Gymshark's product landing page. User picks A.
-
-```text
-/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the whole page. Until then, run a gauntlet loop:
-
-Build a landing page for a running brand. Athletic, green and dark, alive, for a young audience.
-
-The bar is Nike's current running campaign page. Freeze screenshots and scroll recordings of it at desktop and mobile first; judge against those, never a description of them. It also has to score 90 on Lighthouse performance on mobile.
-
-Split it into the smallest pieces that can be judged alone. Each piece gets a builder and, every round, a fresh critic. You render both pages at the same viewport; the critic never opens Nike's site. Hand it ours and Nike's as A and B in random order; it hears the goal, never the brand, which is which, or who made either. It looks at both, writes what it sees in each, then picks one and names the biggest thing the loser lacks. No ties; a hedge counts as a loss. The builder closes that gap; repeat.
-
-If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the whole page against Nike's the same way.
-
-Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
-
-Fan out subagents.
-```
-
-**Non-visual goal.** User: "a 2000-word explainer on vector databases for non-engineers."
-
-Bars offered: A) a specific Stripe engineering blog explainer B) Julia Evans' explainers on jvns.ca, three posts frozen C) the Wikipedia article plus a comprehension test. User picks B.
-
-```text
-/goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped, pick ours on every piece and on the whole explainer. Until then, run a gauntlet loop:
-
-Write a 2000-word explainer on vector databases for readers who are smart but not engineers.
-
-The bar is Julia Evans' explainers on jvns.ca. Freeze three of her actual posts first; judge against those, never a description of her style. Stay within 2000 words.
-
-Split it into the smallest pieces that can be judged alone. Each piece gets a writer and, every round, a fresh critic. For each piece pick a passage of hers doing the same job at about the same length, bylines stripped. Hand it ours and hers as A and B in random order; it hears the goal, never her name, which is which, or who wrote either. It reads both, writes what a non-engineer would take from each, then picks the one they would understand faster and names the biggest thing the loser lacks. No ties; a hedge counts as a loss. The writer closes that gap; repeat.
-
-If the same gap comes back, split that piece, then change writers, then fan out variants; never mark it done. When every piece wins, judge the whole explainer against a whole post of hers the same way.
-
-Update a progress page after every verdict: piece, round, winner, gap. End every turn with how many pieces are confirmed. Questions go there, not to me. Only I end this earlier.
-
-Fan out subagents.
-```
-
-## What breaks a gauntlet loop
-
-- **A vague bar.** The critic invents a comparison and approves everything. Most common failure by far.
-- **The critic hearing the bar's name.** A critic told the reference is Nike finds the swoosh; told it is Julia Evans, finds the voice. It then judges the name, not the work. The lead fetches and freezes; the critic gets A, B and the goal with the name removed, nothing that says which is which.
-- **The builder judging its own work.** The critic must be a separate agent with fresh context, and a new one every round - a reused critic conforms to its own earlier answer and, having seen which side changed, knows which side is ours. It never sees the builder's notes or how many rounds have run.
-- **A soft critic.** Give it a binary job: which one is better, A or B. Scores out of 10 have no anchor, so a threshold gets crossed by noise; a list of ten gaps gets ten shallow fixes. Make it write what it sees before it picks, or it picks first and writes observations to match.
-- **Labels the critic can decode.** Ours always handed over second, a file called hero-v4-final, a comment mentioning round three, a subagent named or labelled after a piece, round or role - every subagent sees the session's roster of named agents. Random order, clean names, no trace of the loop inside the artifact.
-- **The builder editing the bar.** Tests, eval cases and criteria are fixed before building; a green test the builder rewrote is not a green test.
-- **Named exit after N rounds.** Also "no improvement in two rounds, stop". The exit is winning the comparison, confirmed by a second critic with the order swapped, or the user stopping the run. A repeated gap is a reason to split further or change builders, never to stop.
-- **Over-specifying.** Every extra instruction is one fewer decision the agent makes with its own judgment. Minimal wins.
-
-## Run mode
-
-You are LEAD. Read `references/running-the-loop.md`, then the one file in `references/domains/` that matches the work. A goal that arrived without a bar gets Flow step 2 first. You fetch and freeze the bar, split the goal, dispatch builders and critics as fresh subagents, translate each verdict and route the gap back, and merge. You never build a piece and never judge one. The loop: if the user typed `/goal`, the harness restarts you after every turn until its evaluator agrees the exit holds, so end every turn with the count of confirmed pieces; otherwise you are the loop - invoke the loop skill with no interval and reschedule at the end of every turn until the exit holds. If this session cannot spawn subagents, say so and do one self-review pass; do not call it a gauntlet.
-
-Method: Matt Shumer, ["How to Run a Gauntlet Loop"](https://somethingbig.ai/gauntlet-loop). This skill is an independent adaptation.
+- WHOLE: `the whole service` N: `80` T: `12` MAKER: `builder`
+- GOAL: `Rebuild the claims-routing service in spec.md.`
+- BAR: `The bars are per piece: the router against Drools, the audit log against Stripe's events API; reconciliation has no counterpart, so judge it champion against challenger beside Drools. Freeze each; judge against the copy, never a description. Never touch production data; migrations park for me. Write the required tests and a held-out set before any builder starts; no builder edits them.`
+- FETCH: `Only you fetch the bars.`

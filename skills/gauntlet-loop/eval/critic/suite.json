@@ -1,0 +1,4 @@
+{
+  "model": "claude-sonnet-5",
+  "note": "pinned so a harness or default-model change never reads as a critic-prompt regression; GAUNTLET_EVAL_CRITIC_MODEL overrides it. Haiku was tried first: its picks were right, but it writes working notes before the verdict block in about a third of runs, which the controller rightly discards"
+}

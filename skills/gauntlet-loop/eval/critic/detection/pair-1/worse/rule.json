@@ -1,0 +1,6 @@
+{
+  "all": [
+    "schtasks"
+  ],
+  "ignore_case": true
+}

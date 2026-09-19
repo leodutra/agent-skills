@@ -34,7 +34,7 @@ HELD-OUT set: a benign slice and two Atomic variants the BUILDER never sees.
 
 Evidence: command, count, quoted line, evasion variant.
 
-LEAD hands over two rules in one format and field mapping, metadata (`title`, `id`, `author`, `references`) stripped, as `a.yml` and `b.yml`, and runs both itself on the same dataset copies; comments stripped from both, logic never cut. Sigma is the working format; `sigma convert` emits the same logic for Splunk SPL, Sentinel KQL and CrowdStrike.
+Pair preparation: at round zero `pair --prepare` takes the reference rule in the working format and field mapping, metadata (`title`, `id`, `author`, `references`) and comments stripped, logic never cut, with the LEAD's run of it on the frozen dataset copies as its floor outputs. Every round ours is stripped the same way, run by the LEAD on the same copies, and `pair` puts it beside the reference under seeded labels. Sigma is the working format; `sigma convert` emits the same logic for Splunk SPL, Sentinel KQL and CrowdStrike.
 
 ## How the LEAD splits this work
 

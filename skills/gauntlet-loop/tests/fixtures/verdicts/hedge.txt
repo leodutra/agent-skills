@@ -1,0 +1,7 @@
+PAIR: {pair}
+EVIDENCE:
+- A: `npm test` in a/ - 6 passed
+- B: `npm test` in b/ - 6 passed
+WINNER: Both have merits; A slightly, but it is close to a tie
+GAP: nothing decisive.
+FLOOR: pass / pass

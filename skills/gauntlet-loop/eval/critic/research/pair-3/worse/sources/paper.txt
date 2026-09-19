@@ -1,0 +1,1 @@
+Case study of one large company's review tool, 2018. About 15% of review comments concerned defects; most concerned maintainability. Reviewers said the main value was knowledge sharing. The authors caution that one company's practice may not generalise.

@@ -1,0 +1,7 @@
+{
+  "all": [
+    "\\bnet(\\.exe)?\\s+user\\s",
+    "/add\\b"
+  ],
+  "ignore_case": true
+}

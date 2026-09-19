@@ -1,0 +1,7 @@
+PAIR: {pair}
+EVIDENCE:
+- A feels more complete and more polished overall
+- B seems thinner and less careful
+WINNER: A
+GAP: B is less polished.
+FLOOR: pass on both

@@ -1,0 +1,1 @@
+For two years we shipped every Thursday at 4 pm, and for two years Thursday at 5 pm was when the pages started. Last spring we stopped batching a week of changes into one afternoon, and the pager has been quieter ever since.

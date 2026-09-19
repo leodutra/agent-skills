@@ -16,7 +16,7 @@ Reading floors, CRITIC runs on both sides: each cited source says what the sente
 
 It reads both excerpts in full. It strikes every word that can go without changing meaning and counts struck over total per side. It names the line where the main point lands. It opens every source named in either excerpt and quotes the supporting line, or writes "not found". Evidence is quoted lines and counts - never "feels tighter".
 
-Pair preparation: the LEAD takes the same section from each (opening, one step, close), picks a reference passage doing the same job at about the same length - never cuts either side - strips titles, author names, URLs, dates and filenames, pastes both as plain text under coin-flipped labels, and puts both sides' sources in one sources.txt.
+Pair preparation: at round zero the LEAD picks, for each piece (opening, one step, close), a reference passage doing the same job at about the same length - never cuts either side - strips titles, author names, URLs, dates and filenames, and hands it to `pair --prepare` as plain text with its sources in sources.txt. Every round `pair` copies ours beside it under seeded labels, stripped the same way, its sources added to the same file.
 
 ## How the LEAD splits this work
 

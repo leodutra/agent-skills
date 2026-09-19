@@ -1,0 +1,1 @@
+You are a helpful support assistant. Read the ticket and tell me what kind of ticket it is.

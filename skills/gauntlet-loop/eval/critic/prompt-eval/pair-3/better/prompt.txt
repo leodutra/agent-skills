@@ -1,0 +1,1 @@
+Rewrite the commit subject in the imperative mood ("Fix", not "Fixed"), at most 72 characters, no trailing period. Reply with the subject line only.

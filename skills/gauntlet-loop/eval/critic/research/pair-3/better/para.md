@@ -1,0 +1,1 @@
+In one large company's review data, only about 15% of comments concerned defects; most were about maintainability, and reviewers themselves named knowledge sharing as the main value [1]. Review catches some bugs, then, but that is not mainly what it is for, at least there: the authors warn that one company may not generalise [1].

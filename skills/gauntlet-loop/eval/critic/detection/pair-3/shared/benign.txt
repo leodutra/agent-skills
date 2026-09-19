@@ -1,0 +1,4 @@
+net user
+net user alice
+net use Z: \\files\share
+net localgroup administrators

@@ -1,0 +1,40 @@
+{
+  "recorded": "2026-09-18",
+  "harness": "Claude Code 2.1.274",
+  "rule": "Each number is the lowest of three consecutive runs on the pinned models (11/12, and 33/42), stored a hair under the fraction so an equal run passes. A run below it blocks the merge; a run above it changes nothing. Re-record only after a deliberate change, from three new runs.",
+  "write_mode": {
+    "model": "claude-sonnet-5",
+    "rate": 0.9166,
+    "runs": [
+      "11/12",
+      "11/12",
+      "12/12"
+    ],
+    "cases": 12,
+    "passed": 11,
+    "of": 12
+  },
+  "critic": {
+    "model": "claude-sonnet-5",
+    "pick_rate": 1.0,
+    "shape_rate": 0.7856,
+    "runs": [
+      {
+        "picks": "21/21",
+        "shape": "33/42"
+      },
+      {
+        "picks": "21/21",
+        "shape": "33/42"
+      },
+      {
+        "picks": "21/21",
+        "shape": "35/42"
+      }
+    ],
+    "pairs": 21,
+    "verdicts_per_run": 42,
+    "shaped": 33,
+    "of": 42
+  }
+}

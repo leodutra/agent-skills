@@ -1,0 +1,5 @@
+PAIR: {pair}
+EVIDENCE:
+- A: `node run.mjs a retry` -> retries three times with backoff
+- B: `node run.mjs b retry` -> exits 1 on the first dropped connection
+GAP: B has no retry on a dropped connection; A retries three times, seen by running retry on each side.

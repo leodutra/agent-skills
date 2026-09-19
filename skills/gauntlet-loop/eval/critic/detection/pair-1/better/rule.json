@@ -1,0 +1,7 @@
+{
+  "all": [
+    "schtasks(\\.exe)?\\s",
+    "/create\\b"
+  ],
+  "ignore_case": true
+}

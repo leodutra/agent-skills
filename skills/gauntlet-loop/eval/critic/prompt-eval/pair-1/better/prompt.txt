@@ -1,0 +1,1 @@
+Extract the invoice total. Reply with JSON only: {"total": number, "currency": "ISO 4217 code"}. Use the amount labelled as the total due, including tax. If two currencies appear, use the one on the total line. If no total is present, reply {"total": null, "currency": null}.

@@ -1,0 +1,6 @@
+{
+  "all": [
+    "^net(\\.exe)?\\s+user\\s+\\S+\\s+\\S+.*\\s/add(\\s|$)"
+  ],
+  "ignore_case": true
+}

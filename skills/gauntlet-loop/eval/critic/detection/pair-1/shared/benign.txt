@@ -1,0 +1,4 @@
+schtasks /query /fo list
+schtasks.exe /query /tn "\Microsoft\Windows\Defrag\ScheduledDefrag"
+schtasks /run /tn "Backup nightly"
+notepad.exe C:\notes\schtasks-howto.txt

@@ -1,0 +1,1847 @@
+#!/usr/bin/env python3
+"""gauntletctl: the gauntlet loop's deterministic controller. One file, stdlib only.
+
+Exit codes: 0 done, 2 rejected transition or invalid input, 3 refused precondition.
+Sections: store (log, fold, transaction), machine (apply), freeze (freeze, freeze-verify, scan, detect), init, cli.
+
+The event log is the truth. State is the fold of the log through one pure function, apply(); state.json and
+workbench.md are caches written after every transaction. Nothing rewrites the log.
+"""
+import argparse
+import calendar
+import contextlib
+import copy
+import fcntl
+import fnmatch
+import hashlib
+import hmac
+import json
+import math
+import os
+import re
+import secrets
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+
+BLOCK_EVENTS = ("BLIND_BLOCK", "BOUNDARY_BLOCK")
+
+
+# --- store: one locked append is the only way into the log -------------------------------------
+
+class Rejected(Exception):
+    """A transition or input the rules do not allow. Exit 2."""
+    code = 2
+
+
+class Spent(Exception):
+    """A budget ran dry and the controller recorded what follows. Unlike a rejection, the transaction is kept. Exit 3."""
+    code = 3
+
+
+class Refused(Rejected):
+    """A precondition that does not hold (no isolation, no key, a secret found). Exit 3."""
+    code = 3
+
+
+def root():
+    return os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+
+
+def gdir(*parts):
+    return os.path.join(root(), ".gauntlet", *parts)
+
+
+def now():
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def policy():
+    for path in (os.path.join(HERE, "policy", "v1.json"), os.path.join(HERE, "..", "policy", "v1.json")):
+        if os.path.exists(path):
+            with open(path) as f:
+                return json.load(f)
+    raise Refused("policy/v1.json is not beside the controller")
+
+
+# Every pattern list the controller uses is the pinned policy's. It has no parameter for critic count, critic strength,
+# confirmation, blindness, or what a win is.
+POLICY = policy()
+STRIP, SECRETS = tuple(POLICY["strip"]), POLICY["secrets"]
+EXCLUDE, CREDENTIAL_FILES = tuple(POLICY["pair_exclude"]), tuple(POLICY["credential_files"])
+LADDER, FLOOR_TREES = tuple(POLICY["ladder"]), tuple(POLICY["floor_trees"])
+
+
+def read_events():
+    path = gdir("events.jsonl")
+    if not os.path.exists(path):
+        return []
+    with open(path) as f:
+        return [json.loads(line) for line in f if line.strip()]
+
+
+def fold(events):
+    """State is a pure function of the log. Events an ATTEST_CONFLICT voided are skipped from then on."""
+    voided = {seq for e in events if e["event"] == "ATTEST_CONFLICT" for seq in e.get("voids", [])}
+    state = new_state()
+    for e in events:
+        if e["seq"] not in voided:
+            apply(state, e)
+        elif e.get("cost"):
+            debit(state, e.get("piece"), e["cost"])  # voiding undoes a move, never a spend
+    state["voided"] = sorted(voided)
+    return state
+
+
+class Tx:
+    """One locked read-decide-append. emit() applies an event and whatever the rules derive from it."""
+
+    def __init__(self, events):
+        self.events, self.state, self.new = events, fold(events), []
+        if self.state["run"] and self.state["run"]["policy"] != POLICY["version"]:
+            raise Refused(f"this run pinned policy {self.state['run']['policy']} and the controller now carries "
+                          f"{POLICY['version']}: the policy version is a human's to change, between runs")
+
+    def emit(self, event, kind, source, **fields):
+        line = {"ts": now(), "seq": len(self.events) + len(self.new) + 1, "event": event, "kind": kind,
+                "source": source, **{k: v for k, v in fields.items() if v is not None}}
+        apply(self.state, line)  # raises before anything is written
+        self.new.append(line)
+        if event == "ATTEST_CONFLICT":
+            self.state = fold(self.events + self.new)  # voided events leave the fold from here on
+        for name, extra in derive(self.state, line):
+            self.emit(name, "fact", "controller", from_seq=line["seq"], **extra)
+        return line
+
+
+@contextlib.contextmanager
+def transaction():
+    os.makedirs(gdir(), exist_ok=True)
+    with open(gdir(".lock"), "w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        # ponytail: the whole log is folded on every command, O(n); cache by seq if a run passes ~100k events
+        tx = Tx(read_events())
+        spent = None
+        try:
+            yield tx
+        except Spent as err:
+            spent = err
+        if tx.new:
+            with open(gdir("events.jsonl"), "a") as log:
+                log.writelines(json.dumps(line) + "\n" for line in tx.new)
+            with open(gdir("state.json"), "w") as f:
+                json.dump(tx.state, f, indent=1)
+            if tx.state["run"]:
+                with open(gdir("workbench.md"), "w") as f:
+                    f.write(render_workbench(tx.state))
+        if spent:
+            raise spent
+
+
+def load():
+    return fold(read_events())
+
+
+def expire_leases():
+    """status calls this: the clock is a fact only the controller observes."""
+    with transaction() as tx:
+        late = [pid for pid, p in tx.state["pieces"].items() if p["lease"] and p["lease"]["expires"] < epoch(now())
+                and p["state"] in ("ACTIVE", "AWAITING_CONFIRMATION")]
+        for pid in late:
+            tx.emit("LEASE_EXPIRED", "fact", "status", piece=pid, reason="its agent never reported back", **{"class": "execution"})
+    return late
+
+
+# --- machine: states, transitions, and the pure apply() -------------------------------------------
+
+# Judgment events: the only names `event` takes from the lead, each with the fields it must carry.
+JUDGMENTS = {
+    "SPLIT_DECIDED": ["pieces"], "REFERENT_SELECTED": ["piece", "referent"], "MODE_SELECTED": ["piece", "mode"],
+    "VARIANT_APPROACHES_SELECTED": ["piece", "approaches"], "GAP_SAME_AS_LAST": ["piece"],
+    "GAP_ROUTED": ["piece", "class"], "NOT_REPRODUCED_ACCEPTED": ["piece", "rerun"],
+    "PARK_REQUESTED": ["piece", "reason", "class"], "BLOCK_REQUESTED": ["piece", "reason"],
+    "BLOCKER_CLEARED": ["piece", "note"], "SHARED_EDGE_RECORDED": ["pieces"], "SCOPE_FAILURE_FILED": ["note"],
+}
+# Fact events: produced only by the command or hook that observed them, or derived by the rules below.
+FACTS = {"RUN_STARTED", "REFERENCE_FROZEN", "REFERENCE_VERIFIED", "PIECE_OPENED", "FLOOR_ADDED", "FLOOR_AMENDED",
+         "FLOOR_PASS", "FLOOR_FAIL", "CRITIC_DISPATCHED", "AGENT_REGISTERED", "BUILDER_DONE", "SMOOTHER_DONE",
+         "CRITIC_RESULT", "ATTEST_CONFLICT", "CRITIC_WIN", "CRITIC_LOSS", "CONFIRMATION_WIN", "CONFIRMATION_LOSS",
+         "VERDICT_INVALID", "GAP_ONLY_RESULT", "CHAMPION_REPLACED", "CONVERGED", "RECHECK_LOSS", "GAP_REPEATED",
+         "ALLOCATION_SPENT", "BUDGET_EXHAUSTED", "LEASE_EXPIRED", "RERUN_OBSERVED", "SCAN_FAILED", "PLAN_COMMITTED",
+         "ARTIFACTS_COMMITTED", "PR_OPENED", "PR_MERGED", "PIECE_PARKED", "PIECE_BLOCKED", "WAVE_COMPLETE",
+         "HUMAN_RESUMED", "LEAD_TURN", "RUN_ENDED", *BLOCK_EVENTS}
+CLASSES = ("artifact", "evaluation", "execution", "scope")
+CC = "champion-challenger"
+
+# (state, event) -> state. Anything absent is rejected. None is "no such piece yet".
+MOVES = {
+    (None, "PIECE_OPENED"): "ACTIVE",
+    **{("BLOCKED", e): "BLOCKED" for e in ("RERUN_OBSERVED",)},
+    **{("ACTIVE", e): "ACTIVE" for e in ("BUILDER_DONE", "SMOOTHER_DONE", "FLOOR_PASS", "FLOOR_FAIL", "CRITIC_DISPATCHED",
+                                         "CRITIC_RESULT", "CRITIC_LOSS", "VERDICT_INVALID", "GAP_REPEATED",
+                                         "ALLOCATION_SPENT", "GAP_ROUTED", "GAP_SAME_AS_LAST", "NOT_REPRODUCED_ACCEPTED",
+                                         "VARIANT_APPROACHES_SELECTED", "RERUN_OBSERVED", "ATTEST_CONFLICT")},
+    ("ACTIVE", "CRITIC_WIN"): "AWAITING_CONFIRMATION",
+    ("ACTIVE", "GAP_ONLY_RESULT"): "ACTIVE",  # `GAP: none` from the first reader moves it on; see apply
+    **{("AWAITING_CONFIRMATION", e): "AWAITING_CONFIRMATION" for e in ("CRITIC_DISPATCHED", "CRITIC_RESULT", "VERDICT_INVALID", "RERUN_OBSERVED")},
+    ("AWAITING_CONFIRMATION", "CONFIRMATION_WIN"): "CONFIRMED",
+    ("AWAITING_CONFIRMATION", "CONFIRMATION_LOSS"): "ACTIVE",
+    ("AWAITING_CONFIRMATION", "CHAMPION_REPLACED"): "ACTIVE",
+    ("AWAITING_CONFIRMATION", "GAP_ONLY_RESULT"): "ACTIVE",
+    ("AWAITING_CONFIRMATION", "CONVERGED"): "CONFIRMED",
+    ("AWAITING_CONFIRMATION", "ATTEST_CONFLICT"): "ACTIVE",
+    ("AWAITING_CONFIRMATION", "ALLOCATION_SPENT"): "AWAITING_CONFIRMATION",
+    ("CONFIRMED", "ATTEST_CONFLICT"): "ACTIVE",
+    ("INTEGRATED", "ATTEST_CONFLICT"): "ACTIVE",
+    ("CONFIRMED", "FLOOR_PASS"): "CONFIRMED",  # a merge, or a floor that was amended
+    ("CONFIRMED", "FLOOR_FAIL"): "ACTIVE",
+    ("CONFIRMED", "WAVE_COMPLETE"): "INTEGRATED",
+    **{("INTEGRATED", e): "INTEGRATED" for e in ("CRITIC_DISPATCHED", "CRITIC_RESULT", "CRITIC_WIN", "VERDICT_INVALID", "FLOOR_PASS")},
+    ("INTEGRATED", "CRITIC_LOSS"): "INTEGRATED",  # derives RECHECK_LOSS
+    ("INTEGRATED", "RECHECK_LOSS"): "ACTIVE",
+    ("INTEGRATED", "FLOOR_FAIL"): "ACTIVE",
+    ("INTEGRATED", "PR_MERGED"): "PROMOTED",
+    **{(st, e): "BLOCKED" for st in ("ACTIVE", "AWAITING_CONFIRMATION") for e in ("PIECE_BLOCKED", "LEASE_EXPIRED")},
+    **{(st, "BLOCK_REQUESTED"): st for st in ("ACTIVE", "AWAITING_CONFIRMATION")},
+    ("BLOCKED", "BLOCKER_CLEARED"): "ACTIVE",
+    **{(st, "PARK_REQUESTED"): st for st in ("ACTIVE", "BLOCKED")},
+    **{(st, "PIECE_PARKED"): "PARKED" for st in ("ACTIVE", "BLOCKED", "AWAITING_CONFIRMATION")},
+    ("PARKED", "HUMAN_RESUMED"): "ACTIVE",
+}
+
+
+WORK = ("PIECE_OPENED", "GAP_ROUTED", "CRITIC_DISPATCHED", "VARIANT_APPROACHES_SELECTED", "FLOOR_ADDED")
+SPENT_REASON = "its allocation and the escalation reserve are spent"
+
+
+def epoch(ts):
+    return calendar.timegm(time.strptime(ts, "%Y-%m-%dT%H:%M:%SZ"))
+
+
+def set_accounts(state):
+    """Apportion the envelope once both it and the piece count are known. Bootstrap proportions from the pinned policy."""
+    run, pol, n = state["run"], state["run"]["envelope_policy"], state["plan_pieces"]
+    if run["accounts"] or not pol or not n:
+        return
+    if not run["envelope"]:
+        run["envelope"] = {"E": math.ceil(n * pol["per_piece_invocations"] / pol["local"]),
+                           "T_hours": max(pol["hours_floor"], n * pol["hours_per_piece"])}
+    total = run["envelope"]["E"]
+    local, escalation = int(total * pol["local"]), int(total * pol["escalation"])
+    run["accounts"] = {"local": local, "escalation": escalation, "gate": total - local - escalation}
+
+
+def debit(state, pid, cost):
+    """One debit per subagent spawn. The whole pays from the gate reserve; no piece has a path to it."""
+    run, piece = state["run"], state["pieces"].get(pid)
+    if piece and piece["kind"] == "whole":
+        account = "gate"
+    elif piece and piece["spent"] + cost > piece["allocation"]:
+        account = "escalation"
+    else:
+        account = "gate" if not piece and any(p["kind"] == "whole" and p["state"] == "ACTIVE" for p in state["pieces"].values()) else "local"
+    if piece:
+        piece["spent"] += cost
+    run["spent"][account] += cost
+
+
+def afford(tx, pid, cost=1):
+    """Before a spawn is paid for: a piece out of allocation and reserve parks instead; the whole never borrows."""
+    run, piece = tx.state["run"], tx.state["pieces"].get(pid)
+    if not run["accounts"] or not piece or piece["state"] == "PARKED":
+        return True
+    left = lambda account: run["accounts"][account] - run["spent"][account]
+    if piece["kind"] == "whole":
+        if left("gate") < cost:
+            tx.emit("BUDGET_EXHAUSTED", "fact", "controller", note="the whole-gate reserve is spent")
+            return False
+    elif piece["spent"] + cost > piece["allocation"] and left("escalation") < cost:
+        tx.emit("PIECE_PARKED", "fact", "controller", piece=pid, reason=SPENT_REASON, **{"class": "execution"})
+        return False
+    return True
+
+
+def new_state():
+    return {"run": None, "readers": {}, "pieces": {}, "floors": {}, "attempts": {}, "agents": {}, "voided": [],
+            "invariants": [], "derived": [], "open_questions": [], "parked": [], "escalations": [], "gaps": [],
+            "conflicts": [], "reruns": {}, "shared_edges": [], "scope_failures": [], "plan_pieces": None, "blocks": 0,
+            "last_ts": None}
+
+
+def new_piece(e):
+    whole = e.get("piece_kind") == "whole"
+    return {"state": None, "kind": e.get("piece_kind") or "piece", "parent": e.get("parent"), "referent": e.get("referent"),
+            "mode": e.get("mode") or "reference", "worktree": e.get("worktree"), "champion": None,
+            "challenger_losses": 0, "gap_none": [], "converged": False, "allocation": e.get("allocation") or 0,
+            "spent": 0, "rung": e.get("rung") or 0, "round": 1 if whole else 0, "floor_round": None, "floor_ok": False,
+            "building": not whole, "lease": None, "last_gap": None, "last_verdict": None, "first_model": None,
+            "artifact": None, "builder": None, "variants": [], "verdicts": [], "superseded": False,
+            "needs_floors": False, "allocation_spent": False, "variant_rounds": 0}
+
+
+def derive(state, e):
+    """Fact events the rules owe after this one: [(name, fields)]. Pure."""
+    name, pid = e["event"], e.get("piece")
+    piece = state["pieces"].get(pid) if pid else None
+    run = state["run"]
+    out = []
+    if name == "CRITIC_RESULT":
+        attempt = state["attempts"][e["attempt_id"]]
+        base = {"piece": pid, "attempt_id": e["attempt_id"], "agent_type": e.get("agent_type"), "model": e.get("model"),
+                "artifact": e.get("artifact")}
+        if not e.get("valid") or e.get("agent_type") != attempt["expected_type"]:
+            reason = e.get("reason") or f"attested from {e.get('agent_type')}, expected {attempt['expected_type']}"
+            out.append(("VERDICT_INVALID", {**base, "class": "evaluation", "reason": reason}))
+        elif attempt["shape"] == "gap-only":
+            out.append(("GAP_ONLY_RESULT", {**base, "gap": e.get("gap")}))
+        elif attempt["shape"] == "pick":
+            pass  # which variant continues is recorded on the result itself; no win, no loss
+        else:
+            won = e.get("winner") == "ours"
+            kind = "CONFIRMATION" if attempt["order"] == "swapped" else "CRITIC"
+            out.append((f"{kind}_{'WIN' if won else 'LOSS'}", {**base, "gap": e.get("gap"), **({} if won else {"class": "artifact"})}))
+    elif name == "CONFIRMATION_WIN" and piece["mode"] == CC:
+        out.append(("CHAMPION_REPLACED", {"piece": pid}))
+    elif name == "CRITIC_LOSS" and piece["state"] == "INTEGRATED":
+        out.append(("RECHECK_LOSS", {"piece": pid, "class": "artifact", "artifact": e.get("artifact")}))
+    elif name == "GAP_ONLY_RESULT" and piece["gap_none"] == ["reader", "reader-alt"]:
+        out.append(("CONVERGED", {"piece": pid}))
+    elif name == "GAP_SAME_AS_LAST":
+        out.append(("GAP_REPEATED", {"piece": pid, "trigger": "gap"}))
+    elif name in ("GAP_REPEATED", "ALLOCATION_SPENT") and piece["rung"] > len(LADDER) and piece["state"] == "ACTIVE":
+        out.append(("PIECE_PARKED", {"piece": pid, "reason": "the ladder is exhausted on this gap", "class": "artifact"}))
+    elif name == "PARK_REQUESTED":
+        out.append(("PIECE_PARKED", {"piece": pid, "reason": e["reason"], "class": e["class"]}))
+    elif name == "BUILDER_DONE" and e.get("returned") == "blocked":
+        out.append(("PIECE_PARKED", {"piece": pid, "reason": e.get("note"), "class": "execution"}))
+    elif name == "BLOCK_REQUESTED":
+        out.append(("PIECE_BLOCKED", {"piece": pid, "reason": e["reason"], "class": "execution"}))
+    elif name == "NOT_REPRODUCED_ACCEPTED":
+        out.append(("VERDICT_INVALID", {"piece": pid, "class": "evaluation", "reason": "not-reproduced", "rerun": e["rerun"]}))
+    elif name == "BUDGET_EXHAUSTED":
+        out.append(("RUN_ENDED", {"reason": "ceiling"}))
+    if not run or run["ended"] or name in ("RUN_ENDED", "BUDGET_EXHAUSTED"):
+        return out
+
+    # Accounting. A spent allocation enters the ladder exactly as a repeated gap does (afford() parks on an empty reserve).
+    if e.get("cost") and piece and piece["kind"] != "whole" and run["accounts"] and piece["state"] in ("ACTIVE", "AWAITING_CONFIRMATION"):
+        if piece["spent"] >= piece["allocation"] and not piece["allocation_spent"]:
+            out.append(("ALLOCATION_SPENT", {"piece": pid, "trigger": "spend"}))
+    # The ceiling counts what was spent and how long it took. It grades nothing.
+    if run["envelope"] and run["accounts"]:
+        hours = (epoch(e["ts"]) - epoch(run["started"])) / 3600
+        if sum(run["spent"].values()) >= run["envelope"]["E"] or hours >= run["envelope"]["T_hours"]:
+            return out + [("BUDGET_EXHAUSTED", {"note": f"{sum(run['spent'].values())} invocations, {hours:.1f} hours"})]
+    # Terminal states.
+    live = [p for p in state["pieces"].values() if not p["superseded"]]
+    done = ("CONFIRMED", "INTEGRATED", "PROMOTED")
+    if name in ("CONFIRMATION_WIN", "CONVERGED") and live and all(p["state"] in done for p in live) and \
+            (len(live) == 1 or any(p["kind"] == "whole" for p in live)):
+        out.append(("RUN_ENDED", {"reason": "win"}))
+    elif name == "PIECE_PARKED" and live and all(p["state"] in done + ("PARKED",) for p in live):
+        spent = any(p["reason"] == SPENT_REASON for p in state["parked"])
+        out.append(("RUN_ENDED", {"reason": "ceiling" if spent else "nothing-left"}))
+    return out
+
+
+def apply(state, e):
+    """Mutate state by one event, or raise Rejected. The log is folded through this and nothing else."""
+    name = e["event"]
+    state["last_ts"] = e["ts"]
+    if name in BLOCK_EVENTS:
+        state["blocks"] += 1
+        return
+    if name == "RUN_STARTED":
+        if state["run"]:
+            raise Rejected("a run already exists here; a new bar is a new run in a new checkout")
+        state["run"] = {"id": e["run"], "policy": e["policy"], "tier": e["tier"], "containment": e["containment"],
+                        "attestation": e["attestation"], "started": e["ts"], "envelope": e.get("envelope"),
+                        "accounts": None, "spent": {"local": 0, "escalation": 0, "gate": 0}, "lead_turns": 0,
+                        "ended": None, "frozen": [], "verified": [], "plan_committed": False,
+                        "goal": e.get("goal"), "bar": e.get("bar"), "critic_bar": e.get("critic_bar"),
+                        "envelope_policy": e.get("envelope_policy"), "lease_hours": e.get("lease_hours") or 2}
+        state["readers"] = e["readers"]
+        state["invariants"] = e.get("invariants", [])
+        return
+    run = state["run"]
+    if not run:
+        raise Rejected(f"{name}: no run here; start one with init")
+    if name not in FACTS and name not in JUDGMENTS:
+        raise Rejected(f"{name}: not an event this controller knows")
+    if run["ended"] and name in WORK:
+        raise Rejected(f"the run ended ({run['ended']}); write the report. A new bar is a new run")
+    if name == "RUN_ENDED":
+        run["ended"] = e["reason"]
+        return
+
+    # Run-level events.
+    if name == "REFERENCE_FROZEN":
+        run["frozen"].append(e["artifact"])
+    elif name == "REFERENCE_VERIFIED":
+        run["verified"].append(e["artifact"])
+    elif name == "PLAN_COMMITTED":
+        run["plan_committed"] = True
+    elif name == "ARTIFACTS_COMMITTED":
+        run["committed"] = True
+    elif name == "PR_OPENED":
+        run["pr"] = e["artifact"]
+    elif name == "LEAD_TURN":
+        run["lead_turns"] += 1
+    elif name == "FLOOR_ADDED":
+        if e["floor"] in state["floors"]:
+            raise Rejected(f"floor {e['floor']} exists; amend it")
+        state["floors"][e["floor"]] = {"cmd": e["cmd"], "derived": bool(e.get("derived")), "piece": e.get("for_piece"),
+                                       "needs_reference": bool(e.get("needs_reference")), "path": e.get("artifact")}
+        if e.get("derived"):
+            state["derived"].append(e["floor"])
+    elif name == "FLOOR_AMENDED":
+        floor = state["floors"].get(e["floor"])
+        if not floor:
+            raise Rejected(f"no floor {e['floor']} to amend")
+        floor.update(cmd=e["new"], path=e.get("artifact") or floor["path"])
+        for pid, piece in state["pieces"].items():  # confirmations it touched are re-run
+            if piece["state"] in ("CONFIRMED", "INTEGRATED") and floor["piece"] in (None, pid):
+                piece["needs_floors"] = True
+        state["escalations"].append({"piece": floor["piece"] or "-", "trigger": f"floor {e['floor']} amended: {e['old']} -> {e['new']}",
+                                     "rung": 0, "seq": e["seq"]})
+        state["gaps"].append({"piece": floor["piece"] or "-", "round": 0, "event": name, "class": "evaluation",
+                              "gap": f"floor {e['floor']}: {e['old']} -> {e['new']}"})
+    elif name == "AGENT_REGISTERED":
+        state["agents"].setdefault(e["agent_id"], {"type": e["agent_type"], "attested": None})
+    elif name == "SPLIT_DECIDED":
+        state["plan_pieces"] = int(e["pieces"])
+        set_accounts(state)
+    elif name == "SHARED_EDGE_RECORDED":
+        state["shared_edges"].append(e["pieces"])
+    elif name == "SCOPE_FAILURE_FILED":
+        state["scope_failures"].append(e["note"])
+        state["gaps"].append({"piece": e.get("piece") or "whole", "round": 0, "event": name, "class": "scope", "gap": e["note"]})
+    if "piece" not in e:
+        if e.get("cost"):
+            debit(state, None, e["cost"])
+        return
+
+    # Piece events: the move must be in the table.
+    pid = e["piece"]
+    piece = state["pieces"].get(pid)
+    if name in ("REFERENT_SELECTED", "MODE_SELECTED") and piece is None:
+        state.setdefault("selected", {}).setdefault(pid, {})[name.split("_")[0].lower()] = e.get("referent") or e.get("mode")
+        return
+    before = piece["state"] if piece else None
+    if (before, name) not in MOVES:
+        raise Rejected(f"{name} is not a legal move for {pid} in {before or 'no state'}")
+    if name == "PIECE_OPENED":
+        if not run["frozen"]:
+            raise Rejected("PIECE_OPENED before REFERENCE_FROZEN: the bar is frozen before any builder exists")
+        if not e.get("referent"):
+            raise Rejected(f"{pid} has no referent; a piece with no matching part anywhere still names the nearest real one")
+        piece = state["pieces"][pid] = new_piece(e)
+        if e.get("parent"):
+            state["pieces"][e["parent"]]["superseded"] = True
+    if piece["superseded"]:
+        raise Rejected(f"{pid} was split; its children carry the work")
+    after = MOVES[(before, name)]
+
+    if name == "BUILDER_DONE":
+        piece.update(building=False, builder=e.get("agent_id") or piece["builder"])
+        if not e.get("returned"):  # BLOCKED: and NOT REPRODUCED: returns built nothing
+            piece.update(round=piece["round"] + 1, artifact=e.get("artifact"), floor_ok=False)
+    elif name == "SMOOTHER_DONE":
+        piece.update(round=piece["round"] + 1, building=False, floor_ok=False)  # smoothed work is new work: floors again
+    elif name in ("FLOOR_PASS", "FLOOR_FAIL"):
+        piece.update(floor_round=piece["round"], floor_ok=name == "FLOOR_PASS", needs_floors=False)
+        if name == "FLOOR_PASS" and piece["mode"] == CC and piece["champion"] is None:
+            piece["champion"] = piece["round"]  # the first green attempt is the champion, unjudged
+    elif name == "CRITIC_DISPATCHED":
+        if e["shape"] == "gap-only":
+            if piece["mode"] != CC or piece["challenger_losses"] < 2:
+                raise Rejected("the gap-only check is for a champion-challenger piece after two challenger losses in a row")
+        elif e["shape"] == "pick":
+            if len(piece["variants"]) < 2:
+                raise Rejected("a pick pair is for variants that all lost; none were selected for this piece")
+        elif before == "ACTIVE" and not (piece["floor_ok"] and piece["floor_round"] == piece["round"]):
+            raise Rejected(f"no pair for {pid}: floors are not green this round, and a red floor ends the round")
+        if e["order"] == "swapped" and before != "AWAITING_CONFIRMATION":
+            raise Rejected(f"no confirmation pair for {pid}: nothing is awaiting confirmation")
+        state["attempts"][e["attempt_id"]] = {"piece": pid, "round": piece["round"], "pair": e["pair_id"],
+                                              "expected_type": e["expected_type"], "shape": e["shape"],
+                                              "order": e["order"], "status": "open"}
+    elif name == "CRITIC_RESULT":
+        attempt = state["attempts"].get(e.get("attempt_id"))
+        if not attempt or attempt["status"] != "open" or attempt["piece"] != pid:
+            raise Rejected(f"CRITIC_RESULT names no open attempt for {pid}")
+        attempt["status"] = "closed"
+        if e.get("agent_id") in state["agents"]:
+            state["agents"][e["agent_id"]]["attested"] = e["seq"]  # single use
+        if attempt["shape"] == "pick" and e.get("valid"):
+            piece.update(artifact=e.get("winner"), variants=[])  # the best of ours continues the piece
+        piece["last_verdict"] = e.get("artifact")
+        if e.get("artifact"):
+            piece["verdicts"].append(e["artifact"])
+    elif name == "CRITIC_WIN":
+        piece["first_model"] = e.get("model")
+    elif name == "CONFIRMATION_WIN":
+        if e.get("agent_type") != "reader-alt" or not e.get("model") or e["model"] == piece["first_model"]:
+            raise Rejected("CONFIRMATION_WIN needs the other reader on a different model from the first critic")
+        piece["last_gap"] = None
+        if piece["mode"] == CC:
+            after = "AWAITING_CONFIRMATION"  # CHAMPION_REPLACED follows and returns it to ACTIVE
+    elif name == "CHAMPION_REPLACED":
+        piece.update(champion=piece["round"], challenger_losses=0)
+    elif name in ("CRITIC_LOSS", "CONFIRMATION_LOSS", "RECHECK_LOSS"):
+        piece["last_gap"] = e.get("gap") or piece["last_gap"]
+        if name == "CRITIC_LOSS" and piece["mode"] == CC:
+            piece["challenger_losses"] += 1
+    elif name == "GAP_ONLY_RESULT":
+        if e.get("gap"):
+            piece.update(last_gap=e["gap"], gap_none=[])
+        else:
+            piece["gap_none"].append(e.get("agent_type"))
+            after = "AWAITING_CONFIRMATION"
+    elif name == "CONVERGED":
+        if piece["mode"] != CC or piece["gap_none"] != ["reader", "reader-alt"]:
+            raise Rejected("CONVERGED needs a champion-challenger piece and `GAP: none` from both readers, reader first")
+        piece.update(converged=True, last_gap=None)
+    elif name == "ATTEST_CONFLICT":
+        for attempt in state["attempts"].values():  # whatever was open for this piece is tainted with it
+            if attempt["piece"] == pid and attempt["status"] == "open":
+                attempt["status"] = "void"
+        state["conflicts"].append({"piece": pid, "agent_id": e.get("agent_id"), "seqs": e.get("seqs"), "seq": e["seq"]})
+    elif name == "VERDICT_INVALID" and e.get("reason") == "not-reproduced":
+        piece["last_gap"] = None  # the gap is not routed
+    elif name == "NOT_REPRODUCED_ACCEPTED":
+        if state["reruns"].get(str(e["rerun"])) != pid:
+            raise Rejected("NOT_REPRODUCED_ACCEPTED must name a RERUN_OBSERVED for this piece (run `rerun` first)")
+    elif name == "RERUN_OBSERVED":
+        state["reruns"][str(e["seq"])] = pid
+    elif name in ("GAP_REPEATED", "ALLOCATION_SPENT"):
+        piece["rung"] += 1
+        piece["allocation_spent"] = piece["allocation_spent"] or name == "ALLOCATION_SPENT"
+        state["escalations"].append({"piece": pid, "trigger": e.get("trigger") or "spend", "rung": piece["rung"], "seq": e["seq"]})
+    elif name == "GAP_ROUTED":
+        if e.get("class") not in CLASSES:
+            raise Rejected(f"a routed gap carries a class: {', '.join(CLASSES)}")
+        piece["building"] = True
+    elif name == "VARIANT_APPROACHES_SELECTED":
+        chosen = [a.strip() for a in e["approaches"].split("|") if a.strip()]
+        limit = POLICY["variants"]["then" if piece["variant_rounds"] else "first"]
+        if not chosen or len(chosen) > limit:
+            raise Rejected(f"variants are staged: {POLICY['variants']['first']} divergent approaches first, "
+                           f"{POLICY['variants']['then']} more only after those lost; this selection may name {limit}")
+        piece["variants"] = piece["variants"] + chosen
+        piece["variant_rounds"] += 1
+    elif name == "PARK_REQUESTED":
+        if e.get("class") not in CLASSES:
+            raise Rejected(f"a park request carries a class: {', '.join(CLASSES)}")
+    elif name == "PIECE_PARKED":
+        state["parked"].append({"piece": pid, "reason": e.get("reason"), "class": e.get("class"),
+                                "last_verdict": piece["last_verdict"], "builder": piece["builder"]})
+    elif name in ("PIECE_BLOCKED", "LEASE_EXPIRED"):
+        state["open_questions"].append(f"{pid} blocked: {e.get('reason') or 'lease expired'}")
+    elif name == "BLOCKER_CLEARED":
+        state["open_questions"] = [q for q in state["open_questions"] if not q.startswith(f"{pid} blocked:")]
+    elif name == "HUMAN_RESUMED":
+        if not e.get("actor"):
+            raise Rejected("a parked piece is resumed by a named human")
+        state["parked"] = [p for p in state["parked"] if p["piece"] != pid]
+        if run["ended"] == "nothing-left":
+            run["ended"] = None  # a human resumed a piece: there is something left
+        state["escalations"].append({"piece": pid, "trigger": "resumed by " + e["actor"], "rung": 0, "seq": e["seq"]})
+    # Leases: an open attempt has an expiry, so a dead agent leaves an expired lease, not a piece ACTIVE forever.
+    if name in ("PIECE_OPENED", "GAP_ROUTED", "CRITIC_DISPATCHED"):
+        piece["lease"] = {"owner": piece["builder"] if name != "CRITIC_DISPATCHED" else None,
+                          "attempt": e.get("attempt_id") or "build", "expires": epoch(e["ts"]) + run["lease_hours"] * 3600}
+    elif name in ("BUILDER_DONE", "CRITIC_RESULT", "LEASE_EXPIRED", "PIECE_PARKED", "ATTEST_CONFLICT"):
+        piece["lease"] = None
+        if name == "LEASE_EXPIRED":
+            for attempt in state["attempts"].values():
+                if attempt["piece"] == pid and attempt["status"] == "open":
+                    attempt["status"] = "expired"
+    if e.get("cost"):
+        debit(state, pid, e["cost"])
+    if e.get("class") and e["kind"] == "fact":  # a non-win is logged once, as the fact; routing it is not a second entry
+        state["gaps"].append({"piece": pid, "round": piece["round"], "event": name, "class": e["class"],
+                              "gap": e.get("gap") or e.get("reason") or e.get("note")})
+    piece["state"] = after
+
+
+# --- freeze: the reference is data; it executes only under detected isolation --------------------
+
+# Everything the controller knows about the harness is this table (mirrored in harness-claude-code.md).
+HARNESS = {
+    "settings": ["~/.claude/settings.json", ".claude/settings.json", ".claude/settings.local.json"],  # low to high
+    "managed": ["/etc/claude-code/managed-settings.json",
+                "/Library/Application Support/ClaudeCode/managed-settings.json"],
+    "checked_in": [".claude/settings.json", ".claude/hooks/gauntlet", ".claude/agents"],
+    "credential_scopes": ["~/.claude/settings.json"],  # project and local credentials entries are ignored
+    "manifest": ".claude/hooks/gauntlet/MANIFEST.sha256",
+    "readers": [".claude/agents/reader.md", ".claude/agents/reader-alt.md"],
+    "attest_key": ".gauntlet/private/attest.key",
+}
+LOOP_WORDS = r"(?i)\b(gauntlet|critic|the bar|champion|challenger)\b"
+
+
+def read_text(path):
+    with open(path, errors="ignore") as f:
+        return f.read()
+
+
+def read_json(path):
+    path = os.path.expanduser(path)
+    if not os.path.exists(path):
+        return {}
+    try:
+        with open(path) as f:
+            return json.load(f)
+    except ValueError:
+        return {}
+
+
+def merge(low, high):
+    out = dict(low)
+    for k, v in high.items():
+        if isinstance(v, dict) and isinstance(out.get(k), dict):
+            out[k] = merge(out[k], v)
+        elif isinstance(v, list) and isinstance(out.get(k), list):
+            out[k] = out[k] + v
+        else:
+            out[k] = v
+    return out
+
+
+def sha256(path):
+    with open(path, "rb") as f:
+        return hashlib.sha256(f.read()).hexdigest()
+
+
+def hook_args(settings):
+    return [a for groups in settings.get("hooks", {}).values() for g in groups for h in g.get("hooks", [])
+            for a in h.get("args", []) + [h.get("command", "")]]
+
+
+def detect():
+    """Read what is installed and configured; derive tier and containment. The lead never asserts either."""
+    r = root()
+    scopes = [read_json(p if p.startswith(("~", "/")) else os.path.join(r, p)) for p in HARNESS["settings"]]
+    managed = [read_json(p) for p in HARNESS["managed"]]
+    merged = {}
+    for scope in scopes + managed:
+        merged = merge(merged, scope)
+    sandbox = merged.get("sandbox", {})
+
+    manifest = os.path.join(r, HARNESS["manifest"])
+    rows = []
+    if os.path.exists(manifest):
+        with open(manifest) as f:
+            rows = [line.rstrip("\n").split("  ", 1) for line in f if line.strip()]
+    changed = [rel for sha, rel in rows if not os.path.exists(os.path.join(r, rel)) or sha256(os.path.join(r, rel)) != sha]
+    scripts = [os.path.basename(rel) for _, rel in rows if rel.endswith(".py") and not os.path.basename(rel).startswith("_")]
+    wired = " ".join(hook_args(merge(read_json(os.path.join(r, ".claude/settings.json")), merge(*managed))))
+    unwired = [name for name in scripts if name not in wired]
+    git = subprocess.run(["git", "-C", r, "status", "--porcelain", "--", *HARNESS["checked_in"]], capture_output=True, text=True)
+    tracked = subprocess.run(["git", "-C", r, "ls-files", "--error-unmatch", HARNESS["manifest"]], capture_output=True)
+    checked_in = git.returncode == 0 and not git.stdout.strip() and tracked.returncode == 0
+    readers_omit = all(os.path.exists(os.path.join(r, p)) and re.search(r"(?m)^omitClaudeMd:\s*true\s*$", read_text(os.path.join(r, p)))
+                       for p in HARNESS["readers"])
+    hooks_off = any(scope.get("disableAllHooks") for scope in scopes + managed)
+
+    facts = {
+        "manifest_verifies": bool(rows) and not changed, "changed": changed,
+        "hooks_wired": bool(scripts) and not unwired, "unwired": unwired,
+        "checked_in": checked_in, "readers_omit_claude_md": bool(readers_omit), "hooks_disabled": hooks_off,
+        "containment": {
+            "sandbox": bool(sandbox.get("enabled")),
+            "strict": sandbox.get("allowUnsandboxedCommands") is False and not sandbox.get("excludedCommands"),
+            "network": bool(sandbox.get("network", {}).get("allowedDomains")),
+            "credentials": any(read_json(p).get("sandbox", {}).get("credentials") for p in HARNESS["credential_scopes"] + HARNESS["managed"]),
+        },
+    }
+    c = facts["containment"]
+    facts["tier"] = 2 if (facts["manifest_verifies"] and facts["hooks_wired"] and checked_in and readers_omit and not hooks_off) else 3
+    facts["isolated"] = c["sandbox"] and c["strict"] and c["network"]
+    key_denied = HARNESS["attest_key"] in " ".join(sandbox.get("filesystem", {}).get("denyRead", []))
+    facts["attestation"] = "tier-1" if facts["tier"] == 2 and c["sandbox"] and c["strict"] and key_denied else "tier-2"
+    return facts
+
+
+def probe_escapes():
+    """True when this process can write outside the project: whatever detect says, it is not isolated."""
+    probe = os.path.join(os.path.dirname(root()), f".gauntlet-probe-{os.getpid()}")
+    try:
+        with open(probe, "w") as f:
+            f.write("probe")
+        os.remove(probe)
+        return True
+    except OSError:
+        return False
+
+
+def stripped(name, rel):
+    return any(fnmatch.fnmatch(name, pat) or fnmatch.fnmatch(rel, pat) for pat in STRIP)
+
+
+def scan_paths(paths, exclude=(".git", "node_modules")):
+    """(file, line number, pattern name) for every secret-looking line; an env or credential file is a hit by name."""
+    hits = []
+    for top in paths:
+        walk = os.walk(top) if os.path.isdir(top) else [(os.path.dirname(top), [], [os.path.basename(top)])]
+        for folder, dirs, files in walk:
+            dirs[:] = [d for d in dirs if d not in exclude]
+            for name in [f for f in files if f not in exclude]:
+                path = os.path.join(folder, name)
+                if fnmatch.fnmatch(name, ".env*") or fnmatch.fnmatch(name, "*.pem") or fnmatch.fnmatch(name, "id_rsa*"):
+                    hits.append((path, 0, "credential file"))
+                    continue
+                if os.path.getsize(path) > 1_000_000:
+                    continue
+                with open(path, errors="ignore") as f:
+                    for n, line in enumerate(f, 1):
+                        hits += [(path, n, label) for label, pat in SECRETS.items() if re.search(pat, line)]
+    return hits
+
+
+def cmd_freeze(args):
+    dst = os.path.abspath(args.dst)
+    if os.path.exists(dst):
+        print(f"{args.dst} exists: a frozen copy is never refreshed; freeze into a new path", file=sys.stderr)
+        return 2
+    commit = None
+    if os.path.isdir(args.src):
+        shutil.copytree(args.src, dst, symlinks=True, ignore=shutil.ignore_patterns(".git"))
+    else:
+        clone = ["git", "clone", "--quiet", "--depth", "1"] + (["--branch", args.ref] if args.ref else []) + [args.src, dst]
+        done = subprocess.run(clone, capture_output=True, text=True)
+        if done.returncode != 0:
+            print(f"fetch failed: {done.stderr.strip()}", file=sys.stderr)
+            return 3
+        commit = subprocess.run(["git", "-C", dst, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+        shutil.rmtree(os.path.join(dst, ".git"))
+    removed = []
+    for folder, dirs, files in os.walk(dst):
+        for name in list(dirs) + files:
+            path = os.path.join(folder, name)
+            rel = os.path.relpath(path, dst)
+            if stripped(name, rel):
+                removed.append(rel + ("/" if os.path.isdir(path) and not os.path.islink(path) else ""))
+                shutil.rmtree(path) if os.path.isdir(path) and not os.path.islink(path) else os.remove(path)
+                if name in dirs:
+                    dirs.remove(name)
+
+    # FR-1.7: this is the first command that knows the reference's name.
+    name = re.sub(r"\.git$", "", args.src.rstrip("/"))
+    names = {"/".join(name.split("/")[-2:]), name.split("/")[-1]}
+    pattern = "|".join(re.escape(n) for n in names if len(n) >= 4)
+    seen = []
+    for folder, dirs, files in os.walk(root()):
+        dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".gauntlet", "reference")]
+        for f in files:
+            if f in ("CLAUDE.md", "CLAUDE.local.md"):
+                text = read_text(os.path.join(folder, f))
+                if re.search(LOOP_WORDS, text) or (pattern and re.search(pattern, text, re.I)):
+                    seen.append(os.path.relpath(os.path.join(folder, f), root()))
+    warnings = []
+    if seen and not detect()["readers_omit_claude_md"]:
+        warnings.append(f"{', '.join(seen)} names the reference or the loop and the installed readers do not omit it: tier 3")
+
+    manifest = {"source": args.src, "ref": args.ref, "commit": commit, "frozen": time.strftime("%Y-%m-%d"),
+                "removed": sorted(removed), "executed": "nothing", "warnings": warnings}
+    with open(os.path.join(dst, "MANIFEST"), "w") as f:
+        json.dump(manifest, f, indent=2)
+        f.write("\n")
+    print(json.dumps(manifest, indent=2))
+    if load()["run"]:
+        with transaction() as tx:
+            tx.emit("REFERENCE_FROZEN", "fact", "freeze", artifact=os.path.relpath(dst, root()), note=args.src)
+    return 0
+
+
+def cmd_freeze_verify(args):
+    facts = detect()
+    if not facts["isolated"] or probe_escapes():
+        print("refused: reference code executes only under isolation, and none is active here. "
+              "Fix: enable the sandbox in strict mode with a network allowlist (/sandbox), or run in a container.",
+              file=sys.stderr)
+        return 3
+    out = os.path.join(args.dst, ".verify")
+    os.makedirs(out, exist_ok=True)
+    failed = 0
+    for n, command in enumerate(args.cmd, 1):
+        done = subprocess.run(command, shell=True, cwd=args.dst, capture_output=True, text=True)
+        with open(os.path.join(out, f"{n:02d}.txt"), "w") as f:
+            f.write(f"$ {command}\nexit {done.returncode}\n{done.stdout}{done.stderr}")
+        print(f"exit {done.returncode}  {command}")
+        failed += done.returncode != 0
+    if load()["run"] and not failed:
+        with transaction() as tx:
+            tx.emit("REFERENCE_VERIFIED", "fact", "freeze-verify", artifact=os.path.relpath(args.dst, root()),
+                    note="sandbox, strict, network allowlist")
+    return 2 if failed else 0
+
+
+def cmd_scan(args):
+    hits = scan_paths(args.paths)
+    for path, n, label in hits:
+        print(f"{path}:{n}: {label} [redacted]")
+    return 3 if hits else 0
+
+
+def cmd_detect(args):
+    print(json.dumps(detect(), indent=2))
+    return 0
+
+
+# --- piece, event ------------------------------------------------------------------------------------
+
+def allocation_for(state):
+    accounts = state["run"]["accounts"]
+    return accounts["local"] // max(state["plan_pieces"] or 1, 1) if accounts else 0
+
+
+def strip_credentials(worktree):
+    """A builder's worktree does not inherit env or credential files, even tracked ones (FR-15.3)."""
+    tracked = subprocess.run(["git", "-C", worktree, "ls-files"], capture_output=True, text=True).stdout.splitlines()
+    for rel in tracked:
+        if any(fnmatch.fnmatch(os.path.basename(rel), pat) for pat in CREDENTIAL_FILES):
+            subprocess.run(["git", "-C", worktree, "update-index", "--skip-worktree", rel], capture_output=True)
+            os.remove(os.path.join(worktree, rel))  # gone from disk, and git does not report it as a change
+
+
+def cmd_piece(args):
+    with transaction() as tx:
+        state = tx.state
+        if state["run"] and not state["run"]["accounts"]:
+            raise Rejected("record the split first (event SPLIT_DECIDED pieces=n): the envelope is apportioned from the piece count")
+        if args.action == "open":
+            chosen = state.get("selected", {}).get(args.id, {})
+            ids, parent = [args.id], None
+            share = None
+        else:
+            parent = state["pieces"].get(args.id)
+            if not parent or parent["state"] != "ACTIVE" or len(args.children) < 2:
+                raise Rejected("split names an ACTIVE piece and at least two children")
+            chosen, ids = {}, args.children
+            share = max(parent["allocation"] - parent["spent"], 0) // len(ids)
+        for pid in ids:
+            worktree = os.path.join(".gauntlet", "wt", pid)
+            fields = dict(piece=pid, piece_kind=args.kind if not parent else parent["kind"],
+                          referent=args.referent or chosen.get("referent") or (parent or {}).get("referent"),
+                          mode=(CC if args.champion_challenger else None) or chosen.get("mode") or (parent or {}).get("mode"),
+                          parent=args.id if parent else None, rung=(parent or {}).get("rung"), worktree=worktree,
+                          allocation=share if share is not None else allocation_for(state), cost=1)
+            tx.emit("PIECE_OPENED", "fact", "piece", **fields)
+            if not os.path.isdir(os.path.join(root(), worktree)):
+                start = os.path.join(root(), parent["worktree"]) if parent else root()
+                head = subprocess.run(["git", "-C", start, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
+                made = subprocess.run(["git", "-C", root(), "worktree", "add", "-q", "-b", f"gauntlet/{pid}", worktree, head],
+                                      capture_output=True, text=True)
+                if made.returncode != 0:
+                    raise Refused(f"git worktree add failed for {pid}: {made.stderr.strip()}")
+                strip_credentials(os.path.join(root(), worktree))
+            print(f"{pid}: ACTIVE, worktree {worktree}")
+    return 0
+
+
+def cmd_event(args):
+    if args.name not in JUDGMENTS:
+        raise Rejected(f"{args.name}: `event` records the lead's judgment calls and nothing else ({', '.join(JUDGMENTS)}). "
+                       "A fact reaches the log only from the command or hook that observed it")
+    fields = dict(kv.split("=", 1) for kv in args.fields if "=" in kv)
+    missing = [k for k in JUDGMENTS[args.name] if not fields.get(k)]
+    if missing:
+        raise Rejected(f"{args.name} needs {', '.join(missing)}")
+    cost = {"GAP_ROUTED": 1, "VARIANT_APPROACHES_SELECTED": len([a for a in fields.get("approaches", "").split("|") if a.strip()])}
+    with transaction() as tx:
+        if cost.get(args.name) and not afford(tx, fields.get("piece"), cost[args.name]):
+            raise Spent(f"{fields.get('piece')}: {SPENT_REASON}; it is parked and the run goes on")
+        tx.emit(args.name, "judgment", "event", actor="lead", cost=cost.get(args.name), **fields)
+    return 0
+
+
+# --- pair: seeded, idempotent, blind on disk ---------------------------------------------------------
+
+# ponytail: loop traces are found by string match and refused, not rewritten; per-language comment stripping
+# is the upgrade if builders keep tripping it.
+LOOP_TRACES = re.compile(r"(?i)\bgauntlet\b|\bround[ _-]?\d+\b|\b(per|as) the (critic|reviewer|verdict)\b|"
+                         r"\b(critic|reviewer)'s (gap|feedback|verdict)\b|\bwhat changed since\b")
+LOOP_NAMES = re.compile(r"(?i)([-_.]final\b|round[-_]?\d+)")
+CC_LINE = "\nR is a fixed reference point, not a candidate. Pick which of A and B sits closer to R.\n"
+GAP_ONLY_LINE = ("\nGap-only verdict: no WINNER. Under GAP, name the one biggest difference a maker of the weaker side could "
+                 "still close, as an observation of which side has it and which lacks it, or write `GAP: none` when "
+                 "nothing closable separates them.\n")
+
+
+def seed(state, piece, rnd, salt=""):
+    with open(gdir("private", "secret")) as f:
+        secret = f.read().strip().encode()
+    return hmac.new(secret, f"{state['run']['id']}|{piece}|{rnd}{salt}".encode(), hashlib.sha256).digest()
+
+
+def copy_side(src, dst):
+    os.makedirs(dst, exist_ok=True)
+    if os.path.isdir(src):
+        shutil.copytree(src, dst, dirs_exist_ok=True, ignore=shutil.ignore_patterns(*EXCLUDE))
+    else:
+        shutil.copy(src, dst)
+
+
+def refuse_unclean(path):
+    """No env or credential file, no secret, no trace of the loop: refuse, and say where."""
+    bad = []
+    for folder, dirs, files in os.walk(path):
+        dirs[:] = [d for d in dirs if d not in EXCLUDE]
+        for name in [f for f in files if f not in EXCLUDE]:
+            full = os.path.join(folder, name)
+            rel = os.path.relpath(full, path)
+            if any(fnmatch.fnmatch(name, pat) for pat in CREDENTIAL_FILES):
+                bad.append(f"{rel}: an env or credential file")
+            elif LOOP_NAMES.search(name):
+                bad.append(f"{rel}: the filename carries a trace of the loop")
+            elif os.path.getsize(full) <= 1_000_000:
+                with open(full, errors="ignore") as f:
+                    bad += [f"{rel}:{n}: a trace of the loop" for n, line in enumerate(f, 1) if LOOP_TRACES.search(line)]
+    bad += [f"{os.path.relpath(p, path)}:{n}: {label} [redacted]" for p, n, label in scan_paths([path], EXCLUDE) if label != "credential file"]
+    if bad:
+        raise Refused("no pair is built from this tree:\n  " + "\n  ".join(bad))
+
+
+def snapshot_champion(state, pid):
+    """Keep the champion's files: the worktree moves on, the champion must not."""
+    dst = gdir("private", "champion", pid)
+    shutil.rmtree(dst, ignore_errors=True)
+    copy_side(os.path.join(root(), state["pieces"][pid]["artifact"]), dst)
+
+
+def build_pair(pid, pair_id, sides, prompt):
+    """sides: {label: source path}. The live pair directory is rebuilt from scratch every time."""
+    live = gdir("pairs", pid)
+    shutil.rmtree(live, ignore_errors=True)
+    for label, src in sides.items():
+        copy_side(src, os.path.join(live, label))
+    with open(os.path.join(live, "PROMPT.md"), "w") as f:
+        f.write(prompt)
+    with open(os.path.join(live, "PAIR_ID"), "w") as f:
+        f.write(pair_id + "\n")
+    return live
+
+
+def archive_pair(pid, pair_id):
+    """A pristine copy, taken when the pair is built: swap inverts this one, never the live pair a reader worked in."""
+    archive = gdir("private", "pairs", pair_id)
+    shutil.rmtree(archive, ignore_errors=True)
+    shutil.copytree(gdir("pairs", pid), archive)
+
+
+def write_mapping(pair_id, mapping):
+    os.makedirs(gdir("private", "mapping"), exist_ok=True)
+    with open(gdir("private", "mapping", pair_id + ".json"), "w") as f:
+        json.dump({"pair_id": pair_id, **mapping}, f)
+
+
+def read_mapping(pair_id):
+    with open(gdir("private", "mapping", pair_id + ".json")) as f:
+        return json.load(f)
+
+
+def dispatch(tx, pid, pair_id, shape, order, recheck=False):
+    """Open an attempt on a pair unless one is already open: a retry rebuilds files and records nothing."""
+    attempts = tx.state["attempts"]
+    if any(a["pair"] == pair_id and a["status"] == "open" for a in attempts.values()):
+        return
+    if not afford(tx, pid):
+        raise Spent(f"{pid}: {SPENT_REASON}; it is parked and the run goes on")
+    n = sum(1 for a in attempts.values() if a["pair"] == pair_id) + 1
+    tx.emit("CRITIC_DISPATCHED", "fact", "swap" if order == "swapped" else "pair", piece=pid, attempt_id=f"{pair_id}#{n}",
+            pair_id=pair_id, shape=shape, order=order, expected_type="reader-alt" if order == "swapped" else "reader",
+            cost=1, note="recheck" if recheck else None)
+
+
+def cmd_pair(args):
+    pid = args.piece
+    prepared = gdir("private", "prepared", pid)
+    if args.prepare:
+        if not args.reference or not args.prompt:
+            raise Rejected("pair --prepare needs --reference <matched part of the frozen reference> and --prompt <file>")
+        shutil.rmtree(prepared, ignore_errors=True)
+        ref = os.path.join(root(), args.reference)
+        copy_side(ref, os.path.join(prepared, "ref"))
+        if os.path.isdir(os.path.join(ref, ".verify")):
+            copy_side(os.path.join(ref, ".verify"), os.path.join(prepared, "ref", "FLOORS"))
+        if args.adapter:
+            copy_side(os.path.join(root(), args.adapter), os.path.join(prepared, "adapter"))
+        shutil.copy(os.path.join(root(), args.prompt), os.path.join(prepared, "PROMPT.md"))
+        print(f"{pid}: reference half prepared once; every round copies ours and assigns labels")
+        return 0
+    with transaction() as tx:
+        piece = tx.state["pieces"].get(pid)
+        if not piece or not os.path.isdir(prepared):
+            raise Rejected(f"{pid}: no such piece, or its reference half was never prepared (pair --prepare)")
+        rnd, cc = piece["round"], piece["mode"] == CC
+        shape = "gap-only" if args.gap_only else "pick" if args.pick else "pairwise"
+        digest = seed(tx.state, pid, rnd, "|gap" if args.gap_only else "|pick" if args.pick else "")
+        pair_id = f"{pid}-r{rnd}-{digest.hex()[2:6]}"
+        first_is_a = digest[0] >> 7 == 1
+        ours = os.path.join(root(), args.ours or piece["artifact"] or piece["worktree"])
+        for path in (ours, os.path.join(root(), args.pick) if args.pick else ours):
+            if not os.path.exists(path):
+                raise Rejected(f"{os.path.relpath(path, root())} does not exist")
+        refuse_unclean(ours)
+        ref, champion = os.path.join(prepared, "ref"), gdir("private", "champion", pid)
+        if args.pick:  # every variant lost: anchor plus two of ours, and the closer one continues (A2)
+            other = os.path.join(root(), args.pick)
+            refuse_unclean(other)
+            names, paths, cc = (os.path.relpath(ours, root()), args.pick), (ours, other), True
+        elif args.gap_only:
+            names, paths = ("champion", "reference"), (champion, ref)
+        elif cc:
+            names, paths = ("challenger", "champion"), (ours, champion)
+        else:
+            names, paths = ("ours", "reference"), (ours, ref)
+        order = (0, 1) if first_is_a else (1, 0)
+        sides = {"a": paths[order[0]], "b": paths[order[1]], **({"r": ref} if cc and not args.gap_only else {})}
+        dispatch(tx, pid, pair_id, shape, "first", recheck=args.recheck)  # rejects before any file is written
+        with open(os.path.join(prepared, "PROMPT.md")) as f:
+            prompt = f.read() + (GAP_ONLY_LINE if args.gap_only else CC_LINE if cc else "")
+        live = build_pair(pid, pair_id, sides, prompt)
+        floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
+        ours_label = "a" if first_is_a else "b"
+        if os.path.isdir(floors) and not args.gap_only:
+            copy_side(floors, os.path.join(live, ours_label, "FLOORS"))
+        if os.path.isdir(adapter):
+            copy_side(adapter, live)
+        write_mapping(pair_id, {"a": names[order[0]], "b": names[order[1]]})
+        archive_pair(pid, pair_id)
+    print(f"{live}\ndispatch a reader with that path and nothing else")
+    return 0
+
+
+def cmd_swap(args):
+    pid = args.piece
+    with transaction() as tx:
+        piece = tx.state["pieces"].get(pid)
+        firsts = [a for a in tx.state["attempts"].values() if a["piece"] == pid and a["order"] == "first"
+                  and a["status"] == "closed"] if piece else []
+        if not piece or piece["state"] != "AWAITING_CONFIRMATION" or not firsts:
+            raise Rejected(f"no confirmation pair for {pid}: nothing is awaiting confirmation")
+        first = firsts[-1]
+        pair_id = f"{pid}-r{first['round']}-{seed(tx.state, pid, first['round'], '|swap' + first['shape']).hex()[2:6]}"
+        dispatch(tx, pid, pair_id, first["shape"], "swapped")
+        live, archive = gdir("pairs", pid), gdir("private", "pairs", first["pair"])
+        if not os.path.isdir(archive):
+            raise Refused(f"the pristine copy of {first['pair']} is missing from private storage; the experiment cannot be "
+                          f"inverted. Record it (event BLOCK_REQUESTED piece={pid} reason=...) and let a human look")
+        old = read_mapping(first["pair"])  # build_pair removes the live pair: no reader ever sees both orders
+        with open(os.path.join(archive, "PROMPT.md")) as f:
+            prompt = f.read()
+        sides = {"a": os.path.join(archive, "b"), "b": os.path.join(archive, "a")}
+        if os.path.isdir(os.path.join(archive, "r")):
+            sides["r"] = os.path.join(archive, "r")
+        build_pair(pid, pair_id, sides, prompt)
+        for extra in os.listdir(archive):  # the adapter and anything else beside the sides
+            if extra not in ("a", "b", "r", "PROMPT.md", "PAIR_ID"):
+                copy_side(os.path.join(archive, extra), live if os.path.isfile(os.path.join(archive, extra)) else os.path.join(live, extra))
+        write_mapping(pair_id, {"a": old["b"], "b": old["a"]})
+    print(f"{live}\ndispatch a reader-alt with that path and nothing else")
+    return 0
+
+
+# --- floors: commands establish facts; the lead runs them before any critic --------------------------
+
+
+
+def cmd_floor(args):
+    if args.action == "list":
+        for fid, floor in load()["floors"].items():
+            print(f"{fid}{' (DERIVED)' if floor['derived'] else ''}: {floor['cmd']}" + (f"  [{floor['piece']}]" if floor["piece"] else ""))
+        return 0
+    if not args.id or not args.cmd:
+        raise Rejected("floor add|amend needs an id and --cmd")
+    target = None
+    if args.source or args.to:
+        src, target = os.path.realpath(os.path.join(root(), args.source or "")), os.path.normpath(args.to or "")
+        if not src.startswith(gdir("staging") + os.sep) or not os.path.isfile(src):
+            raise Rejected("--from names a file an author staged under .gauntlet/staging/")
+        if not any(target == t or target.startswith(t + os.sep) for t in FLOOR_TREES):
+            raise Rejected(f"--to names a path under one of {', '.join(FLOOR_TREES)}")
+    with transaction() as tx:
+        if args.action == "add":
+            tx.emit("FLOOR_ADDED", "fact", "floor", floor=args.id, cmd=args.cmd, derived=args.derived or None,
+                    for_piece=args.piece, needs_reference=args.needs_reference or None, artifact=target)
+        else:
+            old = tx.state["floors"].get(args.id, {}).get("cmd")
+            tx.emit("FLOOR_AMENDED", "fact", "floor", floor=args.id, old=old, new=args.cmd, artifact=target, **{"class": "evaluation"})
+        if target:  # the controller is the only hand that writes a floor file after round zero
+            os.makedirs(os.path.dirname(os.path.join(root(), target)), exist_ok=True)
+            shutil.copy(src, os.path.join(root(), target))
+    return 0
+
+
+def run_recorded(command, out_path, env=None):
+    done = subprocess.run(command, shell=True, cwd=root(), capture_output=True, text=True, env={**os.environ, **(env or {})})
+    os.makedirs(os.path.dirname(out_path), exist_ok=True)
+    with open(out_path, "w") as f:
+        f.write(f"$ {command}\nexit {done.returncode}\n{done.stdout}{done.stderr}")
+    return done.returncode
+
+
+def cmd_floors(args):
+    return run_floors(args.piece)
+
+
+def run_floors(pid):
+    """Runs the lead-side floors on ours. It never reads the mapping: floors run before the round's pair exists."""
+    state = load()
+    piece = state["pieces"].get(pid)
+    if not piece:
+        raise Rejected(f"no piece {pid}")
+    mine = {fid: f for fid, f in state["floors"].items() if f["piece"] in (None, pid)}
+    if any(f["needs_reference"] for f in mine.values()) and (not detect()["isolated"] or probe_escapes()):
+        with transaction() as tx:
+            tx.emit("PIECE_BLOCKED", "fact", "floors", piece=pid, **{"class": "execution"},
+                    reason="a floor needs the reference to execute and no isolation is active: enable the sandbox in "
+                           "strict mode with a network allowlist, or run in a container")
+        raise Refused(f"{pid} is BLOCKED: a floor needs the reference to execute and no isolation is active")
+    out = gdir("floors", pid, f"r{piece['round']}")
+    env = {"GAUNTLET_PIECE": pid, "GAUNTLET_OURS": os.path.join(root(), piece["artifact"] or piece["worktree"] or "")}
+    failed = [fid for fid, f in mine.items() if run_recorded(f["cmd"], os.path.join(out, fid + ".txt"), env) != 0]
+    with transaction() as tx:
+        was_champion = tx.state["pieces"][pid]["champion"]
+        if failed:
+            tx.emit("FLOOR_FAIL", "fact", "floors", piece=pid, artifact=os.path.relpath(out, root()), note=",".join(failed),
+                    **{"class": "artifact"})
+        else:
+            tx.emit("FLOOR_PASS", "fact", "floors", piece=pid, artifact=os.path.relpath(out, root()))
+        if tx.state["pieces"][pid]["champion"] != was_champion:
+            snapshot_champion(tx.state, pid)
+    print(f"{'FLOOR_FAIL ' + ','.join(failed) if failed else 'FLOOR_PASS'}  {os.path.relpath(out, root())}")
+    return 2 if failed else 0
+
+
+def cmd_rerun(args):
+    state = load()
+    if args.piece not in state["pieces"]:
+        raise Rejected(f"no piece {args.piece}")
+    out = gdir("floors", args.piece, f"rerun-{len(state['reruns']) + 1}.txt")
+    code = run_recorded(args.command, out)
+    with transaction() as tx:
+        line = tx.emit("RERUN_OBSERVED", "fact", "rerun", piece=args.piece, note=args.command, exit=code,
+                       artifact=os.path.relpath(out, root()))
+    print(f"exit {code}  seq {line['seq']}  {os.path.relpath(out, root())}")
+    return 0
+
+
+# --- attest: facts from the harness's own hooks --------------------------------------------------------
+
+READERS = ("reader", "reader-alt")
+EDITORS = ("editor", "editor-fast")
+
+
+def parse_verdict(text, shape):
+    """The shape check. Returns {pair, valid, reason, label, gap}. Untrusted text: parsed, never executed."""
+    lines = [re.sub(r"^[\s>#*-]*\**", "", line).replace("**", "").rstrip() for line in text.strip().splitlines()]
+    lines = [line for line in lines if line and not line.startswith("```")]
+    out = {"pair": None, "valid": False, "reason": None, "label": None, "gap": None}
+    m = re.match(r"PAIR:\s*(\S+)", lines[0]) if lines else None
+    if not m:
+        return {**out, "reason": "the first line does not name the pair"}
+    out["pair"] = m.group(1)
+    find = lambda key: next((i for i, line in enumerate(lines) if line.upper().startswith(key + ":")), None)
+    ev, win, gap = find("EVIDENCE"), find("WINNER"), find("GAP")
+    if ev is None:
+        return {**out, "reason": "no EVIDENCE"}
+    if shape != "gap-only" and win is None:
+        return {**out, "reason": "no WINNER line"}
+    if shape == "gap-only" and win is not None:
+        return {**out, "reason": "a gap-only verdict carries no WINNER"}
+    if win is not None and win < ev:
+        return {**out, "reason": "WINNER before EVIDENCE"}
+    if gap is None:
+        return {**out, "reason": "no GAP line"}
+    evidence = " ".join(lines[ev:min(i for i in (win, gap, len(lines)) if i is not None and i > ev)])
+    if not re.search(r"`[^`]+`|\S+/\S+|\b\w+\.\w{1,5}\b|\"[^\"]{3,}\"", evidence):
+        return {**out, "reason": "cites nothing it opened or ran"}
+    end = next((i for i in range(gap + 1, len(lines)) if re.match(r"(FLOOR|WINNER):", lines[i])), len(lines))
+    text_gap = " ".join([lines[gap].split(":", 1)[1].strip()] + lines[gap + 1:end]).strip()
+    out["gap"] = None if re.fullmatch(r"(?i)none\.?", text_gap) else text_gap
+    if win is not None:
+        value = lines[win].split(":", 1)[1].strip().rstrip(".")
+        out["label"] = value if value in ("A", "B") else "hedge"  # no ties; a hedge is a loss
+    return {**out, "valid": True}
+
+
+def transcript_tokens(path):
+    """Tokens one agent used, summed from the transcript its stop hook names (harness-claude-code.md, S8); None when unreadable."""
+    try:
+        total = 0
+        with open(path) as f:
+            for line in f:
+                usage = (json.loads(line).get("message") or {}).get("usage") or {}
+                total += sum(v for k, v in usage.items() if k.endswith("_tokens") and isinstance(v, int))
+        return total or None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def redact(text):
+    for pat in SECRETS.values():
+        text = re.sub(pat, "[redacted]", text)
+    return text
+
+
+def tainted_from(events, pid, first_seq):
+    """Everything this piece did from a voided attestation onward."""
+    return [e["seq"] for e in events if e.get("piece") == pid and e["seq"] >= first_seq and e["event"] != "ATTEST_CONFLICT"]
+
+
+def attest_reader(tx, p, text):
+    state, agent_id, agent_type = tx.state, p.get("agent_id"), p.get("agent_type")
+    verdict = parse_verdict(text, "pairwise")
+    attempt_id, attempt = next(((k, a) for k, a in state["attempts"].items()
+                                if a["pair"] == verdict["pair"] and a["status"] == "open"), (None, None))
+    if attempt and attempt["shape"] == "gap-only":
+        verdict = parse_verdict(text, "gap-only")
+    agent = state["agents"].get(agent_id)
+    base = {"agent_id": agent_id, "agent_type": agent_type}
+    if agent and agent["attested"]:  # a second attestation for one reader id: forgery or replay; void both
+        first = next(e for e in tx.events + tx.new if e["seq"] == agent["attested"])
+        voids = tainted_from(tx.events + tx.new, first["piece"], first["seq"])
+        return tx.emit("ATTEST_CONFLICT", "fact", "attest", piece=first["piece"], voids=voids,
+                       seqs=[first["seq"], len(tx.events) + len(tx.new) + 1], note="two attestations for one agent id", **base)
+    if not agent:
+        return tx.emit("VERDICT_INVALID", "fact", "attest", reason="agent was never registered by the start hook",
+                       **{"class": "evaluation"}, **base)
+    if not attempt:
+        return tx.emit("VERDICT_INVALID", "fact", "attest", reason=f"names no open attempt ({verdict['pair']})",
+                       **{"class": "evaluation"}, **base)
+    pid = attempt["piece"]
+    n = 2 if attempt["order"] == "swapped" else 1
+    path = gdir("verdicts", f"{pid}-r{attempt['round']}-{n}.md")
+    k = 1
+    while os.path.exists(path):  # a discarded verdict keeps its file; the next attempt gets its own
+        k += 1
+        path = gdir("verdicts", f"{pid}-r{attempt['round']}-{n}.{k}.md")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(redact(text))
+    winner = None
+    if verdict["valid"] and verdict["label"]:
+        mapping = read_mapping(attempt["pair"])
+        side = mapping.get(verdict["label"].lower())  # a hedge maps to nothing: a loss for ours
+        winner = side if attempt["shape"] == "pick" else "ours" if side in ("ours", "challenger") else "reference"
+    return tx.emit("CRITIC_RESULT", "fact", "attest", piece=pid, attempt_id=attempt_id, valid=verdict["valid"],
+                   tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                   reason=verdict["reason"], winner=winner, gap=verdict["gap"], shape=attempt["shape"],
+                   model=state["readers"].get(agent_type), artifact=os.path.relpath(path, root()), **base)
+
+
+def attest_editor(tx, p, text):
+    agent_id, agent_type = p.get("agent_id"), p.get("agent_type")
+    bound = None
+    path = gdir("private", "bindings", re.sub(r"\W", "_", agent_id or "none"))
+    if os.path.exists(path):
+        bound = read_text(path).strip()
+    pid = next((k for k in tx.state["pieces"] if bound and (bound == k or bound.startswith(k + "-v"))), None)
+    piece = tx.state["pieces"].get(pid)
+    if agent_type == "editor-fast":
+        return tx.emit("SMOOTHER_DONE", "fact", "attest", agent_id=agent_id, agent_type=agent_type, note=bound,
+                       tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                       **({"piece": pid} if piece and piece["state"] == "ACTIVE" else {}))
+    if not piece or not piece["building"] or piece["state"] != "ACTIVE":
+        print(f"note: {agent_id} stopped with no open builder attempt; nothing recorded")
+        return None
+    first = text.strip().splitlines()[0].strip() if text.strip() else ""
+    returned = "blocked" if first.upper().startswith("BLOCKED:") else "not-reproduced" if first.upper().startswith("NOT REPRODUCED:") else None
+    candidate = first.split()[0].strip("`") if first and not returned else ""
+    artifact = candidate if candidate and os.path.exists(os.path.join(root(), candidate)) else os.path.join(".gauntlet", "wt", bound)
+    return tx.emit("BUILDER_DONE", "fact", "attest", piece=pid, agent_id=agent_id, agent_type=agent_type,
+                   tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                   artifact=None if returned else artifact, returned=returned, note=first[:300] if returned else None)
+
+
+def cmd_attest(args):
+    """Hook-invoked only. SubagentStart registers; SubagentStop attests. A tool call of this command is denied by hook."""
+    p = json.load(sys.stdin)
+    state = load()
+    if not state["run"]:
+        return 0
+    if state["run"]["attestation"] == "tier-1":
+        # Only a hook process runs outside the sandbox, so only it can read the key (harness-claude-code.md, S4).
+        try:
+            same = args.key_file and os.path.samefile(args.key_file, gdir("private", "attest.key")) and read_text(args.key_file)
+        except OSError:
+            same = False
+        if not same:
+            raise Refused("attest needs the hook key at this tier; a payload without it is not from the harness")
+    with transaction() as tx:
+        if tx.state["run"]["ended"]:
+            return 0
+        if args.start:  # builders and critics are paid for where their attempt opens; these two have no attempt
+            tx.emit("AGENT_REGISTERED", "fact", "attest", agent_id=p.get("agent_id"), agent_type=p.get("agent_type"),
+                    cost=1 if p.get("agent_type") in ("author", "editor-fast") else None)
+        elif p.get("agent_type") in READERS:
+            attest_reader(tx, p, p.get("last_assistant_message") or "")
+        elif p.get("agent_type") in EDITORS:
+            attest_editor(tx, p, p.get("last_assistant_message") or "")
+    return 0
+
+
+# --- projection: what the lead and the user read is computed, never composed ---------------------------
+
+DONE = ("CONFIRMED", "INTEGRATED", "PROMOTED")
+TIERS = {1: "1 isolated", 2: "2 enforced policy", 3: "3 blind by instruction"}
+
+
+def sh(argv, **kw):
+    return subprocess.run(argv, capture_output=True, text=True, cwd=root(), **kw)
+
+
+def live_pieces(state):
+    return {k: p for k, p in state["pieces"].items() if not p["superseded"]}
+
+
+def status_line(state, at=None):
+    run = state["run"]
+    pieces = [p for p in live_pieces(state).values() if p["kind"] != "whole" and p["state"] != "PARKED"]
+    whole = next((p for p in state["pieces"].values() if p["kind"] == "whole"), None)
+    solo = len(live_pieces(state)) == 1 and pieces and pieces[0]["state"] in DONE
+    env = run["envelope"] or {"E": "?", "T_hours": "?"}
+    total = f"{env['T_hours']:g}" if run["envelope"] else "?"
+    hours = (epoch(at or now()) - epoch(run["started"])) / 3600
+    head = (f"confirmed {sum(p['state'] in DONE for p in pieces)}/{len(pieces)} pieces, "
+            f"whole: {'yes (2/2)' if (whole and whole['state'] in DONE) or solo else 'no'}"
+            f" | parked: {sum(p['state'] == 'PARKED' for p in live_pieces(state).values())}"
+            f" | blocked: {sum(p['state'] == 'BLOCKED' for p in live_pieces(state).values())}"
+            f" | spent: {sum(run['spent'].values())}/{env['E']} inv, {hours:.1f}/{total} h")
+    return head + (f" | ended: {run['ended']}" if run["ended"] else f" | tier: {run['tier']} | policy {run['policy']}")
+
+
+def next_actions(state):
+    """[(piece, 'mechanical' | 'judgment' | 'waiting', text)]. The controller names the judgment; it never makes it."""
+    run, out = state["run"], []
+    ctl = "gauntletctl"
+    if not run["frozen"]:
+        return [("-", "mechanical", f"{ctl} freeze <src> reference/<name> [--ref <tag>]; then freeze-verify under isolation")]
+    if not state["plan_pieces"]:
+        return [("-", "judgment", f"decide the coarsest split that can still be paired; record: {ctl} event SPLIT_DECIDED pieces=<n>")]
+    if run["ended"]:
+        if not run.get("committed"):
+            out.append(("-", "mechanical", f"{ctl} report; {ctl} commit"))
+        elif not run.get("pr"):
+            out.append(("-", "mechanical", f"{ctl} promote"))
+        return out or [("-", "waiting", "a human approves the pull request; status reads the merge from the remote")]
+    live = live_pieces(state)
+    if len(live) < state["plan_pieces"] and not any(p["kind"] == "whole" for p in live.values()):
+        out.append(("-", "judgment", f"pick each piece's referent (or --champion-challenger); then: {ctl} piece open <id> --referent <path>; "
+                                     f"{ctl} pair <id> --prepare --reference <matched part> --prompt <file>"))
+    if live and not run["plan_committed"]:
+        out.append(("-", "mechanical", f"{ctl} commit --plan, before any builder exists; attended: stop for approval"))
+    variants_open = any(p["variants"] for p in live.values())
+    for pid, p in live.items():
+        attempt = next((a for a in state["attempts"].values() if a["piece"] == pid and a["status"] == "open"), None)
+        if p["needs_floors"]:
+            out.append((pid, "mechanical", f"{ctl} floors {pid}  (a floor it rests on was amended)"))
+        elif p["state"] == "ACTIVE":
+            rung = LADDER[p["rung"] - 1] if 0 < p["rung"] <= len(LADDER) else None
+            if attempt:
+                out.append((pid, "waiting", f"on a {attempt['expected_type']} for {attempt['pair']}"))
+            elif p["building"]:
+                out.append((pid, "waiting", f"on its builder ({p['builder'] or 'not yet attested'}); dispatch an editor if none is running"))
+            elif p["floor_round"] != p["round"]:
+                out.append((pid, "mechanical", f"{ctl} floors {pid}"))
+            elif not p["floor_ok"]:
+                out.append((pid, "judgment", f"route the floor output as FLOOR: {ctl} event GAP_ROUTED piece={pid} class=artifact"))
+            elif p["last_verdict"] and state["attempts"] and p["last_gap"] and rung == "split" and not p["building"]:
+                out.append((pid, "judgment", f"ladder, split: decide where; {ctl} piece split {pid} <child> <child>"))
+            elif p["last_gap"] and p["verdicts"] and _lost_this_round(state, pid):
+                if rung == "split":
+                    out.append((pid, "judgment", f"ladder, split: decide where; {ctl} piece split {pid} <child> <child>"))
+                elif rung == "fresh builder":
+                    out.append((pid, "judgment", f"ladder, fresh builder: retire {p['builder']}, dispatch a new editor with the artifact and the gap; "
+                                                 f"{ctl} event GAP_ROUTED piece={pid} class=artifact"))
+                elif rung == "variants" and not variants_open:
+                    out.append((pid, "judgment", f"ladder, variants: two divergent one-line approaches first, a third only if both lose; "
+                                                 f"{ctl} event VARIANT_APPROACHES_SELECTED piece={pid} approaches='a|b'"))
+                elif rung == "variants":
+                    out.append((pid, "waiting", "another piece has variants open; one escalation at a time across the run"))
+                else:
+                    out.append((pid, "judgment", f"the same gap as last round? {ctl} event GAP_SAME_AS_LAST piece={pid}; "
+                                                 f"otherwise route it: {ctl} event GAP_ROUTED piece={pid} class=artifact"))
+            elif p["mode"] == CC and p["champion"] == p["round"]:
+                out.append((pid, "judgment", f"the champion stands; route the next attempt: {ctl} event GAP_ROUTED piece={pid} class=artifact"))
+            elif p["mode"] == CC and p["challenger_losses"] >= 2:
+                out.append((pid, "mechanical", f"{ctl} pair {pid} --gap-only; dispatch a reader with the path"))
+            else:
+                out.append((pid, "mechanical", f"{ctl} pair {pid}; dispatch a reader with the path and nothing else"))
+        elif p["state"] == "AWAITING_CONFIRMATION":
+            out.append((pid, "waiting", f"on a reader-alt for {attempt['pair']}") if attempt else
+                       (pid, "mechanical", f"{ctl} swap {pid}; dispatch a reader-alt with the path and nothing else"))
+        elif p["state"] == "BLOCKED":
+            out.append((pid, "judgment", f"cleared? {ctl} event BLOCKER_CLEARED piece={pid} note=<what changed>; else PARK_REQUESTED"))
+    confirmed = [pid for pid, p in live.items() if p["state"] == "CONFIRMED" and p["kind"] != "whole"]
+    if confirmed and all(p["state"] in DONE + ("PARKED",) for p in live.values() if p["kind"] != "whole"):
+        shared = "a shared edge is recorded: dispatch an editor-fast first; " if state["shared_edges"] else ""
+        out.append(("-", "mechanical", f"merge the wave; {shared}{ctl} wave {' '.join(confirmed)} --merge <commit>"))
+    if live and all(p["state"] in ("INTEGRATED", "PROMOTED", "PARKED") for p in live.values()) and len(live) > 1 \
+            and any(p["state"] == "INTEGRATED" for p in live.values()):
+        out.append(("-", "mechanical", f"the gate: {ctl} piece open whole --kind whole --referent <the whole reference>"))
+    return out
+
+
+def _lost_this_round(state, pid):
+    piece = state["pieces"][pid]
+    mine = [a for a in state["attempts"].values() if a["piece"] == pid and a["round"] == piece["round"]]
+    return bool(mine) and all(a["status"] != "open" for a in mine) and piece["state"] == "ACTIVE"
+
+
+def render_workbench(state):
+    run = state["run"]
+    env, acc = run["envelope"] or {}, run["accounts"] or {}
+    lines = [f"# {run['goal'] or 'gauntlet'} - gauntlet workbench", "",
+             f"Status: {status_line(state, at=state['last_ts'])}",
+             f"Bar: {run['bar'] or ''}", f"Critic's bar: {run['critic_bar'] or ''}",
+             f"Reference: {', '.join(run['frozen']) or '(not frozen)'}" + (f"; verified under isolation: {', '.join(run['verified'])}" if run["verified"] else ""),
+             f"Envelope: {env.get('E', '?')} invocations, {format(env['T_hours'], 'g') if env else '?'} hours - local {acc.get('local', '?')}, "
+             f"escalation {acc.get('escalation', '?')}, gate {acc.get('gate', '?')}; spent local {run['spent']['local']}, "
+             f"escalation {run['spent']['escalation']}, gate {run['spent']['gate']}",
+             f"Tier: {TIERS[run['tier']]}; attestation {run['attestation']}; sandbox {'on' if run['containment'].get('sandbox') else 'off'}, "
+             f"network allowlist {'on' if run['containment'].get('network') else 'off'}, credential denies {'on' if run['containment'].get('credentials') else 'off'}",
+             f"Invariants: {'; '.join(state['invariants']) or '(none)'}", f"DERIVED: {', '.join(state['derived']) or '(none)'}", ""]
+    if state["conflicts"]:
+        lines += ["## Attestation conflicts"] + [f"- {c['piece']}: two attestations for agent {c['agent_id']} (events {c['seqs']}); everything after the first was voided" for c in state["conflicts"]] + [""]
+    lines += ["## Parked"] + ([f"- {p['piece']} ({p['class']}): {p['reason']}; last verdict {p['last_verdict'] or '-'}; builder {p['builder'] or '-'}" for p in state["parked"]] or ["- (none)"]) + [""]
+    lines += ["| Piece | State | Referent | Round | Confirmed | Gap | Floor | Spent | Artifact | Builder id | Verdicts |", "|---|---|---|---|---|---|---|---|---|---|---|"]
+    for pid, p in live_pieces(state).items():
+        referent = f"{p['referent']} (champion-challenger)" if p["mode"] == CC else p["referent"]
+        confirmed = "converged" if p["converged"] else "yes (2/2)" if p["state"] in DONE else "-"
+        floor = "-" if p["floor_round"] != p["round"] else "green" if p["floor_ok"] else "RED"
+        lines.append(f"| {pid} | {p['state']} | {referent} | {p['round']} | {confirmed} | {p['last_gap'] or '-'} | {floor} | "
+                     f"{p['spent']}/{acc.get('gate', '?') if p['kind'] == 'whole' else p['allocation']} | {p['artifact'] or p['worktree'] or '-'} | {p['builder'] or '-'} | {', '.join(p['verdicts'][-2:]) or '-'} |")
+    lines += ["", "## Gaps named so far"] + ([f"- {g['piece']} R{g['round']}: {g['gap'] or g['event']} ({g['class']})" for g in state["gaps"]] or ["- (none)"])
+    lines += ["", "## Escalations"] + ([f"- {x['piece']}: {x['trigger']}" + (f" -> rung {x['rung']} ({LADDER[x['rung'] - 1]})" if 0 < x["rung"] <= len(LADDER) else "") for x in state["escalations"]] or ["- (none)"])
+    lines += ["", "## Open questions for the user"] + ([f"- {q}" for q in state["open_questions"]] or ["- (none)"])
+    if state["scope_failures"]:
+        lines += ["", "## Intent draft"] + [f"- {x}" for x in state["scope_failures"]]
+    return "\n".join(lines) + "\n"
+
+
+def cmd_status(args):
+    late = expire_leases()
+    state = load()
+    if not state["run"]:
+        raise Rejected("no run here; start one with init")
+    if state["run"].get("pr") and any(p["state"] == "INTEGRATED" for p in state["pieces"].values()):
+        view = sh(["gh", "pr", "view", state["run"]["pr"], "--json", "state"])
+        if view.returncode == 0 and json.loads(view.stdout or "{}").get("state") == "MERGED":
+            with transaction() as tx:  # only the remote promotes; the lead cannot
+                for pid, p in tx.state["pieces"].items():
+                    if p["state"] == "INTEGRATED":
+                        tx.emit("PR_MERGED", "fact", "status", piece=pid, artifact=state["run"]["pr"])
+    with transaction() as tx:
+        tx.emit("LEAD_TURN", "fact", "status")
+        state = tx.state
+    if args.full:
+        print(render_workbench(state))
+        for pid, p in live_pieces(state).items():
+            print(f"{pid}: {p['state']}, round {p['round']}, rung {p['rung']}, builder {p['builder'] or '-'}, worktree {p['worktree']}, last gap: {p['last_gap'] or '-'}")
+        print("\nnext:")
+        for pid, kind, text in next_actions(state):
+            print(f"  {kind:<11} {text}" if pid == "-" else f"  {kind:<11} {text}  [{pid}]")
+        print()
+    if late:
+        print(f"lease expired, now BLOCKED: {', '.join(late)}")
+    print(status_line(state))
+    return 0
+
+
+def cmd_next(args):
+    state = load()
+    if not state["run"]:
+        print(f"mechanical  gauntletctl init --invocations <N> --hours <T> --goal ... --bar ... --critic-bar ...")
+        return 0
+    for pid, kind, text in next_actions(state):
+        print(f"{kind:<11} {text}" + ("" if pid == "-" else f"  [{pid}]"))
+    return 0
+
+
+def cmd_workbench(args):
+    state = load()
+    with open(gdir("workbench.md"), "w") as f:
+        f.write(render_workbench(state))
+    print(gdir("workbench.md"))
+    return 0
+
+
+def cmd_gate(args):
+    state = load()
+    live = live_pieces(state)
+    whole = next((p for p in live.values() if p["kind"] == "whole"), None) or (next(iter(live.values())) if len(live) == 1 else None)
+    if not whole or whole["state"] not in DONE or len(whole["verdicts"]) < 2:
+        raise Rejected("the whole is not confirmed: there are no two whole-gate verdicts to show")
+    for path in whole["verdicts"][-2:]:
+        winner = next((line.strip() for line in read_text(os.path.join(root(), path)).splitlines() if line.strip().upper().startswith(("WINNER:", "GAP: NONE"))), "WINNER: ?")
+        print(f"{path}: {winner}")
+    return 0
+
+
+def cmd_wave(args):
+    state = load()
+    for pid in args.pieces:
+        if state["pieces"].get(pid, {}).get("state") != "CONFIRMED":
+            raise Rejected(f"{pid} is not CONFIRMED; a wave is made of confirmed pieces")
+    red = [pid for pid in args.pieces if run_floors(pid) != 0]  # floors again, on the merge
+    with transaction() as tx:
+        for pid in args.pieces:
+            if pid not in red:
+                tx.emit("WAVE_COMPLETE", "fact", "wave", piece=pid, artifact=args.merge)
+    return 2 if red else 0
+
+
+def cmd_resume(args):
+    if not args.actor:
+        raise Rejected("a parked piece is resumed by a named human: --actor <name>")
+    with transaction() as tx:
+        tx.emit("HUMAN_RESUMED", "fact", "resume", piece=args.piece, actor=args.actor)
+    return 0
+
+
+# --- metrics: every number comes from the log ---------------------------------------------------------------
+
+def metrics(events, state):
+    ev = [e for e in events if e["seq"] not in set(state["voided"])]
+    count = lambda *names: sum(e["event"] in names for e in ev)
+    confirmed = [pid for pid, p in live_pieces(state).items() if p["state"] in DONE and p["kind"] != "whole"]
+    per = lambda n: round(n / len(confirmed), 2) if confirmed else None
+    rate = lambda a, b: round(a / b, 2) if b else None
+    rounds = count("BUILDER_DONE") - sum(bool(e.get("returned")) for e in ev if e["event"] == "BUILDER_DONE")
+    verdicts = count("CRITIC_RESULT") + sum(e["event"] == "VERDICT_INVALID" and "from_seq" not in e for e in ev)
+    run = state["run"]
+    acc = run["accounts"] or {"local": 0, "escalation": 0, "gate": 0}
+    escalations = [x for x in state["escalations"] if x["rung"]]
+    starts, minutes = {}, 0.0
+    for e in ev:
+        if e["event"] == "AGENT_REGISTERED":
+            starts[e["agent_id"]] = epoch(e["ts"])
+        elif e["event"] in ("BUILDER_DONE", "CRITIC_RESULT", "SMOOTHER_DONE") and e.get("agent_id") in starts:
+            minutes += (epoch(e["ts"]) - starts.pop(e["agent_id"])) / 60
+    whole = [e for e in ev if state["pieces"].get(e.get("piece"), {}).get("kind") == "whole"]
+    gate_losses = sum(e["event"] in ("CRITIC_LOSS", "CONFIRMATION_LOSS") for e in whole)
+    gate_verdicts = sum(e["event"] in ("CRITIC_LOSS", "CONFIRMATION_LOSS", "CRITIC_WIN", "CONFIRMATION_WIN") for e in whole)
+    children = [p for p in state["pieces"].values() if p["parent"] and p["state"] in DONE]
+    tokens = sum(e.get("tokens") or 0 for e in ev)
+    swaps = [x for x in escalations if x["rung"] == 2]  # the fresh-builder rung
+
+    def closed_soon(x):
+        later = [e for e in ev if e.get("piece") == x["piece"] and e["seq"] > x["seq"]]
+        win = next((e["seq"] for e in later if e["event"] == "CRITIC_WIN"), None)
+        return win is not None and sum(e["event"] == "BUILDER_DONE" and e["seq"] < win for e in later) <= 2
+    return {
+        "rounds_per_confirmed_piece": per(rounds),
+        "red_floor_share": rate(count("FLOOR_FAIL"), count("FLOOR_FAIL", "FLOOR_PASS")),
+        "confirmation_flip_rate": rate(count("CONFIRMATION_LOSS"), count("CONFIRMATION_LOSS", "CONFIRMATION_WIN")),
+        "discarded_verdict_rate": rate(count("VERDICT_INVALID"), verdicts),
+        "not_reproduced_accepted_rate": rate(count("NOT_REPRODUCED_ACCEPTED"), verdicts),
+        "parked_pieces": count("PIECE_PARKED"),  # ever parked, resumed or not
+        "escalations_per_piece": {"gap": rate(sum(x["trigger"] == "gap" for x in escalations), len(live_pieces(state))),
+                                  "spend": rate(sum(x["trigger"] == "spend" for x in escalations), len(live_pieces(state)))},
+        "share_of_escalations_from_spend": rate(sum(x["trigger"] == "spend" for x in escalations), len(escalations)),
+        "invocations_per_confirmed_piece": per(sum(run["spent"].values())),
+        "lead_turns_per_confirmed_piece": per(run["lead_turns"]),
+        "controller_operations_per_confirmed_piece": per(sum(e["kind"] == "fact" for e in ev)),
+        "worker_minutes_per_confirmed_piece": per(round(minutes, 1)),
+        "tokens_per_confirmed_piece": per(tokens) if tokens else "n/a",
+        "spend": {k: f"{run['spent'][k]}/{acc[k]}" for k in ("local", "escalation", "gate")},
+        "unused_reserve": {k: acc[k] - run["spent"][k] for k in ("escalation", "gate")},
+        "ended": run["ended"], "ceiling_hit": run["ended"] == "ceiling",
+        "by_class": {c: sum(g["class"] == c for g in state["gaps"]) for c in CLASSES},
+        "attestation_conflicts": len(state["conflicts"]),
+        "fresh_builder_gap_closed_within_two_rounds": rate(sum(closed_soon(x) for x in swaps), len(swaps)),
+        "rounds_per_confirmed_piece_after_split": round(sum(p["round"] for p in children) / len(children), 2) if children else None,
+        "variant_escalations_whose_winner_confirmed": None if not count("VARIANT_APPROACHES_SELECTED") else
+            rate(sum(1 for e in ev if e["event"] == "VARIANT_APPROACHES_SELECTED" and state["pieces"][e["piece"]]["state"] in DONE), count("VARIANT_APPROACHES_SELECTED")),
+        "converged_pieces": sum(p["converged"] for p in state["pieces"].values()),
+        "converged_pieces_reopened": sum(1 for e in ev if e["event"] in ("RECHECK_LOSS", "FLOOR_FAIL") and state["pieces"].get(e.get("piece"), {}).get("converged")),
+        "whole_gate_loss_rate": rate(gate_losses, gate_verdicts),
+        "coherence_pieces": sum(p["kind"] == "coherence" for p in state["pieces"].values()),
+        "rounds_to_confirm_coherence": [p["round"] for p in state["pieces"].values() if p["kind"] == "coherence" and p["state"] in DONE],
+    }
+
+
+def metric_lines(m):
+    return [f"{key.replace('_', ' '):<48} {value if value is not None else '-'}" for key, value in m.items()]
+
+
+def cmd_report(args):
+    """The report is computed; the lead adds only its account of what is still below the bar and why."""
+    state = load()
+    if not state["run"]:
+        raise Rejected("no run here")
+    run, live = state["run"], live_pieces(state)
+    whole = next((p for p in live.values() if p["kind"] == "whole"), None)
+    c = run["containment"]
+    lines = [f"# Report: {run['goal'] or run['id']}", "", status_line(state), "",
+             f"Tier: {TIERS[run['tier']]}; attestation {run['attestation']}. Containment: sandbox {'on' if c.get('sandbox') else 'off'}, "
+             f"strict mode {'on' if c.get('strict') else 'off'}, network allowlist {'on' if c.get('network') else 'off'}, "
+             f"credential denies {'on' if c.get('credentials') else 'off'}.", ""]
+    if state["conflicts"]:
+        lines += ["## Attestation conflicts"] + [f"- {x['piece']}: two attestations for agent {x['agent_id']} (events {x['seqs']}); "
+                                                 "everything the piece did after the first was voided" for x in state["conflicts"]] + [""]
+    lines += ["## Parked"] + ([f"- {p['piece']} ({p['class']}): {p['reason']}. Last verdict: {p['last_verdict'] or 'none'}. Builder: {p['builder'] or 'none'}"
+                               for p in state["parked"]] or ["- (none)"]) + [""]
+    acc = run["accounts"] or {}
+    lines += ["## Result", f"- How the run ended: {run['ended'] or 'it has not ended'}", f"- Bar: {run['bar'] or ''}",
+              f"- Reference manifest: {', '.join(os.path.join(ref, 'MANIFEST') for ref in run['frozen']) or '(none)'}",
+              "- Whole-gate verdicts: " + (", ".join(whole["verdicts"][-2:]) if whole and whole["state"] in DONE else "none: the whole was not confirmed"),
+              f"- Envelope: {(run['envelope'] or {}).get('E', '?')} invocations, {(run['envelope'] or {}).get('T_hours', '?')} hours; spent "
+              + ", ".join(f"{k} {run['spent'][k]}/{acc.get(k, '?')}" for k in ("local", "escalation", "gate")), ""]
+    lines += ["## Pieces"]
+    for pid, p in live.items():
+        outcome = f"converged against {p['referent']}" if p["converged"] else "confirmed (2/2)" if p["state"] in DONE else p["state"]
+        lines.append(f"- {pid}: {outcome}; rounds {p['round']}; verdicts {', '.join(p['verdicts'][-2:]) or 'none'}")
+    lines += ["", "## Gap log"] + ([f"- {g['piece']} R{g['round']}: {g['gap'] or g['event']} ({g['class']})" for g in state["gaps"]] or ["- (none)"])
+    lines += ["", "## Escalations"] + ([f"- {x['piece']}: {x['trigger']}" for x in state["escalations"]] or ["- (none)"])
+    lines += ["", "## Intent draft"] + ([f"- {x}" for x in state["scope_failures"]] or ["- (no scope failure was filed)"])
+    lines += ["", "## Metrics", "```"] + metric_lines(metrics(read_events(), state)) + ["```", "", "## Still below the bar"]
+    notes = read_text(os.path.join(root(), args.notes)).strip() if args.notes else ""
+    lines += [notes or "(the lead's account: what is still below the bar and why)", ""]
+    with open(gdir("report.md"), "w") as f:
+        f.write("\n".join(lines))
+    print(gdir("report.md"))
+    return 0
+
+
+def cmd_metrics(args):
+    m = metrics(read_events(), load())
+    print(json.dumps(m, indent=2) if args.json else "\n".join(metric_lines(m)))
+    return 0
+
+
+# --- git: the run's artifacts are review findings; no run merges its own result -------------------------------
+
+def committed_set(state, plan):
+    paths = [os.path.join(ref, "MANIFEST") for ref in state["run"]["frozen"]]
+    paths += [".gauntlet/events.jsonl", ".gauntlet/workbench.md", ".gauntlet/plan.md"]
+    paths += [] if plan else [".gauntlet/verdicts", ".gauntlet/report.md"]
+    return [p for p in paths if os.path.exists(os.path.join(root(), p))]
+
+
+def cmd_commit(args):
+    state = load()
+    if not state["run"]:
+        raise Rejected("no run here")
+    hits = scan_paths([os.path.join(root(), p) for p in committed_set(state, args.plan) if not p.endswith("MANIFEST")])
+    if hits:
+        with transaction() as tx:
+            tx.emit("SCAN_FAILED", "fact", "commit", note="; ".join(f"{os.path.relpath(p, root())}:{n} {label}" for p, n, label in hits[:10]))
+        raise Refused("secret scan failed; nothing was committed:\n  " + "\n  ".join(f"{os.path.relpath(p, root())}:{n}: {label} [redacted]" for p, n, label in hits))
+    with transaction() as tx:
+        tx.emit("PLAN_COMMITTED" if args.plan else "ARTIFACTS_COMMITTED", "fact", "commit")
+    if args.plan:
+        shutil.copy(gdir("workbench.md"), gdir("plan.md"))  # the round-zero workbench is the plan
+    paths = committed_set(load(), args.plan)
+    # ponytail: if git fails here the event is already in the log; rare, and the next commit carries it
+    sh(["git", "add", "-f", "--", *paths])
+    done = sh(["git", "commit", "-q", "-m", f"gauntlet: {'the plan (round zero)' if args.plan else 'run artifacts'}", "--", *paths])
+    if done.returncode != 0:
+        raise Refused(f"git commit failed: {done.stderr.strip() or done.stdout.strip()}")
+    print("\n".join(paths))
+    return 0
+
+
+def pr_body(state):
+    run = state["run"]
+    live = live_pieces(state)
+    whole = next((p for p in live.values() if p["kind"] == "whole"), None) or (next(iter(live.values())) if len(live) == 1 else None)
+    lines = [f"Gauntlet run {run['id']}: {run['goal'] or ''}", "", f"Bar: {run['bar'] or ''}", "", status_line(state), "",
+             f"Enforcement: tier {run['tier']}, attestation {run['attestation']}. Compliance pass: check this diff against the bar sentence and the two whole-gate verdicts.", "",
+             "- Reference manifest: " + ", ".join(os.path.join(ref, "MANIFEST") for ref in run["frozen"]),
+             "- Plan: .gauntlet/plan.md", "- Workbench: .gauntlet/workbench.md", "- Report: .gauntlet/report.md", "- Event log: .gauntlet/events.jsonl",
+             "- Whole-gate verdicts: " + (", ".join(whole["verdicts"][-2:]) if whole and whole["state"] in DONE else "none: the whole was not confirmed")]
+    if state["conflicts"]:
+        lines += ["", "Attestation conflicts (read these first): " + "; ".join(f"{c['piece']} agent {c['agent_id']}" for c in state["conflicts"])]
+    if state["parked"]:
+        lines += ["", "Parked: " + "; ".join(f"{p['piece']} ({p['reason']})" for p in state["parked"])]
+    resumed = [x for x in state["escalations"] if x["trigger"].startswith("resumed by")]
+    if resumed:
+        lines += ["", "Human resumes: " + "; ".join(f"{x['piece']} {x['trigger']}" for x in resumed)]
+    return "\n".join(lines)
+
+
+def cmd_promote(args):
+    state = load()
+    if not state["run"] or not state["run"].get("committed"):
+        raise Rejected("commit the run's artifacts first (gauntletctl commit)")
+    sh(["git", "push", "-u", "origin", "HEAD"])
+    made = sh(["gh", "pr", "create", "--title", f"gauntlet: {state['run']['goal'] or state['run']['id']}", "--body", pr_body(state)])
+    if made.returncode != 0:
+        raise Refused(f"gh pr create failed: {made.stderr.strip()}. Without a remote that takes pull requests, report promotion as not applied")
+    url = made.stdout.strip().splitlines()[-1]
+    with transaction() as tx:
+        tx.emit("PR_OPENED", "fact", "promote", artifact=url)
+    print(f"{url}\na human approves it; status reads the merge from the remote")
+    return 0
+
+
+# --- init ------------------------------------------------------------------------------------------
+
+def reader_pins():
+    pins = {}
+    for path in HARNESS["readers"]:
+        full = os.path.join(root(), path)
+        m = re.search(r"(?m)^model:\s*(\S+)\s*$", read_text(full)) if os.path.exists(full) else None
+        pins[os.path.basename(path)[:-3]] = m.group(1) if m else None
+    return pins
+
+
+def cmd_init(args):
+    pol, pins = policy(), reader_pins()
+    if None in pins.values() or len(set(pins.values())) < len(pins):
+        raise Refused(f"the two reader definitions must pin two different models; installed: {pins}")
+    if pins != pol["confirmation"]:
+        raise Refused(f"installed reader pins {pins} are not the policy's {pol['confirmation']}")
+    facts = detect()
+    with transaction() as tx:
+        if tx.state["run"]:
+            raise Rejected("a run already exists here; a new bar is a new run in a new checkout")
+        os.makedirs(gdir("private"), exist_ok=True)
+        for name in ("secret", "attest.key"):
+            with open(os.open(gdir("private", name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+                f.write(secrets.token_hex(32))
+        with open(gdir(".gitignore"), "w") as f:
+            f.write("*\n")
+        envelope = {"E": args.invocations, "T_hours": args.hours} if args.invocations and args.hours else None
+        tx.emit("RUN_STARTED", "fact", "init", run=time.strftime("g-%Y%m%d-") + secrets.token_hex(3),
+                policy=pol["version"], tier=facts["tier"], containment=facts["containment"],
+                attestation=facts["attestation"], readers=pins, envelope=envelope,
+                envelope_policy=pol["envelope"], lease_hours=pol["lease_hours"], goal=args.goal, bar=args.bar,
+                critic_bar=args.critic_bar, invariants=args.invariant)
+    return 0
+
+
+# --- cli ---------------------------------------------------------------------------------------
+
+def cmd_log_block(args):
+    """The hooks' door into the log. It takes the two block events and nothing else."""
+    try:
+        fields = json.loads(args.fields)
+    except ValueError:
+        fields = None
+    if args.event not in BLOCK_EVENTS or not isinstance(fields, dict):
+        print(f"log-block records {' or '.join(BLOCK_EVENTS)} with a JSON object of fields", file=sys.stderr)
+        return 2
+    allowed = ("agent_id", "agent_type", "artifact", "note", "piece")
+    with transaction() as tx:
+        tx.emit(args.event, "fact", "hook", **{k: fields.get(k) for k in allowed})
+    return 0
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(prog="gauntletctl")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p = sub.add_parser("log-block", help="hook-invoked: record a block event")
+    p.add_argument("event")
+    p.add_argument("fields")
+    p.set_defaults(fn=cmd_log_block)
+    p = sub.add_parser("init", help="start the run: id, secret, policy pin, detected tier and containment, reader pins")
+    p.add_argument("--invocations", type=int, help="N from the prompt's first line")
+    p.add_argument("--hours", type=float, help="T from the prompt's first line")
+    p.add_argument("--goal")
+    p.add_argument("--bar", help="the full bar sentence")
+    p.add_argument("--critic-bar", help="the bar sentence with the reference's name removed")
+    p.add_argument("--invariant", action="append", default=[], help="a 'never' from the goal, verbatim; repeatable")
+    p.set_defaults(fn=cmd_init)
+    p = sub.add_parser("piece", help="open a piece with its referent and worktree, or split one on a repeated gap")
+    p.add_argument("action", choices=["open", "split"])
+    p.add_argument("id")
+    p.add_argument("children", nargs="*", help="split: the new pieces")
+    p.add_argument("--referent", help="the named, frozen referent this piece is judged against")
+    p.add_argument("--champion-challenger", action="store_true", help="no matching part in any reference")
+    p.add_argument("--kind", choices=["piece", "whole", "coherence"], default="piece")
+    p.set_defaults(fn=cmd_piece)
+    p = sub.add_parser("pair", help="build the one live pair for a piece from a seeded mapping; one command per verdict")
+    p.add_argument("piece")
+    p.add_argument("--prepare", action="store_true", help="round zero, once per piece: the reference half and PROMPT.md")
+    p.add_argument("--reference", help="--prepare: the matched part of the frozen reference")
+    p.add_argument("--prompt", help="--prepare: a file holding the bar, the inspection steps and the reading floors")
+    p.add_argument("--adapter", help="--prepare: a script that calls each side the same way")
+    p.add_argument("--ours", help="the artifact, when it is not the one the builder returned")
+    p.add_argument("--gap-only", action="store_true", help="champion-challenger: the champion against its referent, no WINNER")
+    p.add_argument("--recheck", action="store_true", help="an integrated piece the smoother touched")
+    p.add_argument("--pick", help="variants that all lost: the other variant's path; the closer of --ours and this continues")
+    p.set_defaults(fn=cmd_pair)
+    p = sub.add_parser("swap", help="archive the first pair and build the confirmation pair: same files, labels inverted")
+    p.add_argument("piece")
+    p.set_defaults(fn=cmd_swap)
+    p = sub.add_parser("floor", help="register a floor and, after round zero, be the only hand that writes its file")
+    p.add_argument("action", choices=["add", "amend", "list"])
+    p.add_argument("id", nargs="?")
+    p.add_argument("--cmd", help="the command that decides it; exit 0 is green")
+    p.add_argument("--from", dest="source", help="a file an author staged under .gauntlet/staging/")
+    p.add_argument("--to", help="where it goes, under tests/required/, heldout/, reference/ or bench/")
+    p.add_argument("--derived", action="store_true", help="the user did not supply it")
+    p.add_argument("--piece", help="a floor for one piece only")
+    p.add_argument("--needs-reference", action="store_true", help="it executes reference code: isolation required")
+    p.set_defaults(fn=cmd_floor)
+    p = sub.add_parser("floors", help="run the lead-side floors on ours; FLOOR_PASS or FLOOR_FAIL")
+    p.add_argument("piece")
+    p.set_defaults(fn=cmd_floors)
+    p = sub.add_parser("rerun", help="re-execute one cited command and record what was observed")
+    p.add_argument("piece")
+    p.add_argument("command")
+    p.set_defaults(fn=cmd_rerun)
+    p = sub.add_parser("attest", help="hook-invoked: register an agent (SubagentStart) or attest its result (SubagentStop)")
+    p.add_argument("--start", action="store_true")
+    p.add_argument("--key-file")
+    p.set_defaults(fn=cmd_attest)
+    p = sub.add_parser("status", help="the status line, verbatim; --full is the resume view after compaction")
+    p.add_argument("--full", action="store_true")
+    p.set_defaults(fn=cmd_status)
+    sub.add_parser("next", help="the legal actions now: mechanical ones, and the judgments the lead owes").set_defaults(fn=cmd_next)
+    sub.add_parser("workbench", help="regenerate the projection").set_defaults(fn=cmd_workbench)
+    sub.add_parser("gate", help="the two whole-gate verdict files and their WINNER lines").set_defaults(fn=cmd_gate)
+    p = sub.add_parser("wave", help="floors again on the merge, then WAVE_COMPLETE for each confirmed piece")
+    p.add_argument("pieces", nargs="+")
+    p.add_argument("--merge", required=True, help="the merge commit")
+    p.set_defaults(fn=cmd_wave)
+    p = sub.add_parser("resume", help="human only: resume a parked piece; logged with the actor")
+    p.add_argument("piece")
+    p.add_argument("--actor")
+    p.set_defaults(fn=cmd_resume)
+    p = sub.add_parser("metrics", help="the run's numbers, from the event log")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=cmd_metrics)
+    p = sub.add_parser("report", help="write .gauntlet/report.md from state and metrics; conflicts and parked pieces first")
+    p.add_argument("--notes", help="a file with the lead's account of what is still below the bar and why")
+    p.set_defaults(fn=cmd_report)
+    p = sub.add_parser("commit", help="secret scan, then stage and commit the committed set and nothing else")
+    p.add_argument("--plan", action="store_true", help="round zero: the workbench is the plan")
+    p.set_defaults(fn=cmd_commit)
+    sub.add_parser("promote", help="open the pull request; only the remote's merge promotes").set_defaults(fn=cmd_promote)
+    p = sub.add_parser("event", help="record one of the lead's judgment calls; fact events are rejected")
+    p.add_argument("name")
+    p.add_argument("fields", nargs="*", help="k=v")
+    p.set_defaults(fn=cmd_event)
+    p = sub.add_parser("freeze", help="copy or clone a reference, strip instruction and credential files, write the manifest; executes nothing")
+    p.add_argument("src")
+    p.add_argument("dst")
+    p.add_argument("--ref", help="tag or branch to pin")
+    p.set_defaults(fn=cmd_freeze)
+    p = sub.add_parser("freeze-verify", help="run the reference's own install, build and floors; refused without isolation")
+    p.add_argument("dst")
+    p.add_argument("--cmd", action="append", default=[], help="a command to run inside the frozen copy; repeatable")
+    p.set_defaults(fn=cmd_freeze_verify)
+    p = sub.add_parser("scan", help="secret scan; exit 3 on a hit, values never printed")
+    p.add_argument("paths", nargs="+")
+    p.set_defaults(fn=cmd_scan)
+    sub.add_parser("detect", help="report tier and containment from installed files and settings").set_defaults(fn=cmd_detect)
+    args = parser.parse_args(argv)
+    try:
+        return args.fn(args)
+    except (Rejected, Spent) as err:
+        print(f"{'refused' if err.code == 3 else 'rejected'}: {err}", file=sys.stderr)
+        return err.code
+
+
+if __name__ == "__main__":
+    sys.exit(main())

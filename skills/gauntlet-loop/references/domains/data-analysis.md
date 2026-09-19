@@ -23,7 +23,7 @@ Reading floors (CRITIC, both sides): the metric definition names numerator, deno
 
 It receives a/ and b/, each holding report, code and raw-data pointer. It reruns each from raw with the fixed seed, pasting headline number and output hash. It writes its own recomputation from the metric definition sentence, before reading either side's code, and compares. It runs the sensitivity sweep on both and pastes the range. Evidence: pasted command output, a quoted report line with path and line, a computed number.
 
-The LEAD blinds the pair: same metric, reports taken at the same section, neither side truncated, notebooks converted by the LEAD to plain scripts so no cached output carries a BUILDER trace, directories renamed a/ and b/, git history and author lines stripped.
+Pair preparation: at round zero `pair --prepare` takes the reference report at the same section and metric, neither side truncated, author lines stripped. Every round the LEAD converts our notebooks to plain scripts, so no cached output carries a BUILDER trace, and `pair` copies them beside the reference under seeded labels, git history left out.
 
 ## How the LEAD splits this work
 

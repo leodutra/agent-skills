@@ -1,0 +1,7 @@
+PAIR: {pair}
+EVIDENCE:
+- A: `node run.mjs a format 5400000` -> 2h; with --long -> 2 hours
+- B: `node run.mjs b format 5400000` -> 1.5h; b/format.ts:31 `const v = ms / unit`
+WINNER: {winner}
+GAP: the loser prints fractional units (1.5h) where the rest of the output is whole-unit; seen by running format on 5400000.
+FLOOR: each thrown error names the bad input - A: pass / B: fail (`expected a number`)

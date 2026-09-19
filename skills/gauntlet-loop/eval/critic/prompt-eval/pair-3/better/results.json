@@ -1,0 +1,11 @@
+{
+  "visible": {
+    "pass": 37,
+    "of": 40
+  },
+  "heldout": {
+    "pass": 9,
+    "of": 10
+  },
+  "schema_invalid": 0
+}

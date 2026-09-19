@@ -1,0 +1,7 @@
+PAIR: {pair}
+WINNER: A
+EVIDENCE:
+- A: `npm test` in a/ - 6 passed
+- B: `npm test` in b/ - 4 passed, 2 failed
+GAP: B fails two cases.
+FLOOR: pass / fail

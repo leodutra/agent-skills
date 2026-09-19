@@ -32,7 +32,7 @@ Reading floors (CRITIC runs on both sides):
 
 Evidence: quoted passage with URL, dated search result, a count, pasted grep output.
 
-Pair preparation: the LEAD takes the reference section on the same question, matched to about the same length by choice of section, never by cutting, strips titles, bylines, the document date, filenames and draft markers, renumbers citations from [1] in both, saves plain text A and B.
+Pair preparation: at round zero the LEAD picks the reference section on the same question, matched to about the same length by choice of section, never by cutting, strips titles, bylines, the document date, filenames and draft markers, renumbers citations from [1], and hands it to `pair --prepare` as plain text. Every round ours gets the same stripping and renumbering before `pair` copies it beside the reference under seeded labels.
 
 ## How the LEAD splits this work
 

@@ -1,0 +1,1 @@
+Classify the ticket. Reply with JSON only, no prose: {"label": one of "billing", "bug", "how-to", "other"}. Choose exactly one. If two apply, choose the one the customer needs resolved first.

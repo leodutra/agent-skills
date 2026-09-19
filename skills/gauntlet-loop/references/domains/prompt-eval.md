@@ -16,7 +16,7 @@ Reading floors, CRITIC runs on both sides: each rule addresses a class of inputs
 ## What the critic physically does
 
 Runs the harness on A and B, one config, three runs per case, visible and held-out. Pastes per side: pass rate per run, schema-invalid count, mean tokens, per-case diff of which cases flip each way. The run-to-run spread is the noise band; a gap inside it is not a gap. Greps both prompts for eval inputs; quotes the line behind each flipped case. Evidence: pasted harness output, diff path, quoted lines, numbers.
-Pair preparation: the LEAD saves both prompts as A.txt and B.txt, names, commit ids and comments stripped, neither cut (the token ceiling is a command floor), then hands over A.txt, B.txt, the critic's copy of the bar sentence and the inspection steps; one config, one seed list and the eval files sit in eval/ beside them.
+Pair preparation: at round zero `pair --prepare` takes the baseline prompt as the reference half, names, commit ids and comments stripped, with one config, one seed list and the eval files in `eval/` as the adapter, and the baseline's pass rates as its floor outputs. Every round `pair` copies our prompt beside it under seeded labels, neither side cut (the token ceiling is a command floor).
 
 ## How the LEAD splits this work
 

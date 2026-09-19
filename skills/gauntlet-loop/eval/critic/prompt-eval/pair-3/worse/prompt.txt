@@ -1,0 +1,1 @@
+Output only a commit subject line: imperative mood, 72 characters or fewer, no final period. Keep the original meaning; do not add scope prefixes.

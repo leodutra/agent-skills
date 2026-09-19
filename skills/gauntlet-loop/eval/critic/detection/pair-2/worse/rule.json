@@ -1,0 +1,6 @@
+{
+  "all": [
+    "powershell.exe -EncodedCommand"
+  ],
+  "ignore_case": false
+}

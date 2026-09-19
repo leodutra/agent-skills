@@ -1,0 +1,49 @@
+{
+  "_about": "The minimal permissions for a gauntlet run. install/claude_code.py merges `permissions` and `sandbox` into the target repository's .claude/settings.json; it never sets sandbox.enabled, which is the operator's switch (/sandbox). No excludedCommands ship: a compound command rides along with an excluded prefix (harness-claude-code.md, S14). Credential entries belong in user or managed settings; the harness ignores them in project settings.",
+  "permissions": {
+    "allow": [
+      "Bash(git *)",
+      "Bash(gh pr *)",
+      "Bash(python3 .claude/hooks/gauntlet/gauntletctl *)",
+      "Bash(.claude/hooks/gauntlet/gauntletctl *)",
+      "Bash(npm ci)",
+      "Bash(npm test *)",
+      "Bash(npm run *)",
+      "Bash(node *)",
+      "Bash(npx playwright *)",
+      "Bash(npx lighthouse *)",
+      "Bash(npx @axe-core/cli *)",
+      "Bash(hyperfine *)",
+      "Bash(python3 -m pytest *)",
+      "Bash(python3 -m unittest *)",
+      "Bash(cargo build *)",
+      "Bash(cargo test *)",
+      "Bash(go test *)",
+      "Bash(wc *)"
+    ],
+    "deny": [
+      "Read(.gauntlet/private/**)",
+      "Edit(.gauntlet/private/**)",
+      "Read(.gauntlet/state.json)",
+      "Edit(.gauntlet/state.json)",
+      "Read(.gauntlet/events.jsonl)",
+      "Edit(.gauntlet/events.jsonl)",
+      "Read(**/.env*)",
+      "Edit(**/.env*)",
+      "Read(**/*.pem)",
+      "Read(**/id_rsa*)",
+      "Read(~/.ssh/**)",
+      "Read(~/.aws/**)"
+    ],
+    "blockReadsOutsideWorkingDirectories": true
+  },
+  "sandbox": {
+    "allowUnsandboxedCommands": false,
+    "filesystem": {"denyRead": [".gauntlet/private/attest.key"]},
+    "network": {"allowedDomains": ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "crates.io", "static.crates.io", "proxy.golang.org", "github.com"]}
+  },
+  "user_settings_recommended": {
+    "sandbox": {"credentials": {"files": [{"path": "~/.aws/credentials", "mode": "deny"}, {"path": "~/.ssh", "mode": "deny"}],
+                                "envVars": [{"name": "GITHUB_TOKEN", "mode": "deny"}, {"name": "NPM_TOKEN", "mode": "deny"}]}}
+  }
+}

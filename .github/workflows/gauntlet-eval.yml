@@ -1,0 +1,98 @@
+# The gauntlet-loop skill's own gate. Free checks on every matching change; the two paid eval suites only when the skill's
+# files changed AND the repository has an ANTHROPIC_API_KEY secret. Without the secret they are skipped, the gate rests on
+# the free checks, and the suites are run by hand (eval/run.sh, eval/run_critic.sh) before merging a skill change. `gate` is the one job to require in branch protection: it passes when
+# nothing relevant changed, so it never leaves an unrelated pull request waiting on a check that will not run.
+name: gauntlet-eval
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      skill: ${{ steps.diff.outputs.skill }}
+      key: ${{ steps.key.outputs.present }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BASE: ${{ github.base_ref }}
+        run: |
+          if [ -z "$BASE" ]; then echo "skill=true" >> "$GITHUB_OUTPUT"; exit 0; fi
+          if git diff --name-only "origin/$BASE...HEAD" | grep -Eq '^(skills/gauntlet-loop/(SKILL\.md|references/|hooks/|agents/|policy/|bin/|install/|eval/|tests/|permissions/)|\.github/workflows/gauntlet-eval\.yml)'; then
+            echo "skill=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skill=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - id: key  # the secrets context is not available in a job-level `if`, so a step reports whether it is set
+        env:
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: if [ -n "$ANTHROPIC_API_KEY" ]; then echo "present=true" >> "$GITHUB_OUTPUT"; else echo "present=false" >> "$GITHUB_OUTPUT"; fi
+
+  free:
+    needs: changes
+    if: needs.changes.outputs.skill == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Sizes, harness tokens, word count
+        run: |
+          skills/gauntlet-loop/eval/sizes.sh
+          skills/gauntlet-loop/eval/harness_tokens.sh
+          python3 skills/gauntlet-loop/eval/wordcount.py
+      - name: Controller, hook and example tests
+        run: python3 -W error -m unittest discover -s skills/gauntlet-loop/tests
+
+  eval:
+    needs: [changes, free]
+    if: needs.changes.outputs.skill == 'true' && needs.changes.outputs.key == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: npm install -g @anthropic-ai/claude-code
+      - name: Write mode, all cases, against the baseline
+        run: skills/gauntlet-loop/eval/run.sh --baseline
+      - name: Write mode with references out of reach (SKILL.md alone must do)
+        run: skills/gauntlet-loop/eval/run.sh --skill-only --baseline
+      - name: Critic pairs, both orders, against the baseline
+        run: skills/gauntlet-loop/eval/run_critic.sh --baseline
+
+  gate:
+    needs: [changes, free, eval]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Pass when nothing relevant changed, or when every check passed
+        env:
+          SKILL: ${{ needs.changes.outputs.skill }}
+          KEY: ${{ needs.changes.outputs.key }}
+          FREE: ${{ needs.free.result }}
+          EVAL: ${{ needs.eval.result }}
+        run: |
+          if [ "$SKILL" != "true" ]; then echo "no gauntlet-loop files changed"; exit 0; fi
+          [ "$FREE" = "success" ] || { echo "free: $FREE"; exit 1; }
+          if [ "$KEY" != "true" ]; then echo "no ANTHROPIC_API_KEY secret: eval suites skipped; run them by hand before merging"; exit 0; fi
+          [ "$EVAL" = "success" ] || { echo "eval: $EVAL"; exit 1; }

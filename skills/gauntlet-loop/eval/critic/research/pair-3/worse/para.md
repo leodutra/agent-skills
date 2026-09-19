@@ -1,0 +1,1 @@
+A 2018 case study of a single large company found that roughly 15% of code review comments were about defects, with maintainability dominating and knowledge sharing cited as the chief benefit [1]. Because it is one company, the authors caution against generalising [1]; still, it suggests review is a modest bug filter and a strong teaching tool.

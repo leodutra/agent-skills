@@ -1,0 +1,152 @@
+{
+  "version": "v1",
+  "_absent_by_design": "No field here says whether confirmation happens, how many critics judge, how strong they are, whether they are blind, or what a win is. The policy names which two models confirm, never whether. Changing this file is changing the policy version: a human does it, between runs.",
+  "confirmation": {
+    "reader": "fable",
+    "reader-alt": "opus"
+  },
+  "envelope": {
+    "local": 0.6,
+    "escalation": 0.25,
+    "gate": 0.15,
+    "per_piece_invocations": 10,
+    "hours_per_piece": 1,
+    "hours_floor": 4,
+    "write_mode_default": {
+      "invocations": 150,
+      "hours": 24
+    },
+    "bootstrap": true
+  },
+  "lease_hours": 2,
+  "ladder": [
+    "split",
+    "fresh builder",
+    "variants"
+  ],
+  "variants": {
+    "first": 2,
+    "then": 1
+  },
+  "shared_by_rule": [
+    "**/schema.*",
+    "**/migrations/**",
+    "**/*.sql",
+    "**/policy/**",
+    "**/config/**",
+    "**/*.config.*",
+    "**/package.json",
+    "**/Cargo.toml",
+    "**/pyproject.toml"
+  ],
+  "offload": {
+    "reference_files": 12,
+    "floor_lines": 60
+  },
+  "floor_trees": [
+    "tests/required",
+    "heldout",
+    "reference",
+    "bench"
+  ],
+  "builder_boundary": {
+    "no_read": [
+      "heldout",
+      "bench"
+    ],
+    "no_write_trees": [
+      "tests/required",
+      "heldout",
+      "bench",
+      "reference",
+      "migrations",
+      "migrate",
+      "infra",
+      "infrastructure",
+      "terraform",
+      "deploy",
+      "k8s",
+      "helm",
+      ".github/workflows",
+      ".claude",
+      ".gauntlet"
+    ],
+    "no_write_files": [
+      ".env*",
+      "*.pem",
+      "*.key",
+      "id_rsa*",
+      "credentials*",
+      "secrets*",
+      "*.tfvars"
+    ],
+    "no_commands": {
+      "deploy": "\\b(deploy|kubectl\\s+apply|terraform\\s+(apply|destroy)|helm\\s+(install|upgrade)|vercel|netlify|fly\\s+deploy)\\b",
+      "publish": "\\b(npm|pnpm|yarn|cargo|twine|gem)\\s+(publish|upload|push)\\b|\\bdocker\\s+push\\b",
+      "push": "\\bgit\\s+push\\b",
+      "migrate": "\\bmigrat(e|ion)s?\\b",
+      "install": "\\b(npm|pnpm|yarn|bun)\\s+(i|install|add|ci)\\b|\\bpip3?\\s+install\\b|\\bcargo\\s+(add|install)\\b|\\bgo\\s+(get|install)\\b|\\b(apt|apt-get|brew|gem)\\s+install\\b"
+    }
+  },
+  "strip": [
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    "GEMINI.md",
+    ".claude",
+    ".cursor",
+    ".cursorrules",
+    ".windsurfrules",
+    ".github/workflows",
+    ".github/copilot-instructions.md",
+    ".husky",
+    ".githooks",
+    ".aider*",
+    ".env*",
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    "credentials*",
+    ".npmrc",
+    ".netrc",
+    ".pypirc"
+  ],
+  "pair_exclude": [
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "target",
+    ".next",
+    "__pycache__",
+    ".venv",
+    "coverage",
+    ".gauntlet",
+    "MANIFEST",
+    ".verify",
+    ".claude",
+    "CLAUDE.md",
+    "CLAUDE.local.md",
+    "AGENTS.md",
+    ".cursor",
+    ".github"
+  ],
+  "credential_files": [
+    ".env*",
+    "*.pem",
+    "*.key",
+    "id_rsa*",
+    "credentials*",
+    ".npmrc",
+    ".netrc",
+    ".pypirc"
+  ],
+  "secrets": {
+    "private key": "-----BEGIN [A-Z ]*PRIVATE KEY-----",
+    "aws key": "\\bAKIA[0-9A-Z]{16}\\b",
+    "github token": "\\bgh[pousr]_[A-Za-z0-9]{36,}\\b",
+    "slack token": "\\bxox[baprs]-[A-Za-z0-9-]{10,}",
+    "api key": "\\bsk-[A-Za-z0-9_-]{20,}",
+    "assigned secret": "(?i)\\b[\\w.-]*(api[_-]?key|secret|token|passw(or)?d)[\\w.-]*\\s*[=:]\\s*['\\\"]?(?=[\\w+/=-]*\\d)[\\w+/=-]{12,}"
+  }
+}

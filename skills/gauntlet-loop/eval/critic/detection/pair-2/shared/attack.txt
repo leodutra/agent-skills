@@ -1,0 +1,4 @@
+powershell.exe -EncodedCommand SQBFAFgA
+powershell -enc SQBFAFgA
+POWERSHELL.EXE -NoP -e SQBFAFgA
+pwsh -EncodedCommand SQBFAFgA

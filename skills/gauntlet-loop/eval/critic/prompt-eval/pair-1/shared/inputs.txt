@@ -1,0 +1,2 @@
+Invoice 1042: subtotal 80.00, tax 8.00, TOTAL DUE 88.00 EUR
+Total: USD 1,204.50 (incl. VAT)

@@ -1,0 +1,3 @@
+Extract the invoice total as JSON.
+Example: Invoice 1042: subtotal 80.00, tax 8.00, TOTAL DUE 88.00 EUR -> {"total": 88.00, "currency": "EUR"}
+Example: Total: USD 1,204.50 (incl. VAT) -> {"total": 1204.50, "currency": "USD"}

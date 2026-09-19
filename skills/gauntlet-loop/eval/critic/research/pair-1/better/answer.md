@@ -1,0 +1,1 @@
+In the largest published trial, output did not fall: revenue rose 1.4% on average across 61 companies over six months [1]. That is weak evidence for the general case, because the companies volunteered [1]. Employees reported less stress and burnout [2], but that survey did not measure output [2].
