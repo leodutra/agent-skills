@@ -52,13 +52,13 @@ Business logic, domain types, policies, permissions, and decisions MUST NOT live
 ```text
 orders/
 ├── api/                 # only entry point other modules may import
-├── domain/              # concepts, invariants, newtypes, value objects
-├── policies/            # decision logic shared by 2+ slices (optional)
-├── store                # narrow persistence functions over the ORM (optional)
 ├── create-order/        # vertical slices — the primary unit
 ├── cancel-order/
 ├── refund-order/
 ├── approve-order/
+├── domain/              # shared vocabulary: newtypes, value objects, invariants — not a layer
+├── policies/            # decision logic shared by 2+ slices (optional)
+├── store                # narrow persistence functions over the ORM (optional)
 └── README.md
 ```
 

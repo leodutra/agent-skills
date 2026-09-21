@@ -145,9 +145,9 @@ The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in t
 
 ```text
 orders/
-├── domain/
 ├── create-order/
 ├── refund-order/
+├── domain/
 └── policies/        # shared by 2+ slices
 ```
 
