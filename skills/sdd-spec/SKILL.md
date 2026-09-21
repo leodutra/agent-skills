@@ -1,6 +1,6 @@
 ---
 name: sdd-spec
-description: Create, update, review, and maintain Spec-Driven Development (SDD) specification artifacts — the product, domain, and feature specs under a project's spec tree (`spec/` by default, or an incumbent convention like .kiro/, openspec/, or .specify/). Use when asked to specify a feature, write or update requirements, document expected behavior before implementation, check specs for conflicts or drift against code, or bootstrap a spec tree from an existing PRD/MVP document. Do NOT use for: `*.spec.ts`/`*.spec.js` or any other test file (those are tests, not specifications), implementation planning (plan.md, tasks.md), ADR authoring, API reference docs, or writing code.
+description: Create, update, review, and maintain Spec-Driven Development (SDD) specification artifacts — the product, domain, and feature specs under a project's spec tree (`specs/` by default, or an incumbent convention like .kiro/, openspec/, or .specify/). Use when asked to specify a feature, write or update requirements, document expected behavior before implementation, check specs for conflicts or drift against code, or bootstrap a spec tree from an existing PRD/MVP document. Do NOT use for: `*.spec.ts`/`*.spec.js` or any other test file (those are tests, not specifications), implementation planning (plan.md, tasks.md), ADR authoring, API reference docs, or writing code.
 ---
 
 # SDD Specification Skill
@@ -24,35 +24,35 @@ The skill may *identify* implementation constraints already established by the p
 
 Three levels: **Product → Domain → Feature**.
 
-**Convention detection first**: the tree's location is an outcome of repository discovery, not a constant. If the repository already has a spec tree (`.kiro/specs/`, `openspec/specs/`, `.specify/` + `specs/`, `docs/specs/`, or a documented custom location), adopt the incumbent layout and file naming — never create a second, competing tree. Only on fresh adoption, with no incumbent convention, default to `spec/` at the repo root and use the layout below.
+**Convention detection first**: the tree's location is an outcome of repository discovery, not a constant. If the repository already has a spec tree (`.kiro/specs/`, `openspec/specs/`, `.specify/` + `specs/`, `docs/specs/`, or a documented custom location), adopt the incumbent layout and file naming — never create a second, competing tree. Only on fresh adoption, with no incumbent convention, default to `specs/` at the repo root and use the layout below.
 
 ```
-spec/                         # visible, at repo root — the layout agents recognize
+specs/                        # visible, at repo root — the layout agents recognize
 ├── product.md
 ├── domains/
 │   ├── patients.md
 │   └── appointments.md
-└── features/
-    └── appointments/
-        └── cancellation/     # folder per feature (numbered prefixes optional: 001-cancellation/)
-            ├── spec.md       # ← owned by this skill
-            ├── plan.md       # implementation workflow — NOT this skill
-            └── tasks.md      # implementation workflow — NOT this skill
+├── features/
+│   └── appointments/
+│       └── cancellation/     # folder per feature (numbered prefixes optional: 001-cancellation/)
+│           ├── spec.md       # ← owned by this skill
+│           ├── plan.md       # implementation workflow — NOT this skill
+│           └── tasks.md      # implementation workflow — NOT this skill
+└── adr/                      # ADRs — READ-ONLY for this skill (owned by architecture work)
 
-docs/adr/                     # ADRs — conventional location, READ-ONLY for this skill
-CLAUDE.md / AGENTS.md         # must point to spec/ (see Discovery Wiring)
+CLAUDE.md / AGENTS.md         # must point to specs/ (see Discovery Wiring)
 ```
 
 **Discovery wiring**: no agent auto-reads a spec folder — sessions discover it through CLAUDE.md/AGENTS.md. On fresh adoption or when the pointer is missing, add a short section to CLAUDE.md (or AGENTS.md):
 
 ```md
 ## Specifications
-Behavioral requirements live in `spec/` (product.md → domains/ → features/*/spec.md).
+Behavioral requirements live in `specs/` (product.md → domains/ → features/*/spec.md).
 Approved specs are authoritative over code. Before implementing or modifying a feature,
 read its spec.md. Code changes require corresponding spec updates.
 ```
 
-This is the one file outside `spec/` this skill may edit — it is agent configuration, not production code.
+This is the one file outside `specs/` this skill may edit — it is agent configuration, not production code.
 
 **Product** — system-wide: purpose, users, major capabilities, global business rules, global constraints, compliance, quality attributes, system-wide non-goals. Should stay stable. `product.md` is the single product source of truth: an existing MVP/PRD/vision document is adapted *into* it (see DERIVE mode), never kept alongside it.
 
@@ -93,7 +93,7 @@ Two modes for ongoing work, plus a one-time bootstrap mode. Choose based on the 
 **DERIVE mode** (bootstrap, one-time) — a product/MVP/PRD document exists but the spec tree doesn't (or is being adopted):
 
 ```
-1. Adopt the document AS spec/product.md — move/adapt it into the product
+1. Adopt the document AS specs/product.md — move/adapt it into the product
    template. Never keep a parallel MVP.md or PRD describing the same product:
    one source of truth. Express MVP scope inside product.md via Non-Goals
    ("post-MVP: ...") — scope is content, not the document's identity.
@@ -151,7 +151,7 @@ Inspect: README, docs, existing specs, ADRs, source code, tests, schemas, API de
 
 ### 3. Existing Specification Discovery
 
-Search the repository's spec tree (`spec/`, or the incumbent convention detected earlier) and any other documented spec locations. Identify: relevant product/domain rules, related features, conflicts, duplicates, established terminology, existing state machines and acceptance criteria.
+Search the repository's spec tree (`specs/`, or the incumbent convention detected earlier) and any other documented spec locations. Identify: relevant product/domain rules, related features, conflicts, duplicates, established terminology, existing state machines and acceptance criteria.
 
 Approved specifications are authoritative — **with one exception**: see Staleness below. Never create a contradictory specification silently.
 

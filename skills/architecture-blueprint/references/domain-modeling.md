@@ -1,21 +1,14 @@
 # Domain Modeling
 
-Type-driven toolkit: newtypes, value objects, parse-don't-validate, illegal states, error taxonomy, policies/specifications, rich domain objects, functional core, temporal modeling, idempotency, persistence. (Keyword conventions: see SKILL.md. Tags `(n)` name the deriving principle in `first-principles.md`; `(ledger)` its pattern-ledger entry.)
+The type-driven toolkit, and where behavior lives. (Keywords and the `(n)` / `(frame)` / `(ledger)` tags: see SKILL.md.)
 
 Apply in Evolution-Path order. **Vertical slices are prioritized over rich domain objects.** Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) is on from Stage 1 and MUST NOT be deferred: it pays obligations in the cheapest currency there is — by the machine, at construction, once (frame, rung 1). Newtypes and value objects live under `domain/`, not in separate technical-kind folders (*convention* on the folder name; the derived part is "never by technical kind", 13).
 
-Language note: examples are TypeScript/Rust. For Python, use `typing.NewType`, frozen `@dataclass`, `Union`, `match`, and boundary parsing.
+Examples are TypeScript/Rust/Python. Python equivalents: `typing.NewType`, frozen `@dataclass`, `Union`, `match`, and boundary parsing.
 
 ## Where behavior lives
 
-`domain/` holds concepts, type definitions (newtypes, value objects), and invariants.
-
-```text
-domain/
-├── Order
-├── OrderStatus
-└── OrderEvents
-```
+`domain/` is a vocabulary, not a layer: it holds concepts, type definitions (newtypes, value objects), and invariants (`Order`, `OrderStatus`, `OrderEvents`).
 
 Default: behavior SHOULD live in the vertical slice, calling a functional core (pure functions on typed data) (13, 14). A `refund-order` slice computes via `calculateRefund(...)`; it needs no `Order` class with methods.
 
@@ -67,8 +60,6 @@ class Money:
     def add(self, other: "Money") -> "Money": ...
 ```
 
-Use a newtype when it only identifies; a value object when it has rules, behavior, or structure.
-
 ## Parse, don't validate
 
 (1; ledger: parse don't validate, smart constructor) Validation MUST happen ONCE, at the boundary, converting raw input into already-valid domain types — establishing a fact MUST change the representation, or the obligation regenerates at every use site. Downstream code MUST NOT re-validate: a `Money`/`Email`/`CustomerId` is guaranteed valid by its type. You SHOULD prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
@@ -81,7 +72,7 @@ Use a newtype when it only identifies; a value object when it has rules, behavio
 
 **Configuration is boundary input too** (7, 8, 1; ledger: configuration as parsed input, fail-fast startup). Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port(u16)`, `DatabaseUrl`, `Timeout(Duration)`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it — viability is resolved at the threshold, not in the interior.
 
-**Boundary parsing SHOULD be packaged as reusable components** (8, 14; ledger: middleware pipeline) where the framework supports it (Axum extractors, FastAPI dependencies, middleware). The handler MUST receive already-typed values — `AuthenticatedUser`, `Tenant`, `Pagination`, `CreateOrderRequest` — never the raw transport object. Naming note: such a framework "extractor" is a `parser` in the role vocabulary; `extractor` there means pulling information out of a larger structure.
+**Boundary parsing SHOULD be packaged as reusable components** (8, 14; ledger: middleware pipeline) where the framework supports it (Axum extractors, FastAPI dependencies, middleware). The handler MUST receive already-typed values — `AuthenticatedUser`, `Tenant`, `Pagination`, `CreateOrderRequest` — never the raw transport object. Naming note: such a framework "extractor" is a `parser` in `role-vocabulary.md`; `extractor` there means pulling information out of a larger structure.
 
 **Inside a frame, never require the same proof twice; at a crossing, require it again** (1, 2). Re-checking a `CustomerId` inside the module is waste. Re-parsing it when it comes back from a queue, a cache, a file, or another process is not: trust follows custody, and data that left and returned has crossed a frame even if it "was yours".
 
@@ -143,17 +134,9 @@ A blueprint policy is a *stored decision* with one home. The ledger's "strategy 
 
 The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in the slice. The folder SHOULD emerge ONLY when decision logic is shared by 2+ slices (6 — one home the moment a second copy would exist). Authorization is NOT an exception: an action's `can` belongs to its slice, and only a decision genuinely evaluated by 2+ slices graduates here (see `authorization.md`).
 
-```text
-orders/
-├── create-order/
-├── refund-order/
-├── domain/
-└── policies/        # shared by 2+ slices
-```
-
 **Naming:** use intent-revealing names (`RefundPolicy`, `PricingPolicy`). Reactive when-then logic is named **process/handler/reaction**, never policy (*convention*, motivated by 3 — different meanings, different names).
 
-**Toolkit summary:** newtypes = identity; value objects = concept + rules + behavior; domain objects = state + invariants (escalation only); policies = reusable decisions (default); specifications = composition/querying/qualification only.
+**Toolkit summary:** newtypes = identity; value objects = concept with rules, behavior, or structure; domain objects = state + invariants (escalation only); policies = reusable decisions (default); specifications = composition/querying/qualification only.
 
 ## Functional core, imperative shell
 

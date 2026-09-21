@@ -1,6 +1,6 @@
 # Authorization — the Permit Pattern
 
-**Authorization MUST be a typed decision taken at the entry of a use case, inside the slice that owns the action: `action.can(actor) -> Permit<G>`.** Entities protect business invariants; the action's authorization protects who may execute it. You MUST NOT use scattered role checks, and you MUST NOT reduce the decision to a `bool`. (Keyword conventions: see SKILL.md. Tags `(n)` name the deriving principle in `first-principles.md`.)
+**Authorization MUST be a typed decision taken at the entry of a use case, inside the slice that owns the action: `action.can(actor) -> Permit<G>`.** Entities protect business invariants; the action's authorization protects who may execute it. You MUST NOT use scattered role checks, and you MUST NOT reduce the decision to a `bool`. (Keywords and the `(n)` / `(frame)` / `(ledger)` tags: see SKILL.md.)
 
 Derivation: identity and permission are inputs (7); who may act is a decision that belongs with one authority (6); a permission is a fact with a validity frame (2); a capability held is a receipt, while a role checked at each site is the same proof re-paid from memory at every use (1); and a decision reduced to a bit discards both its reason and the artifact it established (1, 3) — so the decision's result is a type, not a flag.
 
@@ -160,7 +160,7 @@ appointments/
 └── domain/                # Permission, Reason, actor capability traits, shared value objects
 ```
 
-`Permission`, `Reason`, and actor capability traits are shared vocabulary and belong in `domain/` (or the kernel when several modules name them). Only a genuinely shared decision — the same policy evaluated by 2+ slices — graduates to `policies/` (6 — one home the moment a second copy would exist). A small slice MAY keep command, authorization, and handler in one file; you SHOULD NOT pre-split.
+`Permission`, `Reason`, and actor capability traits are shared vocabulary and belong in `domain/` (or the kernel when several modules name them). Only a genuinely shared decision — the same policy evaluated by 2+ slices — graduates to `policies/` (6 — one home the moment a second copy would exist). A small slice MAY keep command, authorization, and handler in one file (SKILL.md, One file vs. feature folder).
 
 ## Transport, audit, break-glass
 

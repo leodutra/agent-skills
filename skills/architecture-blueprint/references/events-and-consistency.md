@@ -1,16 +1,10 @@
 # Events & Consistency
 
-Cross-module communication, direct-call-vs-event, consistency scopes, copies of facts, concurrency, observability. (Keyword conventions: see SKILL.md. Tags `(n)` name the deriving principle in `first-principles.md`; `(ledger)` its pattern-ledger entry.)
+Cross-module communication, direct call vs. event, consistency scopes, copies of facts, concurrency, observability. (Keywords and the `(n)` / `(ledger)` tags: see SKILL.md.)
 
 ## Domain events
 
-(1 — execution leaves receipts) Events MUST be past-tense business **facts** (*convention* on the tense; the derived part is that a receipt says what happened). Consumers: Inventory, Shipping, Notifications, Analytics.
-
-```text
-OrderApproved   OrderCancelled   OrderRefunded   InventoryReserved
-```
-
-You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`): a receipt that does not say what happened is not a receipt.
+(1 — execution leaves receipts) Events MUST be past-tense business **facts** — `OrderApproved`, `OrderCancelled`, `OrderRefunded`, `InventoryReserved` — consumed by modules that merely react (Inventory, Shipping, Notifications, Analytics). You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`): a receipt that does not say what happened is not a receipt. (*Convention* on the tense; the derived part is that a receipt says what happened.)
 
 **Published events and `api/` are contracts** (13 — compatibility is a promise about sensitivity; ledger: stable versioned contract). Payload changes SHOULD be additive; a breaking change gets a new event version rather than a mutated old one; consumers SHOULD tolerate unknown fields. A consumer's proof that it handles `OrderApproved` MUST survive the producer's evolution, or the producer has changed the contract.
 

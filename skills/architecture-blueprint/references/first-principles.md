@@ -9,7 +9,7 @@ Use this file when:
 - two rules are in tension — see §Where the principles collide; the arbiter is lifetime discharge cost under the actual distribution of use and change;
 - a call is contested or novel — ask the nine questions in §The tests, then the meta-test: ban the pattern's name and reconstruct it from the principles alone. What cannot be reconstructed is ritual, and this skill cuts it.
 
-The index at the end maps each principle to where this skill applies it.
+Read only the part you need — the sections stand alone: a tagged principle → its numbered section under §The principles; a pattern's derivation and conditions → §The pattern ledger; two rules in tension → §Where the principles collide; a contested call → §The tests; what the framework does not price → §The limits of the framework itself. The index at the end maps each principle to where this skill applies it.
 
 ---
 
@@ -485,7 +485,7 @@ Or, at aphorism length:
 | A4 — the territory outlives the map | `Actor` validity frame (`authorization.md`); cancellation and orphaned work (`events-and-consistency.md`) |
 | 1 — knowledge in representation | parse-don't-validate, smart constructors, no-decay, typed config (`domain-modeling.md`); event receipts, observability (`events-and-consistency.md`); capabilities over role checks (`authorization.md`) |
 | 2 — validity frames | module public API as a frame crossing, anti-corruption boundary (`structure-and-boundaries.md`); DTO→domain, re-parse after custody, error translation (`domain-modeling.md`); `Actor` at the edge with a request-scoped frame, deny-by-default (`authorization.md`); ADR Superseded (`testing-and-governance.md`) |
-| 3 — distinctions in the medium | newtypes, typed errors (`domain-modeling.md`); naming as testimony (SKILL.md); fitness functions over docs (`testing-and-governance.md`); rejected wrapper ceremony (`structure-and-boundaries.md`) |
+| 3 — distinctions in the medium | newtypes, typed errors (`domain-modeling.md`); naming as testimony (SKILL.md); fitness functions over docs (`testing-and-governance.md`); role names, rejected wrapper ceremony (`role-vocabulary.md`) |
 | 4 — representable ↔ meaningful | illegal states, absence as a state, exhaustiveness, typestate (`domain-modeling.md`); the exhaustive Deny arm (`authorization.md`); test what the types could not hold (`testing-and-governance.md`) |
 | 5 — interaction, not size | narrow module API and observable surface, composition over inheritance, CQS, indirection as an edge (`structure-and-boundaries.md`); incidental observability (`events-and-consistency.md`); specification as an edge (`domain-modeling.md`) |
 | 6 — authority defines interference | state ownership, composition root, capability dependencies, CQS (`structure-and-boundaries.md`); policies as one home, persistence authority (`domain-modeling.md`); copies of facts (`events-and-consistency.md`); the action's `can` as one home, role→permission data (`authorization.md`) |

@@ -1,6 +1,6 @@
 # Testing & Governance
 
-Test strategy and placement, executable architecture rules, decision records, AI alignment. (Keyword conventions: see SKILL.md. Tags `(n)` name the deriving principle in `first-principles.md`; `(ledger)` its pattern-ledger entry.)
+Test strategy and placement, executable architecture rules, decision records, AI alignment. (Keywords and the `(n)` / `(frame)` / `(ledger)` tags: see SKILL.md.)
 
 The currency ladder (`first-principles.md`, §The frame) organizes this file. Types pay obligations at rung 1 — by the machine, at construction, once. Tests and fitness functions are rung 2: the mechanized ledger of obligations structure could not absorb, re-audited at every change. ADRs, READMEs, and `AGENTS.md` are rung 3: one author, once, recorded — testimony (3) that binds only its reader. Nothing in this file is meant to sit at rung 4, and anything that does — a rule everyone "just knows" — is a defect to move up the ladder.
 
@@ -19,13 +19,9 @@ A cross-module business flow (e.g., create → approve → invoice) is an **acce
 
 ## Test placement (by scope)
 
-(14 — what is needed to verify a thing should live near the thing) Dividing rule (by **scope/ownership**, not by test type): a test that owns a **single** module/slice — unit, integration, OR acceptance — SHOULD be colocated with it; a test whose behavior spans **multiple** modules MUST live in `tests/`.
+(14 — what is needed to verify a thing should live near the thing) Dividing rule (by **scope/ownership**, not by test type): a test that owns a **single** module/slice — unit, integration, OR acceptance — SHOULD be colocated with it; a test whose behavior spans **multiple** modules MUST live in `tests/`, never inside any one module.
 
-A single-module integration test is **colocated**, not centralized.
-
-**Colocate (single-module):** a sibling test file or an in-module test block.
-
-> Rust: use a sibling `tests.rs` or in-file `#[cfg(test)] mod tests { ... }`.
+**Colocate (single-module)** — a single-module integration test included: a sibling test file or an in-module test block (Rust: a sibling `tests.rs` or in-file `#[cfg(test)] mod tests { ... }`).
 
 ```text
 orders/
@@ -47,8 +43,6 @@ tests/
 ├── e2e/                  # API -> DB -> bus -> worker
 └── performance/          # load / latency / throughput
 ```
-
-A test that spans modules MUST NOT be placed inside any one module.
 
 ## Architecture fitness functions
 
@@ -76,7 +70,7 @@ Candidates beyond dependency direction — each a rule of this skill that the ty
 **Agent directive:** when you conclude a considerable architectural decision or definition, you MUST record it as an ADR or explicitly propose one. When a later decision changes an earlier one, you MUST mark the old ADR **Superseded** and link the replacement — the earlier decision's frame has expired, and the record MUST say so. Stale or missing ADRs are a defect.
 
 ```text
-docs/adr/
+specs/adr/
 ├── 001-architecture.md
 ├── 002-module-boundaries.md
 ├── 003-domain-events.md
