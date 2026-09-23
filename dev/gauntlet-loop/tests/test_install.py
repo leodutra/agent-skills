@@ -37,7 +37,11 @@ class Install(unittest.TestCase):
         self.assertEqual((diff.left_only, diff.right_only, diff.diff_files), ([], [], []))
         settings = json.loads(pathlib.Path(self.repo, ".claude", "settings.json").read_text())
         self.assertEqual(settings["permissions"]["allow"][0], "Bash(npm test)")  # theirs kept, ours added after
-        self.assertIn("Read(.gauntlet/private/**)", settings["permissions"]["deny"])
+        # F9: a permission deny on the controller's own files becomes a sandbox mask the sandboxed controller cannot read through
+        self.assertEqual([d for d in settings["permissions"]["deny"] if ".gauntlet" in d], [])
+        self.assertIn("Read(**/.env*)", settings["permissions"]["deny"])
+        guarded = [g["matcher"] for g in settings["hooks"]["PreToolUse"] for h in g["hooks"] if "controller_only.py" in str(h.get("args"))]
+        self.assertEqual(guarded, ["Read|Glob|Grep|Edit|Write|Bash"])
         self.assertNotIn("enabled", settings["sandbox"])  # the sandbox switch is the operator's
         self.assertNotIn("excludedCommands", settings["sandbox"])
         commands = [h.get("command") for g in settings["hooks"]["PreToolUse"] for h in g["hooks"]]

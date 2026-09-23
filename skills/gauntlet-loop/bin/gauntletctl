@@ -1309,6 +1309,15 @@ def cmd_attest(args):
     state = load()
     if not state["run"]:
         return 0
+    key = gdir("private", "attest.key")
+    if args.start and args.key_file and os.path.realpath(args.key_file) == os.path.realpath(key) and not os.path.exists(key):
+        # The first registration makes the key. Hooks run outside the sandbox (S4); a sandboxed tool cannot plant it, since
+        # the sandbox masks that path from every tool (harness-claude-code.md).
+        try:
+            with open(os.open(key, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+                f.write(secrets.token_hex(32))
+        except FileExistsError:
+            pass
     if state["run"]["attestation"] == "tier-1":
         # Only a hook process runs outside the sandbox, so only it can read the key (harness-claude-code.md, S4).
         try:
@@ -1762,9 +1771,9 @@ def cmd_init(args):
         if tx.state["run"]:
             raise Rejected("a run already exists here; a new bar is a new run in a new checkout")
         os.makedirs(gdir("private"), exist_ok=True)
-        for name in ("secret", "attest.key"):
-            with open(os.open(gdir("private", name), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
-                f.write(secrets.token_hex(32))
+        # The attestation key is not made here: under the sandbox it is masked from this process (F9); see cmd_attest.
+        with open(os.open(gdir("private", "secret"), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600), "w") as f:
+            f.write(secrets.token_hex(32))
         with open(gdir(".gitignore"), "w") as f:
             f.write("*\n")
         envelope = {"E": args.invocations, "T_hours": args.hours} if args.invocations and args.hours else None
@@ -1899,6 +1908,10 @@ def main(argv=None):
     except (Rejected, Spent) as err:
         print(f"{'refused' if err.code == 3 else 'rejected'}: {err}", file=sys.stderr)
         return err.code
+    except OSError as err:  # a path the controller cannot read or write: say which, never a traceback (F10)
+        print(f"refused: {err.strerror or err}: {err.filename or ''}. If the sandbox is on, a permission deny on the "
+              "controller's own files hides them from it: see harness-claude-code.md", file=sys.stderr)
+        return 3
 
 
 if __name__ == "__main__":

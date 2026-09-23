@@ -31,6 +31,10 @@ class Docs(unittest.TestCase):
         self.assertIn("else the working directory", text)  # the AUTHOR line: how a floor file finds ours
         self.assertIn("Required suite, from your worktree:", text)  # the BUILDER line
 
+    def test_an_installed_controller_that_errors_stops_the_run(self):  # F11: bytesize-2 went by hand at Tier 3
+        section = re.search(r"(?ms)^## By hand\n(.*?)(?=^## )", (REFS / "running-the-loop.md").read_text()).group(1)
+        self.assertIn("never continue by hand", section)
+
     def test_the_freeze_is_never_offloaded(self):  # A9
         text = (REFS / "running-the-loop.md").read_text()
         self.assertNotIn("does the freeze", text)

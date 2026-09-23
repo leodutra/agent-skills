@@ -1,5 +1,5 @@
 {
-  "_about": "The minimal permissions for a gauntlet run. install/claude_code.py merges `permissions` and `sandbox` into the target repository's .claude/settings.json; it never sets sandbox.enabled, which is the operator's switch (/sandbox). No excludedCommands ship: a compound command rides along with an excluded prefix (harness-claude-code.md, S14). Credential entries belong in user or managed settings; the harness ignores them in project settings.",
+  "_about": "The minimal permissions for a gauntlet run. install/claude_code.py merges `permissions` and `sandbox` into the target repository's .claude/settings.json; it never sets sandbox.enabled, which is the operator's switch (/sandbox). No excludedCommands ship: a compound command rides along with an excluded prefix (harness-claude-code.md, S14). Credential entries belong in user or managed settings; the harness ignores them in project settings. No deny names the controller's own files under .gauntlet/: the harness merges Read and Edit denies into the sandbox, where they would hide those files from the sandboxed controller; hooks/controller_only.py keeps tools out of .gauntlet/private/ instead.",
   "permissions": {
     "allow": [
       "Bash(git *)",
@@ -22,12 +22,6 @@
       "Bash(wc *)"
     ],
     "deny": [
-      "Read(.gauntlet/private/**)",
-      "Edit(.gauntlet/private/**)",
-      "Read(.gauntlet/state.json)",
-      "Edit(.gauntlet/state.json)",
-      "Read(.gauntlet/events.jsonl)",
-      "Edit(.gauntlet/events.jsonl)",
       "Read(**/.env*)",
       "Edit(**/.env*)",
       "Read(**/*.pem)",

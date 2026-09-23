@@ -28,7 +28,7 @@ HOOKS = {
         ("Read|Glob|Grep|Bash", "critic_blind.py"),
         ("Read|Glob|Grep|Edit|Write|Bash", "builder_boundary.py"),
         ("Edit|Write|Bash", "protect_floors.py"),
-        ("Edit|Write|Bash", "controller_only.py"),
+        ("Read|Glob|Grep|Edit|Write|Bash", "controller_only.py"),
         ("Edit|Write|Bash", "author_scope.py"),
     ],
     "SubagentStart": [("reader|reader-alt|editor|editor-fast|author", "register.py")],

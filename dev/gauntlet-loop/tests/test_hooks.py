@@ -198,6 +198,24 @@ class ControllerOnly(Project):
         for rel in (".gauntlet/staging/t.mjs", ".gauntlet/wt/parse/src/a.js", "src/app.js", ".claude/agents/my-own.md"):
             self.assertEqual(self.hook("Write", {"file_path": self.path(rel)}), {}, rel)
 
+    def test_private_storage_is_unreadable_by_every_tool(self):  # F9: a hook, not a permission deny, so the sandbox masks nothing
+        private = self.path(".gauntlet/private/mapping/x.json")
+        for agent_type in (None, "author", "editor", "editor-fast"):
+            self.assertEqual(self.hook("Read", {"file_path": private}, agent_type=agent_type).get("permissionDecision"), "deny", agent_type)
+        for tool, tool_input in (("Grep", {"pattern": "a", "path": self.path(".gauntlet/private")}),
+                                 ("Glob", {"pattern": ".gauntlet/private/**", "path": self.root}),
+                                 ("Bash", {"command": "cat .gauntlet/private/secret"})):
+            self.assertEqual(self.hook(tool, tool_input).get("permissionDecision"), "deny", tool)
+        for tool, tool_input in (("Read", {"file_path": self.path(".gauntlet/workbench.md")}),
+                                 ("Read", {"file_path": self.path(".gauntlet/state.json")}),
+                                 ("Bash", {"command": "python3 .claude/hooks/gauntlet/gauntletctl pair parse"})):
+            self.assertEqual(self.hook(tool, tool_input), {}, tool_input)
+
+    def test_a_chained_controller_call_is_told_to_stand_alone(self):  # F12: seen in bytesize-2
+        out = self.hook("Bash", {"command": "rmdir .gauntlet/staging/x; ls -la .gauntlet/; .claude/hooks/gauntlet/gauntletctl init 2>&1 | tail -2"})
+        self.assertEqual(out.get("permissionDecision"), "deny")
+        self.assertIn("alone on its line", out["permissionDecisionReason"])
+
     def test_shell(self):
         for command in ("echo '{}' >> .gauntlet/events.jsonl", "rm .gauntlet/state.json", "git add -f .gauntlet/private",
                         "git add .gauntlet/workbench.md", "python3 .claude/hooks/gauntlet/gauntletctl attest < payload.json",

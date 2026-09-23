@@ -18,11 +18,23 @@ class Store(Repo):
         self.assertEqual((started["seq"], started["event"], started["kind"], started["policy"], started["tier"]),
                          (1, "RUN_STARTED", "fact", "v1", 2))
         self.assertEqual(started["readers"], {"reader": "fable", "reader-alt": "opus"})
-        for name in ("secret", "attest.key"):
-            mode = stat.S_IMODE(os.stat(os.path.join(self.root, ".gauntlet/private", name)).st_mode)
-            self.assertEqual(mode, 0o600)
+        mode = stat.S_IMODE(os.stat(os.path.join(self.root, ".gauntlet/private", "secret")).st_mode)
+        self.assertEqual(mode, 0o600)
+        self.assertFalse(os.path.exists(os.path.join(self.root, ".gauntlet/private/attest.key")))  # F9: the start hook makes it
         self.git("add", ".")
         self.assertEqual(self.git("status", "--porcelain"), "")  # .gauntlet/.gitignore holds one line, `*`
+
+    def test_an_unreadable_file_is_a_refusal_that_names_it(self):  # F10: bytesize-2 printed a traceback
+        self.ok("init")
+        log = os.path.join(self.root, ".gauntlet/events.jsonl")
+        os.chmod(log, 0)
+        try:
+            code, _, err = self.run_ctl("status")
+        finally:
+            os.chmod(log, 0o644)
+        self.assertEqual(code, 3)
+        self.assertIn(".gauntlet/events.jsonl", err)
+        self.assertIn("harness-claude-code.md", err)
 
     def test_a_second_init_is_rejected(self):
         self.ok("init")

@@ -194,6 +194,15 @@ class Readers(AttestRepo):
 class TierOne(AttestRepo):
     tier1 = True
 
+    def test_the_first_registration_makes_the_key_outside_the_sandbox(self):  # F9
+        key = os.path.join(self.root, ".gauntlet/private/attest.key")
+        self.assertFalse(os.path.exists(key))  # init runs in the lead's sandbox, where the key is masked
+        self.start("b1", "editor")
+        self.assertEqual(oct(os.stat(key).st_mode & 0o777), oct(0o600))
+        first = pathlib.Path(key).read_text()
+        self.start("b2", "editor")
+        self.assertEqual(pathlib.Path(key).read_text(), first)  # made once, never replaced
+
     def test_a_payload_without_the_key_is_refused_outright(self):  # AC-17.8, Tier 1
         self.green_pair()
         self.start("r1", "reader")

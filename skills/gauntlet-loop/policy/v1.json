@@ -82,6 +82,9 @@
     ],
     "reader_open": [
       ".gauntlet/pairs"
+    ],
+    "unreadable": [
+      ".gauntlet/private"
     ]
   },
   "builder_boundary": {

@@ -1,6 +1,6 @@
 # gauntlet-loop v2: what is still missing, and the plan to finish it
 
-Written 2026-09-23 against `design/intent.md`, `design/spec.md` and `design/plan.md`, after the 2026-09-19 section of `design/acceptance.md`. State then: `main` at 2720757, one commit ahead of `origin`; 122 tests and the three free checks pass; Claude Code 2.1.280, while the spikes in `skills/gauntlet-loop/references/harness-claude-code.md` were observed on 2.1.274 and 2.1.277.
+Written 2026-09-23 against `design/intent.md`, `design/spec.md` and `design/plan.md`, after the 2026-09-19 section of `design/acceptance.md`. State then: `main` at dbb074d, one commit ahead of `origin`; 122 tests and the three free checks pass; Claude Code 2.1.280, while the spikes in `skills/gauntlet-loop/references/harness-claude-code.md` were observed on 2.1.274 and 2.1.277.
 
 The first real run (`~/Work/bytesize`, 2026-09-19) never filed a verdict. It ended on `ceiling` on 2026-09-23, when a `status` call recorded a lead turn 107 hours into its 3-hour envelope.
 
@@ -22,18 +22,47 @@ Decided by the user on 2026-09-23: the final commit carries every floor (A5); `s
 
 Done 2026-09-23: 132 tests; `running-the-loop.md` at 10,207 of 10,239 bytes. A4 still needs the live run to show the permission layer accepts the new command.
 
+## Stage A2: what the bytesize-2 run exposed (2026-09-23)
+
+The user turned the sandbox on in `~/Work/bytesize-2` (`/sandbox`, `settings.local.json`). The lead's `gauntletctl init` crashed with `PermissionError` on `.gauntlet/events.jsonl`: inside the sandbox, `events.jsonl`, `state.json` and `private/` were `/dev/null` mounts. The sandbox docs (fetched 2026-09-23) say `Edit` permission rules and `Read` deny rules are merged into the sandbox configuration, so the shipped allowlist's `.gauntlet` denies mask the controller's own files from the controller, which runs inside the lead's sandboxed shell. The lead then fell back to "by hand" at Tier 3, where no pair can be built and no reader can work. I recommended stopping that run; its files stay as evidence.
+
+- [x] **F9. The controller cannot run with the sandbox on.** Fix: the shipped allowlist carries no permission deny on `.gauntlet/`; `hooks/controller_only.py` also matches `Read|Glob|Grep` and denies every agent and the lead reads of `.gauntlet/private/` (by path for file tools; a string match for the shell, the controller alone on its line excepted); `init` no longer creates the attestation key, and the start hook creates it on first use, outside the sandbox (S4). Tests: the installed settings carry no `.gauntlet` deny; the hook denies private reads; `init` makes no key and the first registration does. Live: a sandboxed `init`, `status` and `pair` in a scratch repository (a few cents, one `claude -p`). Spec FR-1.4 amended; README D22 and the ledger; the harness file's S5 row and settings table.
+- [x] **F10. A controller I/O error is a traceback.** Fix: `main()` turns an `OSError` into a refusal (exit 3) that names the path and points at the harness file. Test: an unreadable event log exits 3 with its path.
+- [x] **F11. An installed controller that errors made the lead go "by hand".** Fix: the runbook's By hand section says it is for a run with no controller, and an installed controller that errors stops the run: report the error, never continue by hand. Test: `test_docs.py`.
+- [x] **F12. The coarse shell matcher denied `ls .gauntlet` chained to a staging write, and an `init` chained to a cleanup.** Fail-closed stays (spec: coarse by design); the denial now says to run the controller alone on its line and each write as its own command. Test: the reason names it.
+- [ ] **Retry C2 in a fresh `~/Work/bytesize-3`** once F9 to F12 are committed and deployed; `bytesize-2` keeps what that run left, as evidence.
+
 ## Stage B: records, commit, deploy (free)
 
 - [x] **B1. Records.** Spec amendments A15 onward; README entries in place; the harness file (S11 overturned with the 2.1.277 evidence, the handback tool, 2.1.280 installed); `acceptance.md` rows for F4 to F8, dated; this file ticked.
 - [x] **B2. Gate.** `python3 -W error -m unittest discover -s dev/gauntlet-loop/tests`, `sizes.sh`, `harness_tokens.sh`, `wordcount.py`.
-- [ ] **B3. Commit.** One `fix:` commit on `main`, no bytecode or scratch files, with this file. No push.
-- [ ] **B4. Deploy.** `config/stack-init.sh global` (the whole stack installer: it also re-checks Serena, codegraph, npm tools and settings env vars), then `diff -rq -x __pycache__ skills/gauntlet-loop ~/.claude/skills/gauntlet-loop` prints nothing.
+- [x] **B3. Commit.** One `fix:` commit on `main`, no bytecode or scratch files, with this file. No push.
+- [x] **B4. Deploy.** `config/stack-init.sh global` (the whole stack installer: it also re-checks Serena, codegraph, npm tools and settings env vars), then `diff -rq -x __pycache__ skills/gauntlet-loop ~/.claude/skills/gauntlet-loop` prints nothing. Done 2026-09-23 from `00f2b5b`: the diff printed nothing.
 - [x] **B5. Close out bytesize** with its own installed controller: `report --notes <file>`, `commit` (no remote: promotion not applied), `status` and `metrics` pasted into `acceptance.md`.
 
 ## Stage C: proof (paid; needs the user)
 
 - [ ] **C1. Cheap spikes, about $2; ask first.** S1 in `~/Work/bytesize` (trust accepted 2026-09-19); S3 (`maxTurns`); plan 20.3, one prompt from `SKILL.md` alone: `dev/gauntlet-loop/eval/run.sh --skill-only --only <case>`.
 - [ ] **C2. A real run, the way a user runs it.** I prepare `~/Work/bytesize-2` from the bytesize skeleton, install the fixed skill, commit, check `detect` says tier 2, and write the paste prompt from `SKILL.md` (same goal, 40 invocations, 3 hours). The user opens `claude` there, accepts trust, sets `/effort xhigh` and auto mode, optionally `/sandbox` strict (which enables `freeze-verify`, lets critics execute, and covers AC-15.4 and S14), and pastes it. Cost: the user's usage, at most 40 subagent spawns; tens of dollars. It must show for the first time on v2: verdicts attested through the handback, a builder's green suite line, no false boundary blocks, hooks on the lead, the `/goal` evaluator reading the status line, a swapped confirmation, a wave, the whole gate over two pieces, and a routed loss with a resumed builder if a loss occurs.
+  - Prepared 2026-09-23: `~/Work/bytesize-2` (skeleton `4ed100b`, the fixed skill installed and committed as `424edf8`; `detect` says tier 2, and still does after a hook leaves bytecode behind, which proves F3 live). The prompt, written from `SKILL.md`'s template (267 words; GOAL and BAR 68):
+
+    ```text
+    /goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped on a different model, pick ours on every piece and on the whole library, or 40 invocations or 3 hours are spent. Until then, run a gauntlet loop:
+
+    Build bytesize, a JavaScript library that parses byte sizes like "1.5 GB" to bytes and formats bytes back.
+
+    The bar is visionmedia/bytes.js at tag 3.1.2. Clone it and freeze the copy first; judge against the copy, never a description. It must survive a hostile-input script without crashing. Never add a runtime dependency. Write the required tests and a held-out set before any builder starts; no builder edits them.
+
+    Split it into the coarsest pieces that can be judged alone; each gets a builder and a fresh critic every round. Only you fetch the bar. The critic gets ours and the bar as A and B in random order and hears the goal, never the bar's name, which is which, or who made either. It opens both, writes what it sees in each, picks one and names the biggest thing the loser lacks. No ties; a hedge is a loss. The builder closes that gap; repeat.
+
+    If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the whole the same way.
+
+    Update a progress page after every verdict: piece, round, winner, gap. End every turn with pieces confirmed and what is spent. Questions go there, not to me. Only I end this earlier.
+
+    Fan out subagents.
+    ```
+
+  - Waiting on the user: open `claude` in `~/Work/bytesize-2`, accept trust, `/effort xhigh`, auto mode, optionally `/sandbox` strict, paste. Humans check the run with `gauntletctl status --peek`, never plain `status`.
 
 ## Stage D: after the run
 

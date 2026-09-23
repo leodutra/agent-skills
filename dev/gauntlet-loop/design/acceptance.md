@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 132 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A22 record the changes to the spec.
+Claude Code 2.1.280 installed. 137 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A25 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -17,6 +17,10 @@ Claude Code 2.1.280 installed. 132 tests, all passing, with `sizes.sh`, `harness
 | F7. A human's `status` recorded a lead turn and ended an overdue run (the bytesize run, 2026-09-23) | fixed (A20) | `status --peek`; test: `test_peek_is_the_same_line_and_changes_nothing` |
 | FR-13.1: no lead tokens | fixed (A21) | recorded at each registration from the lead's transcript; tests: `test_lead_tokens_come_from_the_transcript_the_start_hook_names`, the example's metrics block |
 | The freeze offload counted files the lead cannot count before freezing | fixed (A22) | the lead always runs the freeze; README D33 rewritten; tests: `test_the_freeze_is_the_leads_own_command`, `test_the_freeze_is_never_offloaded` |
+| F9. With the sandbox on, the controller could not read its own files: the allowlist's `.gauntlet` denies became `/dev/null` mounts (the bytesize-2 run) | fixed (A23), verified live | no `.gauntlet` permission rule; `controller_only` denies tools `private/`; the start hook makes the attestation key. Tests: `test_second_run_changes_nothing_and_keeps_what_was_there`, `test_private_storage_is_unreadable_by_every_tool`, `test_the_first_registration_makes_the_key_outside_the_sandbox`, `test_init_writes_the_run_and_nothing_a_plain_git_add_could_stage`. Live: a sandboxed `claude -p` in `~/Work/gauntlet-sandbox-check` (Tier 2, isolated, attestation tier-1) ran `init`, `status` and `next`, was denied three reads of `private/`, and could not write outside the project; $0.05 |
+| F10. The controller's `PermissionError` was a traceback | fixed (A24) | `main()` refuses with the path; test: `test_an_unreadable_file_is_a_refusal_that_names_it` |
+| F11. The lead met that traceback and went on by hand at Tier 3 | fixed (A24) | the By hand section: an installed controller that errors stops the run; test: `test_an_installed_controller_that_errors_stops_the_run` |
+| F12. The coarse matcher denied `ls .gauntlet` chained to a staging write, and an `init` chained to a cleanup | message fixed (A25); coarse by design | test: `test_a_chained_controller_call_is_told_to_stand_alone` |
 
 The bytesize run, closed on 2026-09-23 with its own installed controller (`report --notes`, then `commit`: `a48b45b` in that repository; no remote, so promotion was not applied). It ended on its ceiling with no verdict: the lead's session stopped after both builders returned, and the overdue turn was recorded by a `status` call four days later (F7). The status line, from the report:
 
