@@ -129,6 +129,22 @@ class Pair(PairRepo):
         self.ok("pair", "parse")
         self.assertNotIn(ctl.READ_ONLY_LINE, pathlib.Path(self.pair_dir, "PROMPT.md").read_text())
 
+    def test_a_pair_carries_no_name_on_either_side(self):  # F16, FR-6.5: bytesize-3's lead anonymised the reference by hand
+        ref = os.path.join(self.root, "reference/ms")
+        for rel, text in (("README.md", "# upstream\n"), ("LICENSE", "MIT (c) 2020 Someone\n"),
+                          ("package.json", '{"name": "upstream", "author": "Someone", "repository": "someone/upstream", "version": "1.0.0"}\n'),
+                          ("index.js", "/*!\n * upstream\n * Copyright(c) 2020 Someone\n */\nexport const parse = () => 1 // upstream\n")):
+            pathlib.Path(ref, rel).write_text(text)
+        self.write(".gauntlet/wt/parse/README.md", "# bytesize\n")
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse")
+        files = tree(self.pair_dir)
+        self.assertFalse([f for f in files if os.path.basename(f) in ("README.md", "LICENSE")])  # both sides
+        side = next(os.path.dirname(f) for f in files if f.endswith("package.json"))
+        self.assertEqual(json.loads(files[os.path.join(side, "package.json")]), {"version": "1.0.0"})
+        code = files[os.path.join(side, "index.js")].decode()
+        self.assertEqual(code, "/*!\n */\nexport const parse = () => 1 // upstream\n")  # comments go, code stays
+
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:
             tx.emit("FLOOR_FAIL", "fact", "test", piece="parse", **{"class": "artifact"})

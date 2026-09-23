@@ -88,6 +88,16 @@ class CriticBlind(Project):
         loop = """for s in a b; do node -e "import('./$s/index.js').then(m=>console.log(m.x))" 2>&1; done"""
         self.assertIn("updatedInput", self.hook("Bash", {"command": loop}))  # seen in a live run: a reader loops over both sides
 
+    def test_a_first_shell_command_inside_one_pair_binds_the_reader(self):  # F15: both readers lost a turn in bytesize-3
+        pair = self.path(".gauntlet/pairs/parse")
+        out = self.hook("Bash", {"command": f"cat {pair}/PAIR_ID && echo ---- && cat {pair}/PROMPT.md"})
+        self.assertEqual(out["updatedInput"]["command"], f"cd {pair} && cat {pair}/PAIR_ID && echo ---- && cat {pair}/PROMPT.md")
+        self.denied(self.hook("Read", {"file_path": self.path(".gauntlet/pairs/format/a")}))  # bound to parse now
+        out = self.hook("Bash", {"command": f"cd {pair} && cat PAIR_ID"}, agent_id="a2")
+        self.assertIn("updatedInput", out)
+        for command in ("cat PAIR_ID", f"cat {pair}/PAIR_ID {self.path('.gauntlet/pairs/format/a')}", f"cat {pair}/../../state.json"):
+            self.denied(self.hook("Bash", {"command": command}, agent_id="a3"))  # nothing to bind to, two pairs, an escape
+
     def test_other_agents_pass_through(self):
         self.assertEqual(self.hook("Read", {"file_path": self.path("src/secret.txt")}, agent_type="editor"), {})
         self.assertEqual(self.hook("Read", {"file_path": self.path("src/secret.txt")}, agent_type=None), {})
@@ -145,6 +155,12 @@ class BuilderBoundary(Project):
         heredoc = "cat > .gauntlet/wt/parse/src/x.js <<'EOF'\nimport a from './a.js'\nconsole.log(a > 1)\nEOF"
         self.assertEqual(self.hook("Bash", {"command": heredoc}), {})  # a here-document body is data, not shell
         self.denied(self.hook("Bash", {"command": "cat > src/x.js <<'EOF'\n1\nEOF"}), "outside")
+
+    def test_a_script_argument_is_not_a_write_target(self):  # F14, the builder side
+        self.hook("Write", {"file_path": self.path(".gauntlet/wt/parse/src/parse.ts")})
+        self.assertEqual(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && sed -e 's/a/b/' src/parse.ts > src/out.ts 2>&1"}), {})
+        self.denied(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && sed -e 's/a/b/' src/parse.ts > ../format/x.ts"}), "run state")
+        self.denied(self.hook("Bash", {"command": "f=../../src; cp .gauntlet/wt/parse/src/parse.ts $f/"}), "outside")
 
     def test_other_agents_pass_through(self):
         self.assertEqual(self.hook("Write", {"file_path": self.path("src/app.js")}, agent_type="author"), {})
@@ -257,6 +273,16 @@ class AuthorScope(Project):
                         "cd heldout && touch new.mjs"):
             self.assertEqual(hook(command), {}, command)
         self.assertEqual(hook("echo x > src/app.js", agent_type="editor"), {})  # other agents pass through
+
+    def test_only_what_a_command_writes_must_stay_inside(self):  # F14: six author commands denied in bytesize-3
+        hook = lambda command: run_hook("author_scope.py", self.root, "Bash", {"command": command}, agent_type="author")
+        for command in ("""sed -e "60s/decimalPlaces: 4 }/decimalPlaces: 4, unit: 'kb' }/" heldout/x.mjs > .gauntlet/staging/x.mjs && diff heldout/x.mjs .gauntlet/staging/x.mjs""",
+                        "sed -e 's/^var b = require(.b.);$/var b = 1;/' src/secret.txt > reference/anon/Readme.md && cp src/secret.txt heldout/x.mjs reference/anon/",
+                        "mkdir -p reference/anon 2>/dev/null && cat src/secret.txt 2>&1 > reference/anon/a.js"):
+            self.assertEqual(hook(command), {}, command)
+        for command in ("A=reference/anon && mkdir -p $A/test", "echo x > $(pwd)/../out", "sed -i 's/a/b/' src/secret.txt",
+                        "cp heldout/x.mjs src/", "mv reference/x src/x", "rm -f heldout/x.mjs src/secret.txt"):
+            self.assertEqual(hook(command).get("permissionDecision"), "deny", command)
 
 
 class PolicyDriven(Project):

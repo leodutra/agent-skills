@@ -137,6 +137,61 @@ def path_tokens(command, base=None):
     return out
 
 
+_ALL_OPERANDS = ("rm", "tee", "touch", "mkdir", "rmdir", "truncate")
+_LAST_OPERAND = ("mv", "cp", "ln", "install")
+_GIT_WRITES = ("checkout", "restore", "rm", "mv", "apply", "stash", "clean", "reset", "clone")
+_SEPARATORS = ("&&", "||", ";", "|", "&", "(", ")")
+
+
+def write_targets(command, base):
+    """The paths a shell command writes: redirect targets, the operands of a write verb (the last one of a copy or a
+    move), a `sed -i` file, `dd of=`, a git path. A sed script or a file that is only read is not one. A string match
+    like the rest: Tier 2, never isolation. A caller denies a target it cannot resolve (see unresolved)."""
+    try:
+        lexer = shlex.shlex(_no_heredoc_bodies(command), posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = command.split()
+    out, words, skip = [], [], None
+
+    def flush():
+        if words:
+            verb, args = words[0], [w for w in words[1:] if not w.startswith("-")]
+            if verb in _ALL_OPERANDS:
+                out.extend(args)
+            elif verb in _LAST_OPERAND and args:
+                out.append(args[-1])
+            elif verb == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:]):
+                out.extend(a for a in args if os.path.lexists(os.path.join(base, a)))  # the script is not a file
+            elif verb == "dd":
+                out.extend(w[3:] for w in words[1:] if w.startswith("of="))
+            elif verb == "git" and args and args[0] in _GIT_WRITES:
+                out.extend(a for a in args[1:] if "://" not in a and ("/" in a or a.startswith(".")))
+        words.clear()
+
+    for token in tokens:
+        if skip:  # the word after a redirect: a target after `>`, a source after `<`, a descriptor after `>&`
+            if skip == ">" and token not in SAFE:
+                out.append(token)
+            skip = None
+        elif token in _SEPARATORS:
+            flush()
+        elif token in (">", ">>", ">|", "&>", "&>>", "<", "<<", "<<<", ">&", "<&"):
+            if words and words[-1].isdigit():
+                words.pop()  # `2>`: the descriptor is not an operand
+            skip = ">" if token in (">", ">>", ">|", "&>", "&>>") else "<"
+        else:
+            words.append(token)
+    flush()
+    return out
+
+
+def unresolved(target):
+    """A target named through the shell (a variable, a substitution): the hook cannot say where it lands."""
+    return "$" in target or "`" in target or (target.startswith("~") and not target.startswith("~/"))
+
+
 def binding(agent_id, value=None):
     """What an agent is bound to (a pair or a worktree). Recorded once; the first write wins."""
     path = os.path.join(project(), ".gauntlet", "private", "bindings", re.sub(r"\W", "_", agent_id or "none"))

@@ -35,6 +35,11 @@ class Docs(unittest.TestCase):
         section = re.search(r"(?ms)^## By hand\n(.*?)(?=^## )", (REFS / "running-the-loop.md").read_text()).group(1)
         self.assertIn("never continue by hand", section)
 
+    def test_a_builder_returns_its_directory_for_code(self):  # F17: bytesize-3's builder returned src/index.js
+        text = pathlib.Path(SKILL, "agents", "editor.md").read_text()
+        self.assertIn("your directory for code", text)
+        self.assertIn("a single document", text)
+
     def test_the_freeze_is_never_offloaded(self):  # A9
         text = (REFS / "running-the-loop.md").read_text()
         self.assertNotIn("does the freeze", text)

@@ -708,6 +708,15 @@ def scan_paths(paths, exclude=(".git", "node_modules")):
     return hits
 
 
+def reference_names(src):
+    """The words that name a reference, from where it was fetched: `owner/repo`, `repo`, and `repo` without a
+    language suffix (`bytes.js` -> `bytes`). Four characters or more, so a name never matches half the language."""
+    name = re.sub(r"\.git$", "", src.rstrip("/"))
+    names = {"/".join(name.split("/")[-2:]), name.split("/")[-1]}
+    names |= {re.sub(r"\.(js|ts|py|rs|go|rb)$", "", n) for n in names}
+    return {n for n in names if len(n) >= 4}
+
+
 def cmd_freeze(args):
     dst = os.path.abspath(args.dst)
     if os.path.exists(dst):
@@ -736,9 +745,7 @@ def cmd_freeze(args):
                     dirs.remove(name)
 
     # FR-1.7: this is the first command that knows the reference's name.
-    name = re.sub(r"\.git$", "", args.src.rstrip("/"))
-    names = {"/".join(name.split("/")[-2:]), name.split("/")[-1]}
-    pattern = "|".join(re.escape(n) for n in names if len(n) >= 4)
+    pattern = "|".join(re.escape(n) for n in reference_names(args.src))
     seen = []
     for folder, dirs, files in os.walk(root()):
         dirs[:] = [d for d in dirs if d not in (".git", "node_modules", ".gauntlet", "reference")]
@@ -907,6 +914,39 @@ def attach_floors(src, dst, *hide):
             f.write(re.sub(r"\$\{?GAUNTLET_\w+\}?", ".", text))
 
 
+IDENTITY = POLICY["pair_identity"]
+COMMENT_LINE = re.compile(r"^\s*(//|#|\*|/\*|<!--)")
+
+
+def anonymise(side, names):
+    """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file, a package
+    manifest loses its identity fields, and a comment-only line that carries a copyright or the reference's name goes.
+    Code is never touched: a critic who knows the code itself is the residual risk README D8 states."""
+    marks = re.compile("|".join([r"\bcopyright\b", r"\(c\)\s*\d{4}", r"@license\b", r"@author\b"] +
+                                [rf"\b{re.escape(n)}\b" for n in names]), re.I)
+    files = [os.path.join(folder, f) for folder, _, fs in os.walk(side) for f in fs]
+    for path in files:
+        name = os.path.basename(path)
+        if len(files) > 1 and any(fnmatch.fnmatch(name, pat) for pat in IDENTITY["files"]):
+            os.remove(path)
+        elif name == "package.json":
+            data = read_json(path)
+            if data:
+                with open(path, "w") as f:
+                    json.dump({k: v for k, v in data.items() if k not in IDENTITY["fields"]}, f, indent=2)
+                    f.write("\n")
+        elif os.path.getsize(path) <= 1_000_000:
+            try:
+                with open(path, encoding="utf-8") as f:
+                    lines = f.readlines()
+            except (UnicodeDecodeError, OSError):
+                continue  # a binary file carries no comment
+            kept = [line for line in lines if not (COMMENT_LINE.match(line) and marks.search(line))]
+            if len(kept) != len(lines):
+                with open(path, "w", encoding="utf-8") as f:
+                    f.writelines(kept)
+
+
 def refuse_unclean(path):
     """No env or credential file, no secret, no trace of the loop: refuse, and say where."""
     bad = []
@@ -1031,6 +1071,10 @@ def cmd_pair(args):
         if not any(referent == v or referent.startswith(v + os.sep) for v in verified):
             prompt += READ_ONLY_LINE
         live = build_pair(pid, pair_id, sides, prompt)
+        known = set().union(*(reference_names(read_json(os.path.join(root(), f, "MANIFEST")).get("source") or f)
+                              for f in tx.state["run"]["frozen"]))
+        for label in sides:
+            anonymise(os.path.join(live, label), known)
         floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
         ours_label = "a" if first_is_a else "b"
         # Both sides or neither: outputs on one side alone say which side is ours, so they wait for a verified reference.
@@ -1199,13 +1243,20 @@ def parse_verdict(text, shape):
 
 
 def transcript_tokens(path):
-    """Tokens one agent used, summed from the transcript its stop hook names (harness-claude-code.md, S8); None when unreadable."""
+    """Tokens one agent spent, from the transcript its hook names (harness-claude-code.md, S8): input, cache writes and
+    output, once per message, since a message's usage repeats on each of its lines. Cache reads re-read context already
+    counted and are left out. None when unreadable."""
     try:
-        total = 0
+        total, seen = 0, set()
         with open(path) as f:
             for line in f:
-                usage = (json.loads(line).get("message") or {}).get("usage") or {}
-                total += sum(v for k, v in usage.items() if k.endswith("_tokens") and isinstance(v, int))
+                message = json.loads(line).get("message") or {}
+                usage, mid = message.get("usage") or {}, message.get("id")
+                if not usage or (mid and mid in seen):
+                    continue
+                seen.add(mid)
+                total += sum(v for k, v in usage.items()
+                             if k.endswith("_tokens") and k != "cache_read_input_tokens" and isinstance(v, int))
         return total or None
     except (OSError, ValueError, TypeError, AttributeError):
         return None

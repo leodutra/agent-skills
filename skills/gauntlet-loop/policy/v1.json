@@ -169,6 +169,33 @@
     ".cursor",
     ".github"
   ],
+  "pair_identity": {
+    "files": [
+      "README*",
+      "Readme*",
+      "readme*",
+      "LICENSE*",
+      "LICENCE*",
+      "License*",
+      "CHANGELOG*",
+      "Changelog*",
+      "HISTORY*",
+      "History*",
+      "AUTHORS*",
+      "CONTRIBUTORS*",
+      "NOTICE*"
+    ],
+    "fields": [
+      "name",
+      "author",
+      "contributors",
+      "maintainers",
+      "repository",
+      "homepage",
+      "bugs",
+      "funding"
+    ]
+  },
   "credential_files": [
     ".env*",
     "*.pem",

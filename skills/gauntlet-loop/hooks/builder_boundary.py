@@ -5,8 +5,8 @@ import fnmatch
 import os
 import re
 
-from _paths import (WRITES, allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve,
-                    shell_base, tree_of)
+from _paths import (allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base,
+                    tree_of, unresolved, write_targets)
 
 ROLES = ("editor", "editor-fast")
 B = policy()["builder_boundary"]
@@ -50,9 +50,9 @@ def main():
                 block(rule, command)
         base = shell_base(command, root)
         for token in path_tokens(command, base):
-            real = resolve(token, base)
-            check_read(real, command)
-            if WRITES.search(command) and not inside(real, home):
+            check_read(resolve(token, base), command)
+        for target in write_targets(command, base):
+            if unresolved(target) or not inside(resolve(target, base), home):
                 block("outside your directory", command)
         allow()
 

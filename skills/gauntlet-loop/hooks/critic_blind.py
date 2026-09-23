@@ -4,7 +4,7 @@ import os
 import re
 import shlex
 
-from _paths import allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve
+from _paths import allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base
 
 ROLES = ("reader", "reader-alt")
 FORBIDDEN = policy()["critic_blind"]["forbidden"]
@@ -23,8 +23,14 @@ def main():
 
     if tool == "Bash":
         command = ti.get("command", "")
-        if not pair:
-            deny(REASON, "BLIND_BLOCK", p, command)
+        if not pair:  # bound by a first command whose paths all lie in one pair, as a first Read binds (F15)
+            base = shell_base(command, root)
+            reals = [resolve(t, base) for t in path_tokens(command.partition("<<'")[0])] + ([base] if base != root else [])
+            named = {os.path.relpath(r, pairs).split(os.sep)[0] for r in reals if inside(r, pairs) and r != pairs}
+            if len(named) != 1 or not all(inside(r, os.path.join(pairs, *named)) for r in reals):
+                deny(REASON, "BLIND_BLOCK", p, command)
+            pair = binding(agent, named.pop())
+            home = os.path.join(pairs, pair)
         for name in FORBIDDEN:
             if name in command:
                 deny(REASON, "BLIND_BLOCK", p, command)

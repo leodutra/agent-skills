@@ -189,7 +189,7 @@ class Report(Run):
     def test_tokens_are_read_from_the_transcript_the_stop_hook_names(self):  # S8
         transcript = self.write("transcript.jsonl", "\n".join(json.dumps(
             {"type": "assistant", "message": {"model": "claude-x", "usage": {"input_tokens": 10, "output_tokens": n, "cache_read_input_tokens": 5}}}) for n in (100, 200)))
-        self.assertEqual(ctl.transcript_tokens(transcript), 330)
+        self.assertEqual(ctl.transcript_tokens(transcript), 320)  # F19: cache reads re-read counted context and are left out
         self.assertEqual(ctl.transcript_tokens("/no/such/file"), None)
 
     def test_the_report_puts_conflicts_and_parked_pieces_first_and_fills_every_field(self):  # FR-4.5, FR-13.2, AC-13.1

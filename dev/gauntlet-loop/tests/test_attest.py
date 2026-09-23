@@ -118,6 +118,14 @@ class Readers(AttestRepo):
         self.assertEqual(self.piece["state"], "CONFIRMED")
         self.assertEqual(ctl.metrics(ctl.read_events(), ctl.load())["lead_tokens_per_confirmed_piece"], 320)
 
+    def test_tokens_count_each_message_once_and_leave_out_cache_reads(self):  # F19: 23.8 million lead tokens in bytesize-3
+        path = pathlib.Path(self.base, "t.jsonl")
+        usage = {"input_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 9000, "output_tokens": 20}
+        lines = [{"message": {"id": "m1", "role": "assistant", "usage": usage}}] * 3  # one message, three content lines
+        lines += [{"message": {"id": "m2", "role": "assistant", "usage": {**usage, "output_tokens": 30}}}]
+        path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+        self.assertEqual(ctl.transcript_tokens(str(path)), 125 + 135)
+
     def test_a_confirmation_attested_from_reader_is_rejected(self):  # AC-17.7, FR-17.13
         self.green_pair()
         self.start("r1", "reader")

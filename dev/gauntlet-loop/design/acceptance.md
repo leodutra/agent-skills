@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 138 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A26 record the changes to the spec.
+Claude Code 2.1.280 installed. 144 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A31 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -22,6 +22,43 @@ Claude Code 2.1.280 installed. 138 tests, all passing, with `sizes.sh`, `harness
 | F11. The lead met that traceback and went on by hand at Tier 3 | fixed (A24) | the By hand section: an installed controller that errors stops the run; test: `test_an_installed_controller_that_errors_stops_the_run` |
 | F12. The coarse matcher denied `ls .gauntlet` chained to a staging write, and an `init` chained to a cleanup | message fixed (A25); coarse by design | test: `test_a_chained_controller_call_is_told_to_stand_alone` |
 | F13. `protect_floors` denied `freeze-verify reference/bytes --cmd "npm install ..."` (the bytesize-3 run): the write verb inside the quoted argument and the reference path, with no exemption for the controller | fixed (A26); deployed after that run ends | test: `test_the_controller_alone_on_its_line_passes` |
+| F14. Writes judged by every path-looking token: six author commands denied over `sed` scripts and `$A/test` paths | fixed (A27) | `write_targets()`; tests: `test_only_what_a_command_writes_must_stay_inside`, `test_a_script_argument_is_not_a_write_target` |
+| F15. A reader's first shell command denied as unbound | fixed (A28) | bind on a first command inside one pair; test: `test_a_first_shell_command_inside_one_pair_binds_the_reader` |
+| F16. `pair` left the reference's name in its files (FR-6.5 unmet) | fixed (A29) | `anonymise()`, both sides alike; test: `test_a_pair_carries_no_name_on_either_side` |
+| F17. The builder returned a file where the floors needed its directory | fixed (A30) | the editor definition; test: `test_a_builder_returns_its_directory_for_code` |
+| F18. `freeze-verify` refused: the parent directory was writable inside that session's sandbox | not a defect: the probe did its job | open question for the operator: what that session's `/sandbox` panel allowed |
+| F19. Tokens summed per transcript line and with cache reads: 23.8 million for the lead of a 0.9-hour run | fixed (A31) | once per message, cache reads left out, about 270 thousand; tests: `test_tokens_count_each_message_once_and_leave_out_cache_reads`, `test_tokens_are_read_from_the_transcript_the_stop_hook_names` |
+
+The bytesize-3 run, 2026-09-23: the lead a Claude Code session opened in `~/Work/bytesize-3` with the prompt pasted under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. It ended on a win with one piece, the lead's coarsest split, so a whole gate over two pieces is still owed (TODO, C3). A fable reader picked ours, and an opus reader-alt picked ours again with the sides swapped. Every agent returned through the handback tool, so without A16 both verdicts would have been discarded. Both critics judged by reading, since no reference was verified. `gauntletctl status --peek`, then `gate`, from the run's own controller:
+
+```text
+confirmed 1/1 pieces, whole: yes (2/2) | parked: 0 | blocked: 0 | spent: 5/40 inv, 1.1/3 h | ended: win
+.gauntlet/verdicts/bytesize-r1-1.md: WINNER: B
+.gauntlet/verdicts/bytesize-r1-2.md: WINNER: A
+```
+
+`metrics`, the lines that carry a value. The two token lines were computed before A31, with every line and every cache read counted; recounted under A31, the lead's is about 270 thousand:
+
+```text
+rounds per confirmed piece                       1.0
+red floor share                                  0.67
+confirmation flip rate                           0.0
+discarded verdict rate                           0.0
+invocations per confirmed piece                  5.0
+lead turns per confirmed piece                   7.0
+lead tokens per confirmed piece                  23820651.0
+controller operations per confirmed piece        51.0
+worker minutes per confirmed piece               10.1
+tokens per confirmed piece                       2128340.0
+spend                                            {'local': '5/24', 'escalation': '0/10', 'gate': '0/6'}
+unused reserve                                   {'escalation': 10, 'gate': 6}
+ended                                            win
+ceiling hit                                      False
+by class                                         {'artifact': 2, 'evaluation': 5, 'execution': 0, 'scope': 0}
+attestation conflicts                            0
+```
+
+The five `evaluation` entries are the lead's own floor corrections before any critic: one held-out case was wrong, and the floors pointed at a file (F17).
 
 The bytesize run, closed on 2026-09-23 with its own installed controller (`report --notes`, then `commit`: `a48b45b` in that repository; no remote, so promotion was not applied). It ended on its ceiling with no verdict: the lead's session stopped after both builders returned, and the overdue turn was recorded by a `status` call four days later (F7). The status line, from the report:
 
