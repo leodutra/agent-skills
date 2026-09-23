@@ -4,7 +4,7 @@ round zero and by nobody else, the lead included. Afterwards they change only th
 import json
 import os
 
-from _paths import WRITES, allow, deny, path_tokens, payload, policy, project, resolve, shell_base, tree_of
+from _paths import ALONE, WRITES, allow, controller_alone, deny, path_tokens, payload, policy, project, resolve, shell_base, tree_of
 
 TREES = policy()["floor_trees"]
 
@@ -26,6 +26,8 @@ def main():
     ti = p.get("tool_input", {})
     if p.get("tool_name") == "Bash":
         command = ti.get("command", "")
+        if controller_alone(command):
+            allow()  # freeze, freeze-verify and `floor --to` write floor trees, under the controller's own rules
         base = shell_base(command, root)
         hits = [t for t in path_tokens(command, base) if tree_of(resolve(t, base), TREES, root)] if WRITES.search(command) else []
         target = command if hits else None
@@ -34,8 +36,8 @@ def main():
     if target:
         deny("protect-floors: tests, held-out sets, the reference and benchmarks are written by an author at round zero "
              "and change afterwards only through `gauntletctl floor add|amend --from <staged file>`. An author stages "
-             "the file under .gauntlet/staging/; a builder returns `BLOCKED: <reason>`.",
-             "BOUNDARY_BLOCK", p, target)
+             "the file under .gauntlet/staging/; a builder returns `BLOCKED: <reason>`."
+             + (ALONE if "gauntletctl" in (ti.get("command") or "") else ""), "BOUNDARY_BLOCK", p, target)
     allow()
 
 

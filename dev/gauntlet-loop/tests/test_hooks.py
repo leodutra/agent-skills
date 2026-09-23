@@ -172,6 +172,14 @@ class ProtectFloors(Project):
         self.assertIn("floor add", out["permissionDecisionReason"])
         self.assertEqual(self.hook("Bash", {"command": "python3 .claude/hooks/gauntlet/gauntletctl floor add h --cmd true --from .gauntlet/staging/t.mjs --to heldout/t.mjs"}, agent_type=None), {})
 
+    def test_the_controller_alone_on_its_line_passes(self):  # F13: bytesize-3's freeze-verify was denied, 2026-09-23
+        verify = '.claude/hooks/gauntlet/gauntletctl freeze-verify reference/bytes --cmd "npm install --no-audit" --cmd "npm test"'
+        for command in (verify, "python3 " + verify):
+            self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None), {}, command)
+        out = self.hook("Bash", {"command": verify + " 2>&1 | tail -30; echo done"}, agent_type=None)
+        self.assertEqual(out.get("permissionDecision"), "deny")  # chained, it gets the checks, and is told why
+        self.assertIn("alone on its line", out["permissionDecisionReason"])
+
     def test_shell_writes_are_denied_and_shell_reads_are_not(self):
         self.assertEqual(self.hook("Bash", {"command": "echo x > heldout/x.mjs"}, agent_type=None).get("permissionDecision"), "deny")
         self.assertEqual(self.hook("Bash", {"command": "rm -rf reference/"}, agent_type=None).get("permissionDecision"), "deny")

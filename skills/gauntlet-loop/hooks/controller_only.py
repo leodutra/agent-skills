@@ -7,12 +7,11 @@ BLOCKED; it never writes tooling."""
 import os
 import re
 
-from _paths import WRITES, allow, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base
+from _paths import ALONE, WRITES, allow, controller_alone, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base
 
 C = policy()["controller_only"]  # trees and files nobody writes; `open` is where builders and authors do
 REASON = ("controller-only: run state and the run's tooling change only through gauntletctl. If you need a fact recorded, "
           "there is a command for it; if you need tooling that does not exist, mark the piece BLOCKED.")
-ALONE = " Run the controller alone on its line, with nothing chained to it, and each write as its own command."
 PRIVATE = "controller-only: .gauntlet/private/ is read by the controller alone; ask it (`gauntletctl status --full`, `next`)."
 
 
@@ -48,8 +47,8 @@ def main():
     command = ti.get("command", "")
     if re.search(r"gauntletctl\S*\s+attest\b", command):
         deny("controller-only: attest is the harness's hook and never a tool call.", "BOUNDARY_BLOCK", p, command)
-    if re.search(r"gauntletctl\S*\s+\w", command) and not re.search(r"&&|\|\||[;|<>`]|\$\(", command):
-        allow()  # the controller alone on the line; a compound command gets the checks below
+    if controller_alone(command):
+        allow()
     base = shell_base(command, root)
     if any(unreadable(resolve(token, base), root) for token in path_tokens(command, base)):
         deny(PRIVATE, "BOUNDARY_BLOCK", p, command)

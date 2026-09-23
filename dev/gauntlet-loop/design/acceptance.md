@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 137 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A25 record the changes to the spec.
+Claude Code 2.1.280 installed. 138 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A26 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -21,6 +21,7 @@ Claude Code 2.1.280 installed. 137 tests, all passing, with `sizes.sh`, `harness
 | F10. The controller's `PermissionError` was a traceback | fixed (A24) | `main()` refuses with the path; test: `test_an_unreadable_file_is_a_refusal_that_names_it` |
 | F11. The lead met that traceback and went on by hand at Tier 3 | fixed (A24) | the By hand section: an installed controller that errors stops the run; test: `test_an_installed_controller_that_errors_stops_the_run` |
 | F12. The coarse matcher denied `ls .gauntlet` chained to a staging write, and an `init` chained to a cleanup | message fixed (A25); coarse by design | test: `test_a_chained_controller_call_is_told_to_stand_alone` |
+| F13. `protect_floors` denied `freeze-verify reference/bytes --cmd "npm install ..."` (the bytesize-3 run): the write verb inside the quoted argument and the reference path, with no exemption for the controller | fixed (A26); deployed after that run ends | test: `test_the_controller_alone_on_its_line_passes` |
 
 The bytesize run, closed on 2026-09-23 with its own installed controller (`report --notes`, then `commit`: `a48b45b` in that repository; no remote, so promotion was not applied). It ended on its ceiling with no verdict: the lead's session stopped after both builders returned, and the overdue turn was recorded by a `status` call four days later (F7). The status line, from the report:
 

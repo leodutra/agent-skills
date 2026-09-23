@@ -30,7 +30,8 @@ The user turned the sandbox on in `~/Work/bytesize-2` (`/sandbox`, `settings.loc
 - [x] **F10. A controller I/O error is a traceback.** Fix: `main()` turns an `OSError` into a refusal (exit 3) that names the path and points at the harness file. Test: an unreadable event log exits 3 with its path.
 - [x] **F11. An installed controller that errors made the lead go "by hand".** Fix: the runbook's By hand section says it is for a run with no controller, and an installed controller that errors stops the run: report the error, never continue by hand. Test: `test_docs.py`.
 - [x] **F12. The coarse shell matcher denied `ls .gauntlet` chained to a staging write, and an `init` chained to a cleanup.** Fail-closed stays (spec: coarse by design); the denial now says to run the controller alone on its line and each write as its own command. Test: the reason names it.
-- [ ] **Retry C2 in a fresh `~/Work/bytesize-3`** once F9 to F12 are committed and deployed; `bytesize-2` keeps what that run left, as evidence.
+- [x] **F13. `protect_floors` denied `freeze-verify` with an install step** (the bytesize-3 run): the write verb inside the quoted `--cmd` and the reference path, and no exemption for the controller alone on its line. Fixed test-first (A26). Deploy only after bytesize-3 ends: its lead reads the deployed runbook, and a run's tooling never changes mid-run.
+- [ ] **Retry C2 in a fresh `~/Work/bytesize-3`** once F9 to F12 are committed and deployed; `bytesize-2` keeps what that run left, as evidence. Prepared 2026-09-23: F9 to F12 committed as `d4a0eb0` and deployed (mirror diff empty); `~/Work/bytesize-3` has the skeleton (`38c9f5a`) and the fixed skill (`5d1b909`), `detect` Tier 2, no `.gauntlet` permission deny. The prompt is the one under C2. Waiting on the user to open `claude` there, accept trust, optionally `/sandbox` strict, and paste it.
 
 ## Stage B: records, commit, deploy (free)
 

@@ -88,6 +88,15 @@ def shell_base(command, root):
     return resolve(m.group(1).strip("'\""), root) if m else root
 
 
+ALONE = " Run the controller alone on its line, with nothing chained to it, and each write as its own command."
+
+
+def controller_alone(command):
+    """The controller alone on its line: the one hand that writes the run's files, held to its own rules. Chained, the
+    hooks cannot tell its arguments from the shell's, so a compound command gets the ordinary checks."""
+    return bool(re.search(r"gauntletctl\S*\s+\w", command)) and not re.search(r"&&|\|\||[;|<>`]|\$\(", command)
+
+
 def glob_base(pattern):
     """The literal directory prefix of a glob pattern."""
     keep = []
