@@ -584,6 +584,7 @@ HARNESS = {
     "manifest": ".claude/hooks/gauntlet/MANIFEST.sha256",
     "readers": [".claude/agents/reader.md", ".claude/agents/reader-alt.md"],
     "attest_key": ".gauntlet/private/attest.key",
+    "handback_tool": "SubagentHandback",  # an agent's return, when it hands back through a tool (2.1.277)
 }
 LOOP_WORDS = r"(?i)\b(gauntlet|critic|the bar|champion|challenger)\b"
 
@@ -874,6 +875,8 @@ LOOP_TRACES = re.compile(r"(?i)\bgauntlet\b|\bround[ _-]?\d+\b|\b(per|as) the (c
                          r"\b(critic|reviewer)'s (gap|feedback|verdict)\b|\bwhat changed since\b")
 LOOP_NAMES = re.compile(r"(?i)([-_.]final\b|round[-_]?\d+)")
 CC_LINE = "\nR is a fixed reference point, not a candidate. Pick which of A and B sits closer to R.\n"
+# FR-15.7: reference code executes only under isolation the controller verified, and a critic cannot tell which side it is.
+READ_ONLY_LINE = "\nNothing in this directory runs under isolation: judge by reading and cite path:line; execute no code here.\n"
 GAP_ONLY_LINE = ("\nGap-only verdict: no WINNER. Under GAP, name the one biggest difference a maker of the weaker side could "
                  "still close, as an observation of which side has it and which lacks it, or write `GAP: none` when "
                  "nothing closable separates them.\n")
@@ -1023,6 +1026,10 @@ def cmd_pair(args):
         dispatch(tx, pid, pair_id, shape, "first", recheck=args.recheck)  # rejects before any file is written
         with open(os.path.join(prepared, "PROMPT.md")) as f:
             prompt = f.read() + (GAP_ONLY_LINE if args.gap_only else CC_LINE if cc else "")
+        verified = [os.path.join(root(), v) for v in tx.state["run"]["verified"]]
+        referent = os.path.join(root(), piece["referent"] or "")
+        if not any(referent == v or referent.startswith(v + os.sep) for v in verified):
+            prompt += READ_ONLY_LINE
         live = build_pair(pid, pair_id, sides, prompt)
         floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
         ours_label = "a" if first_is_a else "b"
@@ -1204,6 +1211,22 @@ def transcript_tokens(path):
         return None
 
 
+def final_text(p):
+    """What the agent returned: its last handback through the harness's tool, from the transcript its stop hook names;
+    otherwise its last message. After a handback the last message is only chatter (harness-claude-code.md, S11)."""
+    text = None
+    try:
+        with open(p.get("agent_transcript_path") or "") as f:
+            for line in f:
+                content = (json.loads(line).get("message") or {}).get("content")
+                for c in content if isinstance(content, list) else []:
+                    if isinstance(c, dict) and c.get("type") == "tool_use" and c.get("name") == HARNESS["handback_tool"]:
+                        text = (c.get("input") or {}).get("message") or text
+    except (OSError, ValueError, TypeError, AttributeError):
+        pass
+    return text or p.get("last_assistant_message") or ""
+
+
 def redact(text):
     for pat in SECRETS.values():
         text = re.sub(pat, "[redacted]", text)
@@ -1299,11 +1322,12 @@ def cmd_attest(args):
             return 0
         if args.start:  # builders and critics are paid for where their attempt opens; these two have no attempt
             tx.emit("AGENT_REGISTERED", "fact", "attest", agent_id=p.get("agent_id"), agent_type=p.get("agent_type"),
+                    lead_tokens=transcript_tokens(p.get("transcript_path") or ""),  # the lead's so far, from its transcript (S2)
                     cost=1 if p.get("agent_type") in ("author", "editor-fast") else None)
         elif p.get("agent_type") in READERS:
-            attest_reader(tx, p, p.get("last_assistant_message") or "")
+            attest_reader(tx, p, final_text(p))
         elif p.get("agent_type") in EDITORS:
-            attest_editor(tx, p, p.get("last_assistant_message") or "")
+            attest_editor(tx, p, final_text(p))
     return 0
 
 
@@ -1342,8 +1366,7 @@ def next_actions(state):
     run, out = state["run"], []
     ctl = "gauntletctl"
     if not run["frozen"]:
-        return [("-", "mechanical", f"{ctl} freeze <src> reference/<name> [--ref <tag>]; then freeze-verify under isolation "
-                                    f"(an author runs the freeze for a reference beyond {OFFLOAD['reference_files']} files)")]
+        return [("-", "mechanical", f"{ctl} freeze <src> reference/<name> [--ref <tag>]; then freeze-verify under isolation")]
     if not state["plan_pieces"]:
         return [("-", "judgment", f"decide the coarsest split that can still be paired; record: {ctl} event SPLIT_DECIDED pieces=<n>; "
                                   f"pieces that touch one of these share an edge by rule: {', '.join(POLICY['shared_by_rule'])}")]
@@ -1451,6 +1474,12 @@ def render_workbench(state):
 
 
 def cmd_status(args):
+    if args.peek:  # a human looking: the same line, and nothing recorded, expired or ended
+        state = load()
+        if not state["run"]:
+            raise Rejected("no run here; start one with init")
+        print(status_line(state))
+        return 0
     late = expire_leases()
     state = load()
     if not state["run"]:
@@ -1554,6 +1583,7 @@ def metrics(events, state):
     gate_verdicts = sum(e["event"] in ("CRITIC_LOSS", "CONFIRMATION_LOSS", "CRITIC_WIN", "CONFIRMATION_WIN") for e in whole)
     children = [p for p in state["pieces"].values() if p["parent"] and p["state"] in DONE]
     tokens = sum(e.get("tokens") or 0 for e in ev)
+    lead_tokens = max((e.get("lead_tokens") or 0 for e in ev if e["event"] == "AGENT_REGISTERED"), default=0)
     swaps = [x for x in escalations if x["rung"] == 2]  # the fresh-builder rung
 
     def closed_soon(x):
@@ -1572,6 +1602,7 @@ def metrics(events, state):
         "share_of_escalations_from_spend": rate(sum(x["trigger"] == "spend" for x in escalations), len(escalations)),
         "invocations_per_confirmed_piece": per(sum(run["spent"].values())),
         "lead_turns_per_confirmed_piece": per(run["lead_turns"]),
+        "lead_tokens_per_confirmed_piece": per(lead_tokens) if lead_tokens else "n/a",
         "controller_operations_per_confirmed_piece": per(sum(e["kind"] == "fact" for e in ev)),
         "worker_minutes_per_confirmed_piece": per(round(minutes, 1)),
         "tokens_per_confirmed_piece": per(tokens) if tokens else "n/a",
@@ -1647,6 +1678,8 @@ def committed_set(state, plan):
     paths = [os.path.join(ref, "MANIFEST") for ref in state["run"]["frozen"]]
     paths += [".gauntlet/events.jsonl", ".gauntlet/workbench.md", ".gauntlet/plan.md"]
     paths += [] if plan else [".gauntlet/verdicts", ".gauntlet/report.md"]
+    # The floors ship with the result, once no builder can read them any more; the reference's bytes never do (FR-12.2, A15).
+    paths += [] if plan else [t for t in FLOOR_TREES if not any(f == t or f.startswith(t + "/") for f in state["run"]["frozen"])]
     return [p for p in paths if os.path.exists(os.path.join(root(), p))]
 
 
@@ -1820,6 +1853,7 @@ def main(argv=None):
     p.set_defaults(fn=cmd_attest)
     p = sub.add_parser("status", help="the status line, verbatim; --full is the resume view after compaction")
     p.add_argument("--full", action="store_true")
+    p.add_argument("--peek", action="store_true", help="for a human: print the line and record nothing (no lead turn, no lease expiry)")
     p.set_defaults(fn=cmd_status)
     sub.add_parser("next", help="the legal actions now: mechanical ones, and the judgments the lead owes").set_defaults(fn=cmd_next)
     sub.add_parser("workbench", help="regenerate the projection").set_defaults(fn=cmd_workbench)

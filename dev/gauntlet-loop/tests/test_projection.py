@@ -60,6 +60,18 @@ class Status(Run):
                          "confirmed 1/1 pieces, whole: no | parked: 1 | blocked: 0 | spent: 4/150 inv, 0.0/24 h | ended: nothing-left")
         self.assertEqual(ctl.load()["run"]["lead_turns"], 2)
 
+    def test_peek_is_the_same_line_and_changes_nothing(self):  # A7: a human's `status` ended bytesize, 2026-09-23
+        self.open("parse")
+        log = pathlib.Path(self.root, ".gauntlet/events.jsonl")
+        before = log.read_bytes()
+        started = ctl.epoch(ctl.load()["run"]["started"])
+        clock, ctl.now = ctl.now, lambda: ctl.time.strftime("%Y-%m-%dT%H:%M:%SZ", ctl.time.gmtime(started + 100 * 3600))
+        self.addCleanup(setattr, ctl, "now", clock)  # 100 hours on: past the envelope and every lease
+        peek = self.ok("status", "--peek").strip()
+        self.assertEqual(log.read_bytes(), before)  # no lead turn, no expired lease, no end of the run
+        self.assertIn("100.0/24 h", peek)
+        self.assertNotIn("ended", peek)
+
     def test_full_is_the_resume_view(self):  # FR-6.11
         self.open("parse")
         self.built("parse")
@@ -98,9 +110,12 @@ class Next(Run):
 class NextBeforeTheFreeze(Repo):
     installed = True
 
-    def test_names_the_size_beyond_which_an_author_freezes(self):
+    def test_the_freeze_is_the_leads_own_command(self):  # A9: it returns only the manifest, at any size
         self.ok("init", "--invocations", "150", "--hours", "24")
-        self.assertIn(f"beyond {ctl.POLICY['offload']['reference_files']} files", self.ok("next"))
+        freeze = self.ok("next")
+        self.assertIn("gauntletctl freeze", freeze)
+        self.assertNotIn("author", freeze)
+        self.assertNotIn("reference_files", ctl.POLICY["offload"])
         self.write("upstream/index.js")
         self.ok("freeze", self.root + "/upstream", self.root + "/reference/ms")
         self.assertIn(", ".join(ctl.POLICY["shared_by_rule"]), self.ok("next"))  # the split is the next judgment
@@ -158,7 +173,8 @@ class GateAndMetrics(Run):
 class Report(Run):
     METRICS = ("rounds_per_confirmed_piece", "red_floor_share", "confirmation_flip_rate", "discarded_verdict_rate",
                "not_reproduced_accepted_rate", "parked_pieces", "escalations_per_piece", "share_of_escalations_from_spend",
-               "invocations_per_confirmed_piece", "lead_turns_per_confirmed_piece", "controller_operations_per_confirmed_piece",
+               "invocations_per_confirmed_piece", "lead_turns_per_confirmed_piece", "lead_tokens_per_confirmed_piece",
+               "controller_operations_per_confirmed_piece",
                "worker_minutes_per_confirmed_piece", "tokens_per_confirmed_piece", "spend", "unused_reserve", "ceiling_hit",
                "by_class", "rounds_per_confirmed_piece_after_split", "fresh_builder_gap_closed_within_two_rounds",
                "variant_escalations_whose_winner_confirmed", "converged_pieces_reopened", "whole_gate_loss_rate",
@@ -203,6 +219,18 @@ class CommitPromote(Run):
         self.assertEqual(sorted(files), [".gauntlet/events.jsonl", ".gauntlet/plan.md", ".gauntlet/workbench.md", "reference/ms/MANIFEST"])
         self.assertTrue(ctl.load()["run"]["plan_committed"])
         self.assertEqual(json.loads(self.git("show", "HEAD:.gauntlet/events.jsonl").splitlines()[-1])["event"], "PLAN_COMMITTED")
+
+    def test_the_final_commit_carries_the_floors_and_the_plan_commit_does_not(self):  # A5: the PR had no tests
+        self.open("parse")
+        for rel in ("tests/required/parse/a.test.mjs", "heldout/parse/b.mjs", "bench/speed.mjs"):
+            self.write(rel, "export default 1\n")
+        self.ok("commit", "--plan")
+        self.assertFalse([f for f in self.git("show", "--name-only", "--format=", "HEAD").split() if not f.startswith((".gauntlet/", "reference/"))])
+        self.ok("event", "PARK_REQUESTED", "piece=parse", "reason=needs a migration", "class=execution")
+        self.ok("commit")
+        files = self.git("show", "--name-only", "--format=", "HEAD").split()
+        for rel in ("tests/required/parse/a.test.mjs", "heldout/parse/b.mjs", "bench/speed.mjs"):
+            self.assertIn(rel, files)
 
     def test_commit_refuses_on_a_secret(self):  # FR-15.4
         self.open("parse")

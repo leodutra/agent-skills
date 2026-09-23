@@ -44,9 +44,19 @@ class AttestRepo(Repo):
     def start(self, agent_id, agent_type):
         return self.hook({"hook_event_name": "SubagentStart", "agent_id": agent_id, "agent_type": agent_type}, "--start", *self.key())
 
-    def stop(self, agent_id, agent_type, message, key=True):
-        return self.hook({"hook_event_name": "SubagentStop", "agent_id": agent_id, "agent_type": agent_type,
-                          "last_assistant_message": message}, *(self.key() if key else []))
+    def stop(self, agent_id, agent_type, message, key=True, handback=None):
+        """handback: the text the agent returned through the harness's handback tool, written to its transcript (A1)."""
+        payload = {"hook_event_name": "SubagentStop", "agent_id": agent_id, "agent_type": agent_type,
+                   "last_assistant_message": message}
+        if handback is not None:
+            path = pathlib.Path(self.base, f"{agent_id}.jsonl")
+            lines = [{"message": {"role": "assistant", "content": [{"type": "text", "text": "Opening the pair."}]}},
+                     {"message": {"role": "assistant", "content": [
+                         {"type": "tool_use", "name": ctl.HARNESS["handback_tool"], "input": {"message": handback}}]}},
+                     {"message": {"role": "assistant", "content": [{"type": "text", "text": message}]}}]
+            path.write_text("".join(json.dumps(line) + "\n" for line in lines))
+            payload["agent_transcript_path"] = str(path)
+        return self.hook(payload, *(self.key() if key else []))
 
     def built(self, line=".gauntlet/wt/parse"):
         self.start("b1", "editor")
@@ -94,6 +104,20 @@ class Readers(AttestRepo):
         self.assertEqual((won["event"], won["model"], self.piece["state"]), ("CONFIRMATION_WIN", "opus", "CONFIRMED"))
         self.assertEqual((ended["event"], ended["reason"]), ("RUN_ENDED", "win"))  # one piece: its win is the whole gate
 
+    def test_lead_tokens_come_from_the_transcript_the_start_hook_names(self):  # A8, FR-13.1
+        lead = pathlib.Path(self.base, "lead.jsonl")
+        lead.write_text("".join(json.dumps({"message": {"role": "assistant", "usage": {"input_tokens": n, "output_tokens": 10}}}) + "\n"
+                                for n in (100, 200)))
+        self.green_pair()
+        for agent_id, agent_type in (("r1", "reader"), ("r2", "reader-alt")):
+            self.hook({"hook_event_name": "SubagentStart", "agent_id": agent_id, "agent_type": agent_type,
+                       "transcript_path": str(lead)}, "--start")
+            self.stop(agent_id, agent_type, self.verdict("valid", self.label("ours")))
+            if agent_type == "reader":
+                self.ok("swap", "parse")
+        self.assertEqual(self.piece["state"], "CONFIRMED")
+        self.assertEqual(ctl.metrics(ctl.read_events(), ctl.load())["lead_tokens_per_confirmed_piece"], 320)
+
     def test_a_confirmation_attested_from_reader_is_rejected(self):  # AC-17.7, FR-17.13
         self.green_pair()
         self.start("r1", "reader")
@@ -128,6 +152,14 @@ class Readers(AttestRepo):
         self.start("hedger", "reader")
         self.stop("hedger", "reader", self.verdict("hedge"))
         self.assertEqual(self.names()[-1], "CRITIC_LOSS")  # no ties: a hedge is a loss
+
+    def test_a_verdict_handed_back_through_the_tool_is_the_verdict(self):  # A1: seen on 2.1.277, S11 overturned
+        self.green_pair()
+        self.start("r1", "reader")
+        chatter = "I've already delivered the verdict through the hand-off, so there is nothing further to add."
+        self.stop("r1", "reader", chatter, handback=self.verdict("valid", self.label("ours")))
+        self.assertEqual((self.names()[-1], self.piece["state"]), ("CRITIC_WIN", "AWAITING_CONFIRMATION"))
+        self.assertIn("EVIDENCE:", pathlib.Path(self.root, ".gauntlet/verdicts/parse-r1-1.md").read_text())
 
     def test_a_quoted_secret_is_redacted_before_the_verdict_is_filed(self):  # FR-15.4
         self.green_pair()
@@ -191,3 +223,9 @@ class Editors(AttestRepo):
         self.built("BLOCKED: the fix needs a migration")
         self.assertEqual((self.names()[-2:], self.piece["state"]), (["PIECE_PARKED", "RUN_ENDED"], "PARKED"))
         self.assertIn("migration", ctl.load()["parked"][0]["reason"])
+
+    def test_a_builder_that_hands_back_blocked_parks(self):  # A1: the bytesize parse builder, 2026-09-19
+        self.start("b1", "editor")
+        self.stop("b1", "editor", "I've already delivered the hand-off, so there is nothing further I can request.",
+                  handback="BLOCKED: the permission layer refused to run the required suite")
+        self.assertEqual((self.names()[-2:], self.piece["state"]), (["PIECE_PARKED", "RUN_ENDED"], "PARKED"))

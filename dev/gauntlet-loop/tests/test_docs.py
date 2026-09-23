@@ -26,6 +26,16 @@ class Docs(unittest.TestCase):
             self.assertIn(needle, section.group(1))
         self.assertIn("By hand", text.split("## Round zero")[0])  # the opening points at it
 
+    def test_a_builder_runs_its_required_suite_without_an_env_prefix(self):  # A4: auto mode refused the prefix, 2026-09-19
+        text = (REFS / "running-the-loop.md").read_text()
+        self.assertIn("else the working directory", text)  # the AUTHOR line: how a floor file finds ours
+        self.assertIn("Required suite, from your worktree:", text)  # the BUILDER line
+
+    def test_the_freeze_is_never_offloaded(self):  # A9
+        text = (REFS / "running-the-loop.md").read_text()
+        self.assertNotIn("does the freeze", text)
+        self.assertNotIn("or the `freeze` command", text)
+
 
 if __name__ == "__main__":
     unittest.main()

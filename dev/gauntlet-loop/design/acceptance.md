@@ -2,6 +2,44 @@
 
 Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-loop/next`. "Test" is `python3 -m unittest discover -s skills/gauntlet-loop/tests` (111 tests, all passing); "eval" is `eval/run.sh` and `eval/run_critic.sh` against `eval/baseline.json`; "live" is a run in a scratch repository with real subagents, recorded in `references/harness-claude-code.md`. Claude Code 2.1.274.
 
+## 2026-09-23: what the first real run exposed, fixed
+
+Claude Code 2.1.280 installed. 132 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A22 record the changes to the spec.
+
+| Finding | Result | How |
+| --- | --- | --- |
+| F5. `attest` read `last_assistant_message`, but on 2.1.277 agents hand back through a tool; the parse builder's `BLOCKED:` was filed as a build | fixed (A16) | `final_text()` reads the last handback from the agent's transcript and falls back to the last message; tests: `test_a_verdict_handed_back_through_the_tool_is_the_verdict`, `test_a_builder_that_hands_back_blocked_parks`. Spike S11 marked overturned in the harness file |
+| F6. A `>` inside a builder's quoted `node -e` script read as a redirect, and the call was denied | fixed (A17) | redirects are matched on shell text only; here-document bodies are data; tests: `test_a_greater_than_inside_a_quoted_script_is_not_a_redirect`, and the `ProtectFloors` shell cases |
+| A revision path (`git show HEAD:heldout/x`) hid a held-out file from `builder_boundary` | fixed (A17) | `path_tokens` splits on `:`; test: `test_held_out_material_and_run_state_are_unreadable` |
+| F1. Nothing told a critic not to execute code when the reference was never verified | fixed (A18) | `pair` adds `READ_ONLY_LINE` to `PROMPT.md`; tests: `test_a_critic_executes_nothing_unless_the_reference_was_verified`, `test_a_verified_reference_lets_the_critic_run_both_sides` |
+| F4. A builder could not run its required suite: auto mode refused the env-prefixed command | fixed by convention (A19); proof owed live | floor files fall back to the working directory; the BUILDER and AUTHOR lines say so; tests: `test_a_builder_runs_its_required_suite_without_an_env_prefix`. Only a live run shows the permission layer accepts the new command |
+| F8. The pull request carried no tests | fixed (A15) | the final `commit` stages the floors; test: `test_the_final_commit_carries_the_floors_and_the_plan_commit_does_not` |
+| F7. A human's `status` recorded a lead turn and ended an overdue run (the bytesize run, 2026-09-23) | fixed (A20) | `status --peek`; test: `test_peek_is_the_same_line_and_changes_nothing` |
+| FR-13.1: no lead tokens | fixed (A21) | recorded at each registration from the lead's transcript; tests: `test_lead_tokens_come_from_the_transcript_the_start_hook_names`, the example's metrics block |
+| The freeze offload counted files the lead cannot count before freezing | fixed (A22) | the lead always runs the freeze; README D33 rewritten; tests: `test_the_freeze_is_the_leads_own_command`, `test_the_freeze_is_never_offloaded` |
+
+The bytesize run, closed on 2026-09-23 with its own installed controller (`report --notes`, then `commit`: `a48b45b` in that repository; no remote, so promotion was not applied). It ended on its ceiling with no verdict: the lead's session stopped after both builders returned, and the overdue turn was recorded by a `status` call four days later (F7). The status line, from the report:
+
+```text
+confirmed 0/2 pieces, whole: no | parked: 0 | blocked: 0 | spent: 3/40 inv, 108.4/3 h | ended: ceiling
+```
+
+`metrics`, the lines that carry a value:
+
+```text
+parked pieces                                    0
+spend                                            {'local': '3/24', 'escalation': '0/10', 'gate': '0/6'}
+unused reserve                                   {'escalation': 10, 'gate': 6}
+ended                                            ceiling
+ceiling hit                                      True
+by class                                         {'artifact': 0, 'evaluation': 0, 'execution': 0, 'scope': 0}
+attestation conflicts                            0
+```
+
+It proves the stop: a stalled run ended on its own ceiling with the whole-gate reserve untouched (AC-14.3, live). It proves nothing about critics.
+
+Still open on this date: one real run done the way a user runs it (a session opened in the target repository, under `/goal`); the spikes re-run on 2.1.280; spike S1; AC-15.4; the ponytail audit after the live run. The plan is in `dev/gauntlet-loop/TODO.md`.
+
 ## 2026-09-19: the plan's thin spots, and the first real run (in progress)
 
 Tests now live in `dev/gauntlet-loop/tests` (122, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`). Claude Code 2.1.277.

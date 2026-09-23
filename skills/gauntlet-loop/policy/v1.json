@@ -40,7 +40,6 @@
     "**/pyproject.toml"
   ],
   "offload": {
-    "reference_files": 12,
     "floor_lines": 60
   },
   "floor_trees": [

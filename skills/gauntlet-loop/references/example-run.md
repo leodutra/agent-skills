@@ -252,6 +252,7 @@ escalations per piece                            {'gap': 0.17, 'spend': 0.0}
 share of escalations from spend                  0.0
 invocations per confirmed piece                  8.6
 lead turns per confirmed piece                   2.6
+lead tokens per confirmed piece                  75600.0
 controller operations per confirmed piece        40.8
 worker minutes per confirmed piece               58.8
 tokens per confirmed piece                       214000.0

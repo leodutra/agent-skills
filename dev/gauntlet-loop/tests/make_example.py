@@ -21,6 +21,9 @@ class Run:
 
     def emit(self, name, kind="fact", source="controller", minutes=1, **fields):
         self.tick(minutes)
+        if name == "AGENT_REGISTERED":  # the start hook reads the lead's transcript: its tokens so far
+            self.lead_tokens = getattr(self, "lead_tokens", 0) + 9_000
+            fields["lead_tokens"] = self.lead_tokens
         real, ctl.now = ctl.now, lambda: ctl.time.strftime("%Y-%m-%dT%H:%M:%SZ", ctl.time.gmtime(self.clock))
         try:
             return self.tx.emit(name, kind, source, **fields)

@@ -1,6 +1,6 @@
 # Harness facts: Claude Code
 
-Minimum version: Claude Code 2.1.271. Every line below was observed on 2.1.274 (Linux, bubblewrap sandbox) on 2026-09-18 in a scratch repository, unless it says "docs" (the Claude Code docs as they read that day). A fact that backs an enforced rule is re-run before a release and re-dated. This is the only file that knows the harness: the method files name no harness command, and the controller calls no harness API.
+Minimum version: Claude Code 2.1.271. Every line below was observed on 2.1.274 (Linux, bubblewrap sandbox) on 2026-09-18 in a scratch repository, unless it says "docs" (the Claude Code docs as they read that day). A fact that backs an enforced rule is re-run before a release and re-dated. Installed on 2026-09-23: 2.1.280, on which the spikes have not been re-run; S11 was overturned on 2.1.277. This is the only file that knows the harness: the method files name no harness command, and the controller calls no harness API.
 
 ## Install, before a run
 
@@ -41,7 +41,7 @@ The Workflow tool is not for the loop: its agents prompt for anything not allowl
 | S8 | The subagent transcript (`agent_transcript_path`, JSONL) names the model and carries token usage on every assistant line | token metrics read from transcripts |
 | S9 | A subagent whose tools omit `SendMessage` reports no other agents and no roster | no role lists `SendMessage` |
 | S10 | A settings-level `PreToolUse` hook fires inside a subagent with `agent_id` and `agent_type`. The payload `cwd` is the project root even after the subagent ran `cd` into a worktree; the `cd` does not persist to its next call | a builder is bound to its worktree by its first write, not by `cwd` |
-| S11 | A reader with a `tools:` allowlist delivers its final text in `last_assistant_message`; no handback tool was involved | attest reads `last_assistant_message` |
+| S11 | A reader with a `tools:` allowlist delivers its final text in `last_assistant_message`; no handback tool was involved. OVERTURNED on 2.1.277 (2026-09-19, the first real run): both builders returned through a `SubagentHandback` tool call, its `message` input holding the return, and `last_assistant_message` held only the chatter after it | attest reads the last handback message from the transcript the stop hook names, and falls back to `last_assistant_message` |
 | S12 | A builder resumed with `SendMessage` keeps its `agent_id`; `SubagentStart` and `SubagentStop` both fire again on every resume | an editor stops once per round; re-registration is normal |
 | S13 | A reader with `omitClaudeMd: true` could not quote a canary line from the repository's `CLAUDE.md`; the same definition without the field quoted it | readers set the field |
 | S14 | Under the sandbox: `.gauntlet/wt/<piece>/` is writable from sandboxed shell; a path under `denyRead` reads as nonexistent to sandboxed shell, including a sandboxed controller; `excludedCommands` matches a subcommand prefix (`./gauntletctl pair *`); a compound command that starts with an excluded prefix runs unsandboxed in full (`./gauntletctl pair x && cat <denied file>` printed the file). A project under the sandbox's own temp root can write to its parent directory | No `excludedCommands` ship. The read deny names the attestation key only, so every lead-invoked command stays sandboxed and none needs the key |
@@ -57,6 +57,7 @@ Docs, 2026-09-18. This table mirrors the `HARNESS` table at the top of the contr
 | Credential denies | `sandbox.credentials.files` and `.envVars`, applied from user and managed settings only; entries in project or local settings are ignored (2.1.246 and later) |
 | Hooks off | `disableAllHooks` at any scope forces Tier 3 |
 | Checked in | `.claude/settings.json`, `.claude/hooks/gauntlet/` and `.claude/agents/` tracked by git with a clean status |
+| Agent returns | an agent's final return is the `message` input of its last `SubagentHandback` tool call in `agent_transcript_path`, when it made one (2.1.277); otherwise `last_assistant_message` |
 | Tier 2 | the manifest verifies, every installed hook script is wired in checked-in or managed settings, checked in, readers set `omitClaudeMd`, hooks not disabled. Otherwise Tier 3 |
 | Isolated (for `freeze-verify`) | sandbox enabled, strict mode, no excluded commands, a network allowlist; and the command's own probe cannot write to the project's parent directory. A project under the sandbox's temp root fails the probe (S14) and is treated as not isolated |
 | Tier 1 | never reported: it needs a container per critic, which the controller cannot see. Attestation is `tier-1` when Tier 2 holds, the sandbox is strict, and `denyRead` names `.gauntlet/private/attest.key` |

@@ -116,6 +116,19 @@ class Pair(PairRepo):
             self.assertNotIn(tell, text)
         self.assertIn("checked .", text)
 
+    def test_a_critic_executes_nothing_unless_the_reference_was_verified(self):  # A3, FR-15.7
+        self.ok("pair", "parse")
+        self.assertIn(ctl.READ_ONLY_LINE, pathlib.Path(self.pair_dir, "PROMPT.md").read_text())
+        self.result("ours")
+        self.ok("swap", "parse")  # the confirming critic reads the same line
+        self.assertIn(ctl.READ_ONLY_LINE, pathlib.Path(self.pair_dir, "PROMPT.md").read_text())
+
+    def test_a_verified_reference_lets_the_critic_run_both_sides(self):
+        with ctl.transaction() as tx:
+            tx.emit("REFERENCE_VERIFIED", "fact", "test", artifact="reference/ms")
+        self.ok("pair", "parse")
+        self.assertNotIn(ctl.READ_ONLY_LINE, pathlib.Path(self.pair_dir, "PROMPT.md").read_text())
+
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:
             tx.emit("FLOOR_FAIL", "fact", "test", piece="parse", **{"class": "artifact"})

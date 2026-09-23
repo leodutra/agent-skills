@@ -59,12 +59,24 @@ _WRITE_VERBS = re.compile(r"\b(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|ins
 _REDIRECT = re.compile(r"(^|[\s\d)\"'])>{1,2}(?![&>])")  # a redirect to a file; not `=>`, `->` or `2>&1`
 
 
+def _no_heredoc_bodies(command):
+    """A here-document's body is data the shell passes on, not shell: keep the line that opens it, drop the body."""
+    return re.sub(r"(<<-?\s*(['\"]?)(\w+)\2[^\n]*\n).*?(\n[ \t]*\3[ \t]*(?=\n|$)|$)", r"\1", command, flags=re.S)
+
+
+def _shell_text(command):
+    """What the shell itself reads as operators: no quoted strings, no here-document bodies."""
+    return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", _no_heredoc_bodies(command))
+
+
 class _Writes:
-    """Does a shell command write somewhere? A string match: redirects to /dev/null and fd duplications are not writes."""
+    """Does a shell command write somewhere? A string match: redirects to /dev/null and fd duplications are not writes,
+    and a `>` inside a quoted script or a here-document is not a redirect. Write verbs are matched on the raw command,
+    so quoting a verb does not hide it."""
 
     def search(self, command):
         command = re.sub(r"\d?>>?\s*/dev/null", " ", command)
-        return _WRITE_VERBS.search(command) or _REDIRECT.search(command)
+        return _WRITE_VERBS.search(command) or _REDIRECT.search(_shell_text(command))
 
 
 WRITES = _Writes()
@@ -94,7 +106,7 @@ def path_tokens(command, base=None):
     redirect, or is an operand of a plain write verb (`rm -rf heldout`, `> notes`, `touch new.js`).
     A string match, not a shell parser: Tier 2, never isolation."""
     try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
+        lexer = shlex.shlex(_no_heredoc_bodies(command), posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
@@ -103,8 +115,10 @@ def path_tokens(command, base=None):
     for token in tokens:
         if token in ("&&", "||", ";", "|", "&"):
             operand = False
-        for part in token.split("="):
-            if not part or part in SAFE or "://" in part:  # a URL is not a path
+        if "://" in token:  # a URL is not a path
+            continue
+        for part in re.split(r"[=:]", token):  # `a=b`, and a revision path such as `HEAD:heldout/x`
+            if not part or part in SAFE:
                 continue
             bare = base and (redirected or (operand and not part.startswith("-")) or os.path.lexists(os.path.join(base, part)))
             if "/" in part or part.startswith((".", "~")) or bare:

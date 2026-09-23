@@ -122,6 +122,9 @@ class BuilderBoundary(Project):
         self.denied(self.hook("Bash", {"command": "cat heldout/x.mjs"}), "held-out")
         self.denied(self.hook("Read", {"file_path": self.path(".gauntlet/workbench.md")}), "run state")
         self.assertEqual(self.hook("Read", {"file_path": self.path("src/secret.txt")}), {})
+        for command in ("git show HEAD:heldout/x.mjs", "git cat-file -p main:heldout/x.mjs"):  # A6: a revision path
+            self.denied(self.hook("Bash", {"command": command}), "held-out")
+        self.assertEqual(self.hook("Bash", {"command": "git show HEAD:src/app.js && curl -s https://example.com/a:b"}), {})
 
     def test_shell_commands(self):
         for command, rule in (("git push origin main", "push"), ("npm publish", "publish"), ("npm install left-pad", "install"),
@@ -130,6 +133,18 @@ class BuilderBoundary(Project):
         self.hook("Write", {"file_path": self.path(".gauntlet/wt/parse/src/parse.ts")})
         self.assertEqual(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && npm test && rm -rf dist/"}), {})
         self.denied(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && rm -rf ../format/src"}), "run state")  # another piece's worktree
+
+    def test_a_greater_than_inside_a_quoted_script_is_not_a_redirect(self):  # A2: denied live in bytesize, 2026-09-19
+        self.hook("Write", {"file_path": self.path(".gauntlet/wt/parse/src/parse.ts")})
+        probe = ("node --input-type=module -e \"\nimport { parse } from '" + self.path(".gauntlet/wt/parse/src/index.js") + "';\n"
+                 "for (const h of ['1'.repeat(1e6), 'kb']) console.log(JSON.stringify(typeof h === 'string' && h.length > 50 ? "
+                 "h.slice(0, 12) + '...' : String(h)), '->', parse(h));\n\"")
+        self.assertEqual(self.hook("Bash", {"command": probe}), {})
+        self.assertEqual(self.hook("Bash", {"command": "echo \"a > b\" && node -e 'console.log(1 > 0)'"}), {})
+        self.denied(self.hook("Bash", {"command": "node -e 'x' > ../../../src/out.txt"}), "outside")  # a real redirect still is
+        heredoc = "cat > .gauntlet/wt/parse/src/x.js <<'EOF'\nimport a from './a.js'\nconsole.log(a > 1)\nEOF"
+        self.assertEqual(self.hook("Bash", {"command": heredoc}), {})  # a here-document body is data, not shell
+        self.denied(self.hook("Bash", {"command": "cat > src/x.js <<'EOF'\n1\nEOF"}), "outside")
 
     def test_other_agents_pass_through(self):
         self.assertEqual(self.hook("Write", {"file_path": self.path("src/app.js")}, agent_type="author"), {})
@@ -166,6 +181,9 @@ class ProtectFloors(Project):
             self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
         self.assertEqual(self.hook("Bash", {"command": "rm -rf src && echo heldout > note.txt"}, agent_type=None).get("permissionDecision"), "deny")  # coarse, by design
         self.assertEqual(self.hook("Bash", {"command": "rm -rf src dist a=b 2>&1"}, agent_type=None), {})
+        for command in ("cat > heldout/x.mjs <<'EOF'\nexport default 1\nEOF", "echo 'x' >> heldout/x.mjs"):  # A2: still writes
+            self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
+        self.assertEqual(self.hook("Bash", {"command": "node -e \"console.log(2 > 1)\" heldout/x.mjs"}, agent_type=None), {})
 
 
 class ControllerOnly(Project):
