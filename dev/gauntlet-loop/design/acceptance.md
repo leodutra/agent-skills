@@ -8,13 +8,15 @@ Stage E1 to E4 (spec A44, A45, A51, A52) and the D5 cuts target the lead, which 
 
 | | units | per confirmed piece | units-2 | per confirmed piece |
 | --- | --- | --- | --- | --- |
-| lead calls (model requests) | 137 | 68.5 | | |
-| lead tokens: new input, cache writes, output | 359,371 | 179,685.5 | | |
-| lead cache reads | 28,331,681 | 14,165,840.5 | | |
-| lead output tokens | 103,731 | 51,865.5 | | |
-| `next` calls | 17 | 8.5 | | |
-| lead wall minutes | 71.6 | 35.8 | | |
-| subagent-minutes | 43.2 | 21.6 | | |
+| lead calls (model requests) | 137 | 68.5 | 90 | 45.0 |
+| lead tokens: new input, cache writes, output | 359,371 | 179,685.5 | 170,421 | 85,210.5 |
+| lead cache reads | 28,331,681 | 14,165,840.5 | 9,706,018 | 4,853,009.0 |
+| lead output tokens | 103,731 | 51,865.5 | 42,012 | 21,006.0 |
+| `next` calls | 17 | 8.5 | 6 | 3.0 |
+| lead wall minutes | 71.6 | 35.8 | 52.7 | 26.4 |
+| subagent-minutes | 43.2 | 21.6 | 70.4 | 35.2 |
+
+units-2 ended 2026-09-24 on a win, 12 of 60 invocations and 0.8 of 4 hours (units: 12 and 1.1), every piece won in its first round. Its lead spanned two session files, the second a continuation holding most of the first, so each model message is counted once by its id. Against units the lead made 34 percent fewer calls, used 53 percent fewer tokens, re-read 66 percent less cache, wrote 60 percent less and ran 26 percent shorter. That is Stage E1 to E4 together with F18 to F30: units also spent lead turns on a parked piece and on false hook blocks that those fixes removed, so the share owed to E1 to E4 alone is not separable from one run. Subagent-minutes rose because critics now run code (F18). The next `next` count came to 6, from 17.
 
 An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
 
