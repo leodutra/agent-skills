@@ -2,6 +2,22 @@
 
 Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-loop/next`. "Test" is `python3 -m unittest discover -s skills/gauntlet-loop/tests` (111 tests, all passing); "eval" is `eval/run.sh` and `eval/run_critic.sh` against `eval/baseline.json`; "live" is a run in a scratch repository with real subagents, recorded in `references/harness-claude-code.md`. Claude Code 2.1.274.
 
+## Stage E baseline: the units run, recounted 2026-09-24
+
+Stage E1 to E4 (spec A44, A45, A51, A52) and the D5 cuts target the lead, which was 85 to 89 percent of every token the two real runs processed. The next run, units-2, has the same goal, bars and envelope, and fills the last two columns. Counted from the transcripts with the controller's own `transcript_tokens` (each message once, from its last line; cache reads apart), lead calls as distinct model requests, `next` calls as shell calls that run `gauntletctl next`, wall minutes from the first to the last transcript line, and subagent-minutes summed per agent (overlap counted twice). Per confirmed piece is over the two pieces. Compare the lead's rows only: with F18 fixed, critics in units-2 run code, so its subagent-minutes are not comparable.
+
+| | units | per confirmed piece | units-2 | per confirmed piece |
+| --- | --- | --- | --- | --- |
+| lead calls (model requests) | 137 | 68.5 | | |
+| lead tokens: new input, cache writes, output | 359,371 | 179,685.5 | | |
+| lead cache reads | 28,331,681 | 14,165,840.5 | | |
+| lead output tokens | 103,731 | 51,865.5 | | |
+| `next` calls | 17 | 8.5 | | |
+| lead wall minutes | 71.6 | 35.8 | | |
+| subagent-minutes | 43.2 | 21.6 | | |
+
+An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
+
 ## 2026-09-23: what the first real run exposed, fixed
 
 Claude Code 2.1.280 installed. 161 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A52 record the changes to the spec.
