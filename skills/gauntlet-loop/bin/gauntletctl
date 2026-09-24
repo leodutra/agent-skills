@@ -1260,19 +1260,21 @@ def parse_verdict(text, shape):
 
 def transcript_tokens(path):
     """Tokens one agent spent, from the transcript its hook names (harness-claude-code.md, S8): input, cache writes and
-    output, once per message, since a message's usage repeats on each of its lines. Cache reads re-read context already
-    counted and are left out. None when unreadable."""
+    output, once per message. A message's usage repeats on each of its lines and, in a subagent's transcript, grows as it
+    streams, so the last line of a message holds its count. Cache reads re-read context already counted and are left
+    out. None when unreadable."""
     try:
-        total, seen = 0, set()
+        final, anonymous = {}, []
         with open(path) as f:
             for line in f:
                 message = json.loads(line).get("message") or {}
-                usage, mid = message.get("usage") or {}, message.get("id")
-                if not usage or (mid and mid in seen):
-                    continue
-                seen.add(mid)
-                total += sum(v for k, v in usage.items()
-                             if k.endswith("_tokens") and k != "cache_read_input_tokens" and isinstance(v, int))
+                usage = message.get("usage")
+                if usage and message.get("id"):
+                    final[message["id"]] = usage
+                elif usage:
+                    anonymous.append(usage)
+        total = sum(v for usage in [*final.values(), *anonymous] for k, v in usage.items()
+                    if k.endswith("_tokens") and k != "cache_read_input_tokens" and isinstance(v, int))
         return total or None
     except (OSError, ValueError, TypeError, AttributeError):
         return None

@@ -123,8 +123,10 @@ class Readers(AttestRepo):
         usage = {"input_tokens": 5, "cache_creation_input_tokens": 100, "cache_read_input_tokens": 9000, "output_tokens": 20}
         lines = [{"message": {"id": "m1", "role": "assistant", "usage": usage}}] * 3  # one message, three content lines
         lines += [{"message": {"id": "m2", "role": "assistant", "usage": {**usage, "output_tokens": 30}}}]
+        lines += [{"message": {"id": "m3", "role": "assistant", "usage": {**usage, "output_tokens": n}}} for n in (7, 400, 1218)]
         path.write_text("".join(json.dumps(line) + "\n" for line in lines))
-        self.assertEqual(ctl.transcript_tokens(str(path)), 125 + 135)
+        # F27: a subagent's message streams over several lines and its usage grows; the last line holds the final count
+        self.assertEqual(ctl.transcript_tokens(str(path)), 125 + 135 + (105 + 1218))
 
     def test_a_confirmation_attested_from_reader_is_rejected(self):  # AC-17.7, FR-17.13
         self.green_pair()
