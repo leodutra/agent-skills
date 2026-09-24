@@ -36,6 +36,23 @@ class Store(Repo):
         self.assertIn(".gauntlet/events.jsonl", err)
         self.assertIn("harness-claude-code.md", err)
 
+    def test_a_worktree_is_never_mistaken_for_the_project(self):  # F30: the units lead ran the controller from one
+        self.ok("init")
+        wt = os.path.join(self.root, ".gauntlet/wt/parse/src")
+        os.makedirs(wt)
+        os.environ["CLAUDE_PROJECT_DIR"] = wt
+        self.assertEqual(ctl.root(), self.root)
+        hooks = ctl.HERE.replace(os.path.join("bin"), "hooks") if ctl.HERE.endswith("bin") else ctl.HERE
+        import sys
+        sys.path.insert(0, hooks)
+        try:
+            import _paths
+            self.assertEqual(_paths.project(), self.root)
+        finally:
+            sys.path.remove(hooks)
+        self.ok("status")
+        self.assertEqual(self.names()[-1], "LEAD_TURN")  # recorded in the project's own log
+
     def test_a_second_init_is_rejected(self):
         self.ok("init")
         self.assertEqual(self.run_ctl("init")[0], 2)

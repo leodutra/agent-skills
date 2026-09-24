@@ -175,19 +175,14 @@
   ],
   "pair_identity": {
     "files": [
-      "README*",
-      "Readme*",
       "readme*",
-      "LICENSE*",
-      "LICENCE*",
-      "License*",
-      "CHANGELOG*",
-      "Changelog*",
-      "HISTORY*",
-      "History*",
-      "AUTHORS*",
-      "CONTRIBUTORS*",
-      "NOTICE*"
+      "license*",
+      "licence*",
+      "changelog*",
+      "history*",
+      "authors*",
+      "contributors*",
+      "notice*"
     ],
     "fields": [
       "name",

@@ -16,7 +16,9 @@ def payload():
 
 
 def project():
-    return os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    """The project, even from inside a piece's worktree (F30)."""
+    here = os.path.realpath(os.environ.get("CLAUDE_PROJECT_DIR") or os.getcwd())
+    return here.split(os.sep + os.path.join(".gauntlet", "wt") + os.sep)[0]
 
 
 def controller():

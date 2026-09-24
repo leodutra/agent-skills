@@ -145,6 +145,19 @@ class Pair(PairRepo):
         code = files[os.path.join(side, "index.js")].decode()
         self.assertEqual(code, "/*!\n */\nexport const parse = () => 1 // upstream\n")  # comments go, code stays
 
+    def test_identity_files_match_in_any_case_and_floor_trees_never_enter(self):  # F28, F29: the units whole gate
+        pathlib.Path(self.root, "reference/ms/license.md").write_text("MIT (c) Someone\n")  # ms ships it lowercase
+        self.write(".gauntlet/wt/parse/Readme.MD", "# bytesize\n")
+        self.write(".gauntlet/wt/parse/reference/ms/MANIFEST", "{}\n")  # committed by the plan; excluded, its folder was not
+        self.write(".gauntlet/wt/parse/heldout/x.mjs", "export default 1\n")
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse")
+        files = tree(self.pair_dir)
+        self.assertFalse([f for f in files if os.path.basename(f).lower() in ("license.md", "readme.md")])
+        for side in ("a", "b"):
+            for top in ("reference", "heldout", "bench"):
+                self.assertFalse(os.path.exists(os.path.join(self.pair_dir, side, top)), f"{side}/{top}")
+
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:
             tx.emit("FLOOR_FAIL", "fact", "test", piece="parse", **{"class": "artifact"})

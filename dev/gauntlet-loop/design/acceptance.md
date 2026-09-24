@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 153 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A39 record the changes to the spec.
+Claude Code 2.1.280 installed. 155 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A42 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -35,6 +35,33 @@ Claude Code 2.1.280 installed. 153 tests, all passing, with `sizes.sh`, `harness
 | F25. With every remaining piece parked, the run did not end when the last active piece finished, and `next` offered a whole gate over a parked piece (the units run) | fixed (A37); deployed after that run ends | test: `test_every_remaining_piece_parked_ends_the_run_however_it_got_there` |
 | F26. `controller_only` denied staging a piece's own worktree for its merge: any `git add` naming `.gauntlet` (the units run) | fixed (A38); deployed after that run ends | test: `test_committing_a_pieces_worktree_is_allowed` |
 | F27. Token counts took a message's first transcript line; a subagent's usage grows as it streams, so its output was undercounted up to twentyfold | fixed (A39) | the last line per message; test: `test_tokens_count_each_message_once_and_leave_out_cache_reads` |
+| F28. `ms`'s lowercase `license.md` passed the identity filter (the units whole gate) | fixed (A40) | test: `test_identity_files_match_in_any_case_and_floor_trees_never_enter` |
+| F29. The whole gate's side of ours held empty `reference/` folders | fixed (A41) | same test |
+| F30. The lead ran the controller from a worktree and wrote to its stale `.gauntlet/` | fixed (A42) | test: `test_a_worktree_is_never_mistaken_for_the_project` |
+
+The units run, 2026-09-24: the goal the run was owed. Two pieces (byte sizes against `bytes.js` 3.1.2, durations against `ms` 2.1.3) and the whole package; the lead a Claude Code session opened in `~/Work/units` under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. Every piece and the whole won blind twice, the second each time on a different model with A and B swapped. Critics judged by reading, since the probe misjudged the sandbox (F18, fixed after). Bytes parked over a scratch file (F24) and a human resumed it. From the run's own controller (`status --peek`, `gate`, `metrics`, the lines that carry a value):
+
+```text
+confirmed 2/2 pieces, whole: yes (2/2) | parked: 0 | blocked: 0 | spent: 12/60 inv, 1.1/4 h | ended: win
+.gauntlet/verdicts/whole-r1-1.md: WINNER: A
+.gauntlet/verdicts/whole-r1-2.md: WINNER: B
+rounds per confirmed piece                       0.5
+confirmation flip rate                           0.0
+discarded verdict rate                           0.0
+parked pieces                                    1
+invocations per confirmed piece                  6.0
+lead turns per confirmed piece                   8.5
+lead tokens per confirmed piece                  172612.0
+worker minutes per confirmed piece               14.55
+tokens per confirmed piece                       182988.0
+spend                                            {'local': '9/36', 'escalation': '0/15', 'gate': '3/9'}
+unused reserve                                   {'escalation': 15, 'gate': 6}
+ended                                            win
+by class                                         {'artifact': 0, 'evaluation': 0, 'execution': 1, 'scope': 0}
+whole gate loss rate                             0.0
+```
+
+"Rounds per confirmed piece 0.5" counts builds, and bytes' build returned `BLOCKED` before its resume, so it counts none: read it as one round each.
 
 The bytesize-3 run, 2026-09-23: the lead a Claude Code session opened in `~/Work/bytesize-3` with the prompt pasted under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. It ended on a win with one piece, the lead's coarsest split, so a whole gate over two pieces is still owed (TODO, C3). A fable reader picked ours, and an opus reader-alt picked ours again with the sides swapped. Every agent returned through the handback tool, so without A16 both verdicts would have been discarded. Both critics judged by reading, since no reference was verified. `gauntletctl status --peek`, then `gate`, from the run's own controller:
 
