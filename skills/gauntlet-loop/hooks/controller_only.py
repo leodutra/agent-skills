@@ -7,7 +7,8 @@ BLOCKED; it never writes tooling."""
 import os
 import re
 
-from _paths import ALONE, WRITES, allow, controller_alone, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base
+from _paths import (ALONE, allow, controller_alone, deny, glob_base, inside, path_tokens, payload, policy, project, resolve,
+                    shell_base, unresolved, write_targets)
 
 C = policy()["controller_only"]  # trees and files nobody writes; `open` is where builders and authors do
 REASON = ("controller-only: run state and the run's tooling change only through gauntletctl. If you need a fact recorded, "
@@ -58,9 +59,11 @@ def main():
         run_files = [r for r in (resolve(t, base) for t in path_tokens(command, base)) if inside(r, gauntlet) and not inside(r, worktrees)]
         if re.search(r"\s(-f|--force)\b", command) or run_files:
             deny("controller-only: run artifacts are staged by `gauntletctl commit`, after its secret scan.", "BOUNDARY_BLOCK", p, command)
-    if WRITES.search(command):
-        if any(protected(resolve(token, base), root, p.get("agent_type")) for token in path_tokens(command, base)):
-            deny(reason, "BOUNDARY_BLOCK", p, command)
+    guarded = lambda t: protected(resolve(t, base), root, p.get("agent_type"))
+    targets = write_targets(command, base)
+    # a target named through a variable could be anything, so every path the command names is held to it
+    if any(guarded(t) for t in targets) or (any(unresolved(t) for t in targets) and any(guarded(t) for t in path_tokens(command, base))):
+        deny(reason, "BOUNDARY_BLOCK", p, command)
     allow()
 
 

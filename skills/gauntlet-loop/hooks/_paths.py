@@ -58,8 +58,6 @@ def tree_of(path, trees, root):
     return None
 
 
-_WRITE_VERBS = re.compile(r"\b(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|install|chmod|sed\s+-i|git\s+(clone|checkout|restore|rm|mv|apply|stash|clean|reset))\b")
-_REDIRECT = re.compile(r"(^|[\s\d)\"'])>{1,2}(?![&>])")  # a redirect to a file; not `=>`, `->` or `2>&1`
 
 
 def _no_heredoc_bodies(command):
@@ -70,19 +68,6 @@ def _no_heredoc_bodies(command):
 def _shell_text(command):
     """What the shell itself reads as operators: no quoted strings, no here-document bodies."""
     return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", _no_heredoc_bodies(command))
-
-
-class _Writes:
-    """Does a shell command write somewhere? A string match: redirects to /dev/null and fd duplications are not writes,
-    and a `>` inside a quoted script or a here-document is not a redirect. Write verbs are matched on the raw command,
-    so quoting a verb does not hide it."""
-
-    def search(self, command):
-        command = re.sub(r"\d?>>?\s*/dev/null", " ", command)
-        return _WRITE_VERBS.search(command) or _REDIRECT.search(_shell_text(command))
-
-
-WRITES = _Writes()
 
 
 def shell_base(command, root):
@@ -119,37 +104,27 @@ def glob_base(pattern):
     return "/".join(keep) or "."
 
 
-_OPERAND_VERBS = ("rm", "mv", "cp", "tee", "touch", "mkdir", "rmdir", "truncate", "ln")
-
-
 def path_tokens(command, base=None):
-    """Tokens of a shell command that look like paths. Given a base, a bare word counts too when it exists there, takes a
-    redirect, or is an operand of a plain write verb (`rm -rf heldout`, `> notes`, `touch new.js`).
-    A string match, not a shell parser: Tier 2, never isolation."""
+    """Tokens of a shell command that name a path: path-looking ones, and, given a base, a bare word that exists there
+    (`cat heldout`). What a command writes is write_targets'. A string match, not a shell parser: Tier 2, never isolation."""
     try:
         lexer = shlex.shlex(_no_heredoc_bodies(command), posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
         tokens = list(lexer)
     except ValueError:
         tokens = command.split()
-    out, redirected, operand = [], False, False
+    out = []
     for token in tokens:
-        if token in ("&&", "||", ";", "|", "&"):
-            operand = False
         if "://" in token:  # a URL is not a path
             continue
         for part in re.split(r"[=:]", token):  # `a=b`, and a revision path such as `HEAD:heldout/x`
-            if not part or part in SAFE:
-                continue
-            bare = base and (redirected or (operand and not part.startswith("-")) or os.path.lexists(os.path.join(base, part)))
-            if "/" in part or part.startswith((".", "~")) or bare:
+            if part and part not in SAFE and ("/" in part or part.startswith((".", "~")) or
+                                               (base and os.path.lexists(os.path.join(base, part)))):
                 out.append(part)
-        redirected = token in (">", ">>")
-        operand = operand or token in _OPERAND_VERBS
     return out
 
 
-_ALL_OPERANDS = ("rm", "tee", "touch", "mkdir", "rmdir", "truncate")
+_ALL_OPERANDS = ("rm", "tee", "touch", "mkdir", "rmdir", "truncate", "chmod", "chown")
 _LAST_OPERAND = ("mv", "cp", "ln", "install")
 _GIT_WRITES = ("checkout", "restore", "rm", "mv", "apply", "stash", "clean", "reset", "clone")
 _SEPARATORS = ("&&", "||", ";", "|", "&", "(", ")")
@@ -165,17 +140,23 @@ def write_targets(command, base):
         tokens = list(lexer)
     except ValueError:
         tokens = command.split()
-    out, words, skip = [], [], None
+    out, words, skip, heads = [], [], None, [0]
 
     def flush():
         if words:
             verb, args = words[0], [w for w in words[1:] if not w.startswith("-")]
+            if verb in _ALL_OPERANDS + _LAST_OPERAND + ("dd",) or (verb == "git" and args and args[0] in ("rm", "mv")):
+                heads[0] += 1  # a write verb that heads its command; the hidden ones are counted below
             if verb in _ALL_OPERANDS:
                 out.extend(args)
+            elif verb in _LAST_OPERAND and ("-t" in words[:-1] or any(w.startswith("--target-directory=") for w in words)):
+                if "-t" in words[:-1]:
+                    out.append(words[words.index("-t") + 1])
+                out.extend(w.split("=", 1)[1] for w in words if w.startswith("--target-directory="))
             elif verb in _LAST_OPERAND and args:
                 out.append(args[-1])
-            elif verb == "sed" and any(w.startswith("-i") or w == "--in-place" for w in words[1:]):
-                out.extend(a for a in args if os.path.lexists(os.path.join(base, a)))  # the script is not a file
+            elif verb == "sed" and any(w.startswith("-i") or w.startswith("--in-place") for w in words[1:]):
+                out.extend(_sed_files(words[1:]))
             elif verb == "dd":
                 out.extend(w[3:] for w in words[1:] if w.startswith("of="))
             elif verb == "git" and args and args[0] in _GIT_WRITES:
@@ -196,7 +177,29 @@ def write_targets(command, base):
         else:
             words.append(token)
     flush()
+    # A write whose verb heads no command (`sudo rm`, `A=1 rm`, `xargs rm`, `find -delete`) could land on any path the
+    # command names, so all of them are held to the rule. Quoted text and here-document bodies are not looked at.
+    hidden = re.findall(r"(?<![\w./-])(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|install|chmod|chown|-delete)(?![\w./-])",
+                        _shell_text(command))
+    if len(hidden) > heads[0]:
+        out.extend(path_tokens(command, base))
+    # A substitution runs even inside double quotes: what it writes is written (single-quoted text is only text)
+    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", re.sub(r"'[^']*'", "''", command)):
+        out.extend(write_targets(inner[0] or inner[1], base))
     return out
+
+
+def _sed_files(words):
+    """The files `sed -i` rewrites: its operands, less the script when no `-e` or `-f` gave it."""
+    files, scripted, value = [], False, False
+    for w in words:
+        if value:
+            value, scripted = False, True
+        elif w in ("-e", "-f", "--expression", "--file"):
+            value = True
+        elif not w.startswith("-"):
+            files.append(w)
+    return files if scripted else files[1:]
 
 
 def unresolved(target):

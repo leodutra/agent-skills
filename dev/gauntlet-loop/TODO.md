@@ -112,7 +112,7 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [x] **D3. `acceptance.md`.** The run's `status`, `metrics` and, on a win, `gate`, pasted and dated, with what stays open.
 - [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeated 2026-09-24 after C3 from `f47df9e` (F18, F21 to F30 deployed), mirror diff empty. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
 - [x] **D5. Ponytail audit.** Done 2026-09-24 on `skills/gauntlet-loop`; it only reported. Candidates, each test-first with its spec row, none touching a non-negotiable (about -92 lines, no dependencies):
-  - [ ] one shell matcher: move `controller_only` and `protect_floors` onto `write_targets` (add `chmod`), drop `_Writes`, `_WRITE_VERBS`, `_REDIRECT` and `path_tokens`' bare-word branch (about -30)
+  - [x] one shell matcher (done 2026-09-24, A43; about +9 lines, not -30, since the old matcher's accidental coverage had to be kept): move `controller_only` and `protect_floors` onto `write_targets` (add `chmod`), drop `_Writes`, `_WRITE_VERBS`, `_REDIRECT` and `path_tokens`' bare-word branch (about -30)
   - [ ] the report and the workbench build their shared sections in one function (about -20)
   - [ ] drop the installer's `verify()` and `--verify`; `detect` checks the manifest, and the tests use it (about -16)
   - [ ] drop `hooks/register.py`: settings pass `attest.py --start` (about -9)

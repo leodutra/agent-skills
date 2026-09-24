@@ -171,6 +171,8 @@ class BuilderBoundary(Project):
         self.assertEqual(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && sed -e 's/a/b/' src/parse.ts > src/out.ts 2>&1"}), {})
         self.denied(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && sed -e 's/a/b/' src/parse.ts > ../format/x.ts"}), "run state")
         self.denied(self.hook("Bash", {"command": "f=../../src; cp .gauntlet/wt/parse/src/parse.ts $f/"}), "outside")
+        self.assertEqual(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && find . -name '*.tmp' -delete"}), {})
+        self.denied(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && find ../../../src -name x -delete"}), "outside")
 
     def test_other_agents_pass_through(self):
         self.assertEqual(self.hook("Write", {"file_path": self.path("src/app.js")}, agent_type="author"), {})
@@ -202,8 +204,9 @@ class ProtectFloors(Project):
         verify = '.claude/hooks/gauntlet/gauntletctl freeze-verify reference/bytes --cmd "npm install --no-audit" --cmd "npm test"'
         for command in (verify, "python3 " + verify):
             self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None), {}, command)
-        out = self.hook("Bash", {"command": verify + " 2>&1 | tail -30; echo done"}, agent_type=None)
-        self.assertEqual(out.get("permissionDecision"), "deny")  # chained, it gets the checks, and is told why
+        self.assertEqual(self.hook("Bash", {"command": verify + " 2>&1 | tail -30; echo done"}, agent_type=None), {})  # D5: chained, harmless
+        out = self.hook("Bash", {"command": verify + " | tee heldout/log.txt"}, agent_type=None)
+        self.assertEqual(out.get("permissionDecision"), "deny")  # chained and writing a floor tree: checked, and told why
         self.assertIn("alone on its line", out["permissionDecisionReason"])
 
     def test_shell_writes_are_denied_and_shell_reads_are_not(self):
@@ -213,7 +216,9 @@ class ProtectFloors(Project):
         self.assertEqual(self.hook("Bash", {"command": "rm -rf docs/reference"}, agent_type=None), {})
         for command in ("rm -rf heldout", "cd heldout && rm x.mjs", "cd heldout && echo x > new.mjs"):  # a bare word is a path too
             self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
-        self.assertEqual(self.hook("Bash", {"command": "rm -rf src && echo heldout > note.txt"}, agent_type=None).get("permissionDecision"), "deny")  # coarse, by design
+        self.assertEqual(self.hook("Bash", {"command": "rm -rf src && echo heldout > note.txt"}, agent_type=None), {})  # D5: what is written, not every word
+        for command in ("f=heldout/x.mjs; echo x > $f", "chmod 777 heldout/x.mjs", "sed -i -e 's/a/b/' heldout/x.mjs"):
+            self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
         self.assertEqual(self.hook("Bash", {"command": "rm -rf src dist a=b 2>&1"}, agent_type=None), {})
         for command in ("cat > heldout/x.mjs <<'EOF'\nexport default 1\nEOF", "echo 'x' >> heldout/x.mjs"):  # A2: still writes
             self.assertEqual(self.hook("Bash", {"command": command}, agent_type=None).get("permissionDecision"), "deny", command)
@@ -257,6 +262,16 @@ class ControllerOnly(Project):
                         '.claude/hooks/gauntlet/gauntletctl pair parse --ours "$(rm -rf .gauntlet/state.json)"'):
             self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
 
+    def test_one_matcher_still_sees_indirect_and_permission_writes(self):  # D5: write_targets for every write rule
+        for command in ("f=.gauntlet/state.json; echo x > $f", "chmod 000 .gauntlet/state.json", "sed -i s/a/b/ .claude/agents/reader.md",
+                        "sed -i.bak -e 1d .gauntlet/events.jsonl"):
+            self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
+        self.assertEqual(self.hook("Bash", {"command": "echo .gauntlet/state.json > notes.txt"}), {})  # a word, not a target
+        for command in ("find .gauntlet -name '*.json' -delete", "find .gauntlet -name x | xargs rm", "sudo rm .gauntlet/state.json",
+                        "A=1 rm .gauntlet/state.json", "cp -t .gauntlet/ notes.txt", "mv --target-directory=.gauntlet notes.txt"):
+            self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)  # writes a verb hides
+        self.assertEqual(self.hook("Bash", {"command": "find src -name '*.tmp' | xargs rm -f"}), {})
+
     def test_committing_a_pieces_worktree_is_allowed(self):  # F26: the units lead could not stage bytes for its merge
         wt = self.path(".gauntlet/wt/parse")
         for command in (f'cd {wt} && git status --short && git add src/bytes.js && git commit -q -m "feat: bytes"',
@@ -267,7 +282,9 @@ class ControllerOnly(Project):
             self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
 
     def test_a_chained_controller_call_is_told_to_stand_alone(self):  # F12: seen in bytesize-2
-        out = self.hook("Bash", {"command": "rmdir .gauntlet/staging/x; ls -la .gauntlet/; .claude/hooks/gauntlet/gauntletctl init 2>&1 | tail -2"})
+        harmless = "rmdir .gauntlet/staging/x; ls -la .gauntlet/; .claude/hooks/gauntlet/gauntletctl init 2>&1 | tail -2"
+        self.assertEqual(self.hook("Bash", {"command": harmless}), {})  # D5: it writes nothing guarded
+        out = self.hook("Bash", {"command": "rmdir .gauntlet/staging/x; .claude/hooks/gauntlet/gauntletctl init | tee .gauntlet/state.json"})
         self.assertEqual(out.get("permissionDecision"), "deny")
         self.assertIn("alone on its line", out["permissionDecisionReason"])
 

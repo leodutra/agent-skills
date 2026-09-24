@@ -4,7 +4,8 @@ round zero and by nobody else, the lead included. Afterwards they change only th
 import json
 import os
 
-from _paths import ALONE, WRITES, allow, controller_alone, deny, path_tokens, payload, policy, project, resolve, shell_base, tree_of
+from _paths import (ALONE, allow, controller_alone, deny, path_tokens, payload, policy, project, resolve, shell_base, tree_of,
+                    unresolved, write_targets)
 
 TREES = policy()["floor_trees"]
 
@@ -29,7 +30,9 @@ def main():
         if controller_alone(command):
             allow()  # freeze, freeze-verify and `floor --to` write floor trees, under the controller's own rules
         base = shell_base(command, root)
-        hits = [t for t in path_tokens(command, base) if tree_of(resolve(t, base), TREES, root)] if WRITES.search(command) else []
+        floor = lambda t: tree_of(resolve(t, base), TREES, root)
+        targets = write_targets(command, base)
+        hits = any(floor(t) for t in targets) or (any(unresolved(t) for t in targets) and any(floor(t) for t in path_tokens(command, base)))
         target = command if hits else None
     else:
         target = ti.get("file_path") if tree_of(resolve(ti.get("file_path", ""), root), TREES, root) else None

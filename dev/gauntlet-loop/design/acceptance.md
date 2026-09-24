@@ -38,6 +38,7 @@ Claude Code 2.1.280 installed. 155 tests, all passing, with `sizes.sh`, `harness
 | F28. `ms`'s lowercase `license.md` passed the identity filter (the units whole gate) | fixed (A40) | test: `test_identity_files_match_in_any_case_and_floor_trees_never_enter` |
 | F29. The whole gate's side of ours held empty `reference/` folders | fixed (A41) | same test |
 | F30. The lead ran the controller from a worktree and wrote to its stale `.gauntlet/` | fixed (A42) | test: `test_a_worktree_is_never_mistaken_for_the_project` |
+| D5, cut 1. Two shell matchers did one job | done (A43) | one matcher; the five writes the old one caught by accident (`find -delete`, `xargs rm`, `sudo rm`, `A=1 rm`, `cp -t`) and a substitution inside double quotes are held; tests: `test_one_matcher_still_sees_indirect_and_permission_writes`, `test_a_script_argument_is_not_a_write_target`. The audit estimated -30 lines; closing those gaps made it about +9 |
 
 The units run, 2026-09-24: the goal the run was owed. Two pieces (byte sizes against `bytes.js` 3.1.2, durations against `ms` 2.1.3) and the whole package; the lead a Claude Code session opened in `~/Work/units` under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. Every piece and the whole won blind twice, the second each time on a different model with A and B swapped. Critics judged by reading, since the probe misjudged the sandbox (F18, fixed after). Bytes parked over a scratch file (F24) and a human resumed it. From the run's own controller (`status --peek`, `gate`, `metrics`, the lines that carry a value):
 
