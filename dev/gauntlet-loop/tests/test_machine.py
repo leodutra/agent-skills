@@ -53,6 +53,12 @@ class Store(Repo):
         self.ok("status")
         self.assertEqual(self.names()[-1], "LEAD_TURN")  # recorded in the project's own log
 
+    def test_what_the_audit_cut_is_gone(self):  # D5: an unread field, a redundant subcommand
+        with self.assertRaises(SystemExit):  # no such subcommand: every transaction already rewrites the file
+            self.run_ctl("workbench")
+        for field in ("write_mode_default", "bootstrap"):
+            self.assertNotIn(field, ctl.POLICY["envelope"])
+
     def test_a_second_init_is_rejected(self):
         self.ok("init")
         self.assertEqual(self.run_ctl("init")[0], 2)

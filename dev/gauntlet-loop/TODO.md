@@ -114,11 +114,11 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [x] **D5. Ponytail audit.** Done 2026-09-24 on `skills/gauntlet-loop`; it only reported. Candidates, each test-first with its spec row, none touching a non-negotiable (about -92 lines, no dependencies):
   - [x] one shell matcher (done 2026-09-24, A43; about +9 lines, not -30, since the old matcher's accidental coverage had to be kept): move `controller_only` and `protect_floors` onto `write_targets` (add `chmod`), drop `_Writes`, `_WRITE_VERBS`, `_REDIRECT` and `path_tokens`' bare-word branch (about -30)
   - [ ] the report and the workbench build their shared sections in one function (about -20)
-  - [ ] drop the installer's `verify()` and `--verify`; `detect` checks the manifest, and the tests use it (about -16)
-  - [ ] drop `hooks/register.py`: settings pass `attest.py --start` (about -9)
-  - [ ] drop the `workbench` subcommand: every transaction rewrites the file (about -8)
-  - [ ] drop the policy's unread `envelope.write_mode_default` and `envelope.bootstrap` (about -5)
-  - [ ] drop the allowlist's unread `user_settings_recommended`; the harness file documents the credential denies (about -4)
+  - [x] drop the installer's `verify()` and `--verify`; `detect` checks the manifest, and the tests use it (about -16)
+  - [x] drop `hooks/register.py`: settings pass `attest.py --start` (about -9)
+  - [x] drop the `workbench` subcommand: every transaction rewrites the file (about -8)
+  - [x] drop the policy's unread `envelope.write_mode_default` and `envelope.bootstrap` (about -5)
+  - [x] drop the allowlist's unread `user_settings_recommended`; the harness file documents the credential denies (about -4)
   Declined: one critic per win (D7); random labels over the HMAC seed (D24, D29, AC-17.5); dropping conflict voiding (D24, AC-17.8); hooks as prompts (D16, D18); one budget counter (D21); removing the example run (D13).
 
 ## Stage E: tokens and speed, without touching a check (proposed 2026-09-24)

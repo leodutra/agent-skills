@@ -11,12 +11,7 @@
     "gate": 0.15,
     "per_piece_invocations": 10,
     "hours_per_piece": 1,
-    "hours_floor": 4,
-    "write_mode_default": {
-      "invocations": 150,
-      "hours": 24
-    },
-    "bootstrap": true
+    "hours_floor": 4
   },
   "lease_hours": 2,
   "ladder": [

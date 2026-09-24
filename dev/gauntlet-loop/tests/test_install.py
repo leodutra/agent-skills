@@ -50,15 +50,22 @@ class Install(unittest.TestCase):
         shell = [h["args"][0].split("/")[-1] for g in settings["hooks"]["PreToolUse"] if "Bash" in g["matcher"] for h in g["hooks"] if h.get("args")]
         self.assertIn("author_scope.py", shell)  # an author's shell writes are checked, not only its file tools
         self.assertEqual([g["matcher"] for g in settings["hooks"]["SubagentStop"]], ["reader|reader-alt|editor|editor-fast|author"])
+        start = [h["args"] for g in settings["hooks"]["SubagentStart"] for h in g["hooks"]]  # D5: one script, both hooks
+        self.assertEqual([a[0].split("/")[-1] for a in start] + [a[-1] for a in start], ["attest.py", "--start"])
+        self.assertFalse(os.path.exists(os.path.join(self.repo, installer.DEST, "register.py")))
 
-    def test_manifest_verifies_until_a_hook_is_edited(self):
+    def test_manifest_verifies_until_a_hook_is_edited(self):  # D5: `detect` is the one check, the installer has none
+        import subprocess, sys
         installer.install(self.repo)
-        self.assertEqual(installer.verify(self.repo), [])
+        detect = lambda: json.loads(subprocess.run([sys.executable, os.path.join(self.repo, installer.DEST, "gauntletctl"), "detect"],
+                                                   capture_output=True, text=True, env={**os.environ, "CLAUDE_PROJECT_DIR": self.repo}).stdout)
+        self.assertEqual((detect()["manifest_verifies"], detect()["changed"]), (True, []))
         for name in ("gauntletctl", "critic_blind.py", "_paths.py"):
             self.assertTrue(os.path.exists(os.path.join(self.repo, installer.DEST, name)))
         hook = pathlib.Path(self.repo, installer.DEST, "critic_blind.py")
         hook.write_text(hook.read_text() + "\n# allow everything\n")
-        self.assertEqual(installer.verify(self.repo), [installer.DEST + "/critic_blind.py"])
+        self.assertEqual(detect()["changed"], [installer.DEST + "/critic_blind.py"])
+        self.assertFalse(hasattr(installer, "verify"))
 
     def test_a_fresh_clone_reaches_tier_2_from_the_harness_files_steps_alone(self):  # AC-7.2
         import subprocess, sys

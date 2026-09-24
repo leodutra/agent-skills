@@ -1616,14 +1616,6 @@ def cmd_next(args):
     return 0
 
 
-def cmd_workbench(args):
-    state = load()
-    with open(gdir("workbench.md"), "w") as f:
-        f.write(render_workbench(state))
-    print(gdir("workbench.md"))
-    return 0
-
-
 def cmd_gate(args):
     state = load()
     live = live_pieces(state)
@@ -1963,7 +1955,6 @@ def main(argv=None):
     p.add_argument("--peek", action="store_true", help="for a human: print the line and record nothing (no lead turn, no lease expiry)")
     p.set_defaults(fn=cmd_status)
     sub.add_parser("next", help="the legal actions now: mechanical ones, and the judgments the lead owes").set_defaults(fn=cmd_next)
-    sub.add_parser("workbench", help="regenerate the projection").set_defaults(fn=cmd_workbench)
     sub.add_parser("gate", help="the two whole-gate verdict files and their WINNER lines").set_defaults(fn=cmd_gate)
     p = sub.add_parser("wave", help="floors again on the merge, then WAVE_COMPLETE for each confirmed piece")
     p.add_argument("pieces", nargs="+")

@@ -35,9 +35,5 @@
     "allowUnsandboxedCommands": false,
     "filesystem": {"denyRead": [".gauntlet/private/attest.key"]},
     "network": {"allowedDomains": ["registry.npmjs.org", "pypi.org", "files.pythonhosted.org", "crates.io", "static.crates.io", "proxy.golang.org", "github.com"]}
-  },
-  "user_settings_recommended": {
-    "sandbox": {"credentials": {"files": [{"path": "~/.aws/credentials", "mode": "deny"}, {"path": "~/.ssh", "mode": "deny"}],
-                                "envVars": [{"name": "GITHUB_TOKEN", "mode": "deny"}, {"name": "NPM_TOKEN", "mode": "deny"}]}}
   }
 }
