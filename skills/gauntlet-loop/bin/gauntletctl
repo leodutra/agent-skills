@@ -677,15 +677,22 @@ def detect():
 
 
 def probe_escapes():
-    """True when this process can write outside the project: whatever detect says, it is not isolated."""
+    """True when this process can write outside the project where the write lasts: whatever detect says, it is then
+    not isolated. The harness's sandbox lays a throwaway tmpfs over the home directory and binds the project into it
+    (harness-claude-code.md, 2026-09-24): a write to the parent succeeds and never reaches the disk, on a filesystem that
+    is not the project's. So a write escapes when it lands on the project's own filesystem."""
     probe = os.path.join(os.path.dirname(root()), f".gauntlet-probe-{os.getpid()}")
     try:
         with open(probe, "w") as f:
             f.write("probe")
-        os.remove(probe)
-        return True
     except OSError:
         return False
+    try:
+        # ponytail: a project that is its own filesystem (a btrfs subvolume, a separate mount) reads as isolated here;
+        # detect's settings check stands in front of this, and /proc/self/mountinfo is the upgrade if that ever matters
+        return os.stat(probe).st_dev == os.stat(root()).st_dev
+    finally:
+        os.remove(probe)
 
 
 def stripped(name, rel):

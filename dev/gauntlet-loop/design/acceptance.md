@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 148 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A34 record the changes to the spec.
+Claude Code 2.1.280 installed. 149 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A35 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ Claude Code 2.1.280 installed. 148 tests, all passing, with `sizes.sh`, `harness
 | F15. A reader's first shell command denied as unbound | fixed (A28) | bind on a first command inside one pair; test: `test_a_first_shell_command_inside_one_pair_binds_the_reader` |
 | F16. `pair` left the reference's name in its files (FR-6.5 unmet) | fixed (A29) | `anonymise()`, both sides alike; test: `test_a_pair_carries_no_name_on_either_side` |
 | F17. The builder returned a file where the floors needed its directory | fixed (A30) | the editor definition; test: `test_a_builder_returns_its_directory_for_code` |
-| F18. `freeze-verify` refused: the parent directory was writable inside that session's sandbox | not a defect: the probe did its job | open question for the operator: what that session's `/sandbox` panel allowed |
+| F18. `freeze-verify` refused: the parent directory was writable inside that session's sandbox | fixed (A35), 2026-09-24; first recorded as not a defect, which was wrong | the parent was a throwaway tmpfs (checked live, $0.035): the write vanished, so the runs were isolated and the probe misjudged them. A write escapes only on the project's own filesystem; test: `test_a_write_that_lands_off_the_projects_filesystem_is_not_an_escape` |
 | F19. Tokens summed per transcript line and with cache reads: 23.8 million for the lead of a 0.9-hour run | fixed (A31) | once per message, cache reads left out, about 270 thousand; tests: `test_tokens_count_each_message_once_and_leave_out_cache_reads`, `test_tokens_are_read_from_the_transcript_the_stop_hook_names` |
 | F21. `controller_only` denied the units lead's `freeze-verify`, alone on its line, over a `;` inside a quoted `--cmd` (2026-09-24) | fixed (A32); deployed after that run ends | test: `test_quoted_arguments_do_not_make_the_controller_chained` |
 | F22. `freeze` wrote a frozen copy outside `reference/` (`reference-whole/`, the units run) | fixed (A33); deployed after that run ends | test: `test_a_frozen_copy_lives_under_reference` |

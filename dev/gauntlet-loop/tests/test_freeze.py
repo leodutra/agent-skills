@@ -3,6 +3,7 @@ import json
 import os
 import pathlib
 import shutil
+from unittest import mock
 
 from _util import HERE, Repo as BaseRepo, ctl, installer
 
@@ -66,6 +67,22 @@ class FreezeVerify(Repo):
         dst = os.path.join(self.root, "reference", "fixture")
         self.run_ctl("freeze", self.src, dst)
         self.assertEqual(self.run_ctl("freeze-verify", dst, "--cmd", "node test.js")[0], 3)
+
+    def test_a_write_that_lands_off_the_projects_filesystem_is_not_an_escape(self):  # F18, seen 2026-09-24
+        # The harness's sandbox lays a throwaway tmpfs over the home directory and binds the project into it: a write to
+        # the parent succeeds there and never reaches the disk. Here the parent is on the project's own filesystem.
+        self.assertTrue(ctl.probe_escapes())
+        real = os.stat
+
+        def elsewhere(path, *args, **kwargs):
+            st = real(path, *args, **kwargs)
+            if ".gauntlet-probe-" in str(path):
+                return os.stat_result((st.st_mode, st.st_ino, st.st_dev + 1, st.st_nlink, st.st_uid, st.st_gid, st.st_size,
+                                       int(st.st_atime), int(st.st_mtime), int(st.st_ctime)))
+            return st
+        with mock.patch.object(ctl.os, "stat", elsewhere):
+            self.assertFalse(ctl.probe_escapes())
+        self.assertFalse([f for f in os.listdir(os.path.dirname(self.root)) if f.startswith(".gauntlet-probe-")])
 
     def test_runs_and_records_under_isolation(self):
         self.settings("settings.local.json", {"sandbox": {"enabled": True, "allowUnsandboxedCommands": False,
