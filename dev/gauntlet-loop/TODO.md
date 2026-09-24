@@ -111,7 +111,15 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [x] **D2. Spikes observed live.** Done 2026-09-23 from bytesize-3: S2, S6, S10, S11 (every agent handed back); S12, S3 and S14 not seen. S2, S6, S10, S11, S12, and S14 with the sandbox, dated with the version, in the harness file.
 - [x] **D3. `acceptance.md`.** The run's `status`, `metrics` and, on a win, `gate`, pasted and dated, with what stays open.
 - [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeated 2026-09-24 after C3 from `f47df9e` (F18, F21 to F30 deployed), mirror diff empty. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
-- [ ] **D5. Ponytail audit.** `ponytail-audit` on `skills/gauntlet-loop`; it only reports. Check every finding against `intent.md`'s non-negotiables and the README D-entries. An accepted cut goes test-first with its own README entry; a finding that would weaken a non-negotiable (two critics, the swapped confirmation, blind pairs, attestation, the hooks) is recorded as declined, with the entry that argues for keeping it.
+- [x] **D5. Ponytail audit.** Done 2026-09-24 on `skills/gauntlet-loop`; it only reported. Candidates, each test-first with its spec row, none touching a non-negotiable (about -92 lines, no dependencies):
+  - [ ] one shell matcher: move `controller_only` and `protect_floors` onto `write_targets` (add `chmod`), drop `_Writes`, `_WRITE_VERBS`, `_REDIRECT` and `path_tokens`' bare-word branch (about -30)
+  - [ ] the report and the workbench build their shared sections in one function (about -20)
+  - [ ] drop the installer's `verify()` and `--verify`; `detect` checks the manifest, and the tests use it (about -16)
+  - [ ] drop `hooks/register.py`: settings pass `attest.py --start` (about -9)
+  - [ ] drop the `workbench` subcommand: every transaction rewrites the file (about -8)
+  - [ ] drop the policy's unread `envelope.write_mode_default` and `envelope.bootstrap` (about -5)
+  - [ ] drop the allowlist's unread `user_settings_recommended`; the harness file documents the credential denies (about -4)
+  Declined: one critic per win (D7); random labels over the HMAC seed (D24, D29, AC-17.5); dropping conflict voiding (D24, AC-17.8); hooks as prompts (D16, D18); one budget counter (D21); removing the example run (D13).
 
 ## Stage E: tokens and speed, without touching a check (proposed 2026-09-24)
 
