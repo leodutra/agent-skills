@@ -110,7 +110,7 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [ ] **D1. Findings.** Read the log, the report and the transcripts; each finding test-first, as in Stage A.
 - [x] **D2. Spikes observed live.** Done 2026-09-23 from bytesize-3: S2, S6, S10, S11 (every agent handed back); S12, S3 and S14 not seen. S2, S6, S10, S11, S12, and S14 with the sandbox, dated with the version, in the harness file.
 - [x] **D3. `acceptance.md`.** The run's `status`, `metrics` and, on a win, `gate`, pasted and dated, with what stays open.
-- [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeat after C3. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
+- [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeated 2026-09-24 after C3 from `f47df9e` (F18, F21 to F30 deployed), mirror diff empty. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
 - [ ] **D5. Ponytail audit.** `ponytail-audit` on `skills/gauntlet-loop`; it only reports. Check every finding against `intent.md`'s non-negotiables and the README D-entries. An accepted cut goes test-first with its own README entry; a finding that would weaken a non-negotiable (two critics, the swapped confirmation, blind pairs, attestation, the hooks) is recorded as declined, with the entry that argues for keeping it.
 
 ## Stage E: tokens and speed, without touching a check (proposed 2026-09-24)
