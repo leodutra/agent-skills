@@ -33,6 +33,12 @@ class Freeze(Repo):
         self.assertEqual(manifest["executed"], "nothing")
         self.assertEqual(sorted(os.listdir(dst)), ["MANIFEST", "package.json", "src", "test.js"])  # no node_modules, no build output
 
+    def test_a_frozen_copy_lives_under_reference(self):  # F22: the units lead froze into reference-whole/
+        code, _, err = self.run_ctl("freeze", self.src, os.path.join(self.root, "reference-whole"))
+        self.assertEqual(code, 2)
+        self.assertIn("reference/", err)
+        self.assertFalse(os.path.exists(os.path.join(self.root, "reference-whole")))
+
     def test_a_frozen_copy_is_never_refreshed(self):
         dst = os.path.join(self.root, "reference", "fixture")
         self.run_ctl("freeze", self.src, dst)

@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 144 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A31 record the changes to the spec.
+Claude Code 2.1.280 installed. 146 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A33 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -28,6 +28,8 @@ Claude Code 2.1.280 installed. 144 tests, all passing, with `sizes.sh`, `harness
 | F17. The builder returned a file where the floors needed its directory | fixed (A30) | the editor definition; test: `test_a_builder_returns_its_directory_for_code` |
 | F18. `freeze-verify` refused: the parent directory was writable inside that session's sandbox | not a defect: the probe did its job | open question for the operator: what that session's `/sandbox` panel allowed |
 | F19. Tokens summed per transcript line and with cache reads: 23.8 million for the lead of a 0.9-hour run | fixed (A31) | once per message, cache reads left out, about 270 thousand; tests: `test_tokens_count_each_message_once_and_leave_out_cache_reads`, `test_tokens_are_read_from_the_transcript_the_stop_hook_names` |
+| F21. `controller_only` denied the units lead's `freeze-verify`, alone on its line, over a `;` inside a quoted `--cmd` (2026-09-24) | fixed (A32); deployed after that run ends | test: `test_quoted_arguments_do_not_make_the_controller_chained` |
+| F22. `freeze` wrote a frozen copy outside `reference/` (`reference-whole/`, the units run) | fixed (A33); deployed after that run ends | test: `test_a_frozen_copy_lives_under_reference` |
 
 The bytesize-3 run, 2026-09-23: the lead a Claude Code session opened in `~/Work/bytesize-3` with the prompt pasted under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. It ended on a win with one piece, the lead's coarsest split, so a whole gate over two pieces is still owed (TODO, C3). A fable reader picked ours, and an opus reader-alt picked ours again with the sides swapped. Every agent returned through the handback tool, so without A16 both verdicts would have been discarded. Both critics judged by reading, since no reference was verified. `gauntletctl status --peek`, then `gate`, from the run's own controller:
 

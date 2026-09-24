@@ -93,8 +93,11 @@ ALONE = " Run the controller alone on its line, with nothing chained to it, and 
 
 def controller_alone(command):
     """The controller alone on its line: the one hand that writes the run's files, held to its own rules. Chained, the
-    hooks cannot tell its arguments from the shell's, so a compound command gets the ordinary checks."""
-    return bool(re.search(r"gauntletctl\S*\s+\w", command)) and not re.search(r"&&|\|\||[;|<>`]|\$\(", command)
+    hooks cannot tell its arguments from the shell's, so a compound command gets the ordinary checks. An operator inside
+    quotes is text (a `--cmd '... ; echo'` does not chain, F21); a substitution inside double quotes still runs."""
+    unsingled = re.sub(r"'[^']*'", "''", _no_heredoc_bodies(command))
+    return (bool(re.search(r"gauntletctl\S*\s+\w", command)) and not re.search(r"&&|\|\||[;|<>]", _shell_text(command))
+            and not re.search(r"`|\$\(", unsingled))
 
 
 def glob_base(pattern):

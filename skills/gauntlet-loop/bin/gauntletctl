@@ -718,7 +718,10 @@ def reference_names(src):
 
 
 def cmd_freeze(args):
-    dst = os.path.abspath(args.dst)
+    dst = os.path.realpath(args.dst)
+    if not dst.startswith(os.path.join(root(), "reference") + os.sep):  # where the floor hooks protect it (F22)
+        print(f"{args.dst}: a frozen copy lives under reference/<name>, where no builder or tool can change it", file=sys.stderr)
+        return 2
     if os.path.exists(dst):
         print(f"{args.dst} exists: a frozen copy is never refreshed; freeze into a new path", file=sys.stderr)
         return 2

@@ -75,14 +75,36 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [x] **F17. The builder returned a file where the floors needed its directory.** It returned `src/index.js`, the floors got a file path, and the lead amended all four floors with a directory walk. Fix: the editor definition says to return its directory for code, the file only for a single document. Test: `test_docs.py`.
 - [x] **F19. Token counts were inflated.** Usage repeats on each line of a message and cache reads dominate; the lead of a 0.9-hour run read 23.8 million. Fixed test-first: once per message, cache reads left out (about 270 thousand).
 - [ ] **F18 (not a defect). `freeze-verify` refused because the parent folder was writable inside that session's sandbox.** The probe saw it ("parent WRITABLE", from a sandboxed process) and refused, as designed. No settings file explains it; in this repository's own sandboxed shell the parent is read-only. Question for the user: what does `/sandbox` show for bytesize-3's writable paths?
+- [x] **F21. A quoted `;` made the controller look chained.** The units lead's `freeze-verify`, alone on its line, was denied over `--cmd '... ; echo "exit $?"'`: `controller_alone()` read operators in the raw string. Fixed test-first (A32): operators on shell text only; a substitution inside double quotes still counts. The live run was told to drop the `; echo`. Deploy after the units run.
+- [x] **F22. `freeze` wrote outside `reference/`.** The units lead froze a combined copy into `reference-whole/`, where no floor hook guards it. Fixed test-first (A33): `freeze` refuses a destination outside `reference/`. Deploy after the units run.
+- [ ] **F20 (efficiency). The lead orients by hand.** The bytesize-3 lead read `--help` for nine commands and a hook's source; the units lead spent its first turn on `git log`, the hook folders and the settings, which `detect` already checks. Proposed: the runbook says `detect` checks the install and `next` names the first command with its flags, so neither is inspected by hand (test in `test_docs.py`, inside the byte ceiling). After the units run, with its log as the measure; never while a run is live.
 - [ ] **C3. A run with two pieces and a whole gate.** Coarse-first put this goal in one piece, as it should. A goal whose parts have different referents splits by itself; for example "a byte-size parser and a duration parser, one package", with `bytes.js` and `ms` as the bars. Prepared by me, started by the user, after F14 to F17 are deployed.
+  - Prepared 2026-09-23: F13 to F19 committed (`c388692`) and deployed, mirror diff empty; `~/Work/units` has the skeleton (`e62a2e5`, `src/bytes.js` and `src/duration.js`) and the fixed skill (`0f40e0d`), `detect` Tier 2. The prompt, from `SKILL.md`'s template with per-piece bars (267 words; GOAL and BAR 68):
+
+    ```text
+    /goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped on a different model, pick ours on every piece and on the whole package, or 60 invocations or 4 hours are spent. Until then, run a gauntlet loop:
+
+    Build units, a JavaScript package parsing and formatting byte sizes ("1.5 GB") and durations ("2h 30m").
+
+    The bars are per piece: byte sizes against visionmedia/bytes.js 3.1.2, durations against vercel/ms 2.1.3. Freeze each; judge against the copy, never a description. It must survive a hostile-input script without crashing. Never add a runtime dependency. Write the required tests and a held-out set before any builder starts; no builder edits them.
+
+    Split it into the coarsest pieces that can be judged alone; each gets a builder and a fresh critic every round. Only you fetch the bars. The critic gets ours and the bar as A and B in random order and hears the goal, never the bar's name, which is which, or who made either. It opens both, writes what it sees in each, picks one and names the biggest thing the loser lacks. No ties; a hedge is a loss. The builder closes that gap; repeat.
+
+    If the same gap comes back, split that piece, then change builders, then fan out variants; never mark it done. When every piece wins, judge the whole the same way.
+
+    Update a progress page after every verdict: piece, round, winner, gap. End every turn with pieces confirmed and what is spent. Questions go there, not to me. Only I end this earlier.
+
+    Fan out subagents.
+    ```
+
+  - Waiting on the user: open `claude` in `~/Work/units`, accept trust, `/effort xhigh`, auto mode, `/sandbox` strict if wanted, paste. Humans check it with `gauntletctl status --peek`.
 
 
 
 - [ ] **D1. Findings.** Read the log, the report and the transcripts; each finding test-first, as in Stage A.
 - [x] **D2. Spikes observed live.** Done 2026-09-23 from bytesize-3: S2, S6, S10, S11 (every agent handed back); S12, S3 and S14 not seen. S2, S6, S10, S11, S12, and S14 with the sandbox, dated with the version, in the harness file.
 - [x] **D3. `acceptance.md`.** The run's `status`, `metrics` and, on a win, `gate`, pasted and dated, with what stays open.
-- [ ] **D4. Commit and re-mirror.** A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
+- [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeat after C3. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
 - [ ] **D5. Ponytail audit.** `ponytail-audit` on `skills/gauntlet-loop`; it only reports. Check every finding against `intent.md`'s non-negotiables and the README D-entries. An accepted cut goes test-first with its own README entry; a finding that would weaken a non-negotiable (two critics, the swapped confirmation, blind pairs, attestation, the hooks) is recorded as declined, with the entry that argues for keeping it.
 
 ## Left to the operator on purpose

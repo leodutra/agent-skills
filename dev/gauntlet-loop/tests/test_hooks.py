@@ -235,6 +235,18 @@ class ControllerOnly(Project):
                                  ("Bash", {"command": "python3 .claude/hooks/gauntlet/gauntletctl pair parse"})):
             self.assertEqual(self.hook(tool, tool_input), {}, tool_input)
 
+    def test_quoted_arguments_do_not_make_the_controller_chained(self):  # F21: the units lead's freeze-verify, 2026-09-24
+        verify = ('.claude/hooks/gauntlet/gauntletctl freeze-verify reference/bytes'
+                  ' --cmd \'npm install --no-audit --cache "$TMPDIR/npm-cache"\''
+                  ' --cmd \'node ../../bench/hostile.mjs . ; echo "hostile exit $?"\''
+                  ' --cmd "node run.mjs a | tee out.txt"')
+        for hook in ("controller_only.py", "protect_floors.py"):
+            self.assertEqual(run_hook(hook, self.root, "Bash", {"command": verify}, agent_type=None), {}, hook)
+        for command in (".claude/hooks/gauntlet/gauntletctl status; rm .gauntlet/state.json",
+                        ".claude/hooks/gauntlet/gauntletctl status | tee .gauntlet/x",
+                        '.claude/hooks/gauntlet/gauntletctl pair parse --ours "$(rm -rf .gauntlet/state.json)"'):
+            self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
+
     def test_a_chained_controller_call_is_told_to_stand_alone(self):  # F12: seen in bytesize-2
         out = self.hook("Bash", {"command": "rmdir .gauntlet/staging/x; ls -la .gauntlet/; .claude/hooks/gauntlet/gauntletctl init 2>&1 | tail -2"})
         self.assertEqual(out.get("permissionDecision"), "deny")
