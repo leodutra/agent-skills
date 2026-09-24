@@ -30,7 +30,7 @@ Champion-challenger: a confirmed challenger derives `CHAMPION_REPLACED` and the 
 
 ## Events
 
-**Judgment**, the only names `event <NAME> k=v...` accepts: `SPLIT_DECIDED` (pieces), `REFERENT_SELECTED`, `MODE_SELECTED`, `VARIANT_APPROACHES_SELECTED` (piece, approaches `a|b`), `GAP_SAME_AS_LAST` (piece), `GAP_ROUTED` (piece, class), `NOT_REPRODUCED_ACCEPTED` (piece, rerun: the seq of a `RERUN_OBSERVED`), `PARK_REQUESTED` (piece, reason, class), `BLOCK_REQUESTED` (piece, reason), `BLOCKER_CLEARED` (piece, note), `SHARED_EDGE_RECORDED` (pieces), `SCOPE_FAILURE_FILED` (note). Classes: `artifact`, `evaluation`, `execution`, `scope`.
+**Judgment**, the only names `event <NAME> k=v...` accepts: `SPLIT_DECIDED` (pieces), `REFERENT_SELECTED`, `MODE_SELECTED`, `VARIANT_APPROACHES_SELECTED` (piece, approaches `a|b`), `GAP_SAME_AS_LAST` (piece), `GAP_ROUTED` (piece, class), `NOT_REPRODUCED_ACCEPTED` (piece, rerun: a `RERUN_OBSERVED` seq), `PARK_REQUESTED` (piece, reason, class), `BLOCK_REQUESTED` (piece, reason), `BLOCKER_CLEARED` (piece, note), `SHARED_EDGE_RECORDED` (pieces), `SCOPE_FAILURE_FILED` (note), `QUESTION_FILED` (note, piece optional). Classes: `artifact`, `evaluation`, `execution`, `scope`.
 
 **Fact**, produced only by what observed it: `init` (`RUN_STARTED`), `freeze`, `freeze-verify`, `piece` (`PIECE_OPENED`), `floor` (`FLOOR_ADDED`, `FLOOR_AMENDED`), `floors`, `rerun`, `pair` and `swap` (`CRITIC_DISPATCHED`), `wave`, `commit`, `promote`, `status` (`LEAD_TURN`, `LEASE_EXPIRED`, `PR_MERGED`), `resume`, the hooks (`BLIND_BLOCK`, `BOUNDARY_BLOCK`), and `attest`, which only the harness's start and stop hooks invoke (`AGENT_REGISTERED`, `BUILDER_DONE`, `SMOOTHER_DONE`, `CRITIC_RESULT`, `ATTEST_CONFLICT`). **Derived** by the rules: the win, loss and `VERDICT_INVALID` events from `CRITIC_RESULT` and the mapping, `GAP_REPEATED`, `ALLOCATION_SPENT`, `PIECE_PARKED`, `PIECE_BLOCKED`, `CHAMPION_REPLACED`, `CONVERGED`, `RECHECK_LOSS`, `BUDGET_EXHAUSTED`, `RUN_ENDED`.
 
@@ -38,7 +38,7 @@ A verdict stands only when the stop hook delivered it for a registered, not yet 
 
 ## Budgets
 
-The envelope is `E` invocations and `T` hours on one clock, from the prompt's first line or, unnamed, from the piece count. `SPLIT_DECIDED` apportions it: local 60%, escalation 25%, gate 15% (bootstrap). Each piece gets local divided by pieces; a split shares the parent's remainder. One debit per spawn, on the event that opens the attempt. A piece pays local, then escalation; the whole pays the gate reserve, and no piece can reach it. A spent allocation derives `ALLOCATION_SPENT`. With allocation and reserve both gone, the next spawn is refused and the piece parks. `E` or `T` reached derives `BUDGET_EXHAUSTED`. The run ends on `win`, `nothing-left` (every remaining piece parked) or `ceiling`; afterwards no work event is accepted.
+The envelope is `E` invocations and `T` hours on one clock, from the prompt's first line or else the piece count. `SPLIT_DECIDED` apportions it: local 60%, escalation 25%, gate 15% (bootstrap). Each piece gets local divided by pieces; a split shares the parent's remainder. One debit per spawn, on the event that opens the attempt. A piece pays local, then escalation; the whole pays the gate reserve, and no piece can reach it. A spent allocation derives `ALLOCATION_SPENT`. With both gone, the next spawn is refused and the piece parks. `E` or `T` reached derives `BUDGET_EXHAUSTED`. The run ends on `win`, `nothing-left` (every remaining piece parked) or `ceiling`; afterwards no work event is accepted.
 
 ## Escalation
 

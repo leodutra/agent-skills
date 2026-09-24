@@ -13,7 +13,7 @@ You never build a piece, judge one or record a fact. A critic is never resumed. 
 3. **Split coarse first**: the coarsest pieces that can still be paired with a matching part of the reference and run without sharing an edge; the ladder splits further when a gap repeats. `SPLIT_DECIDED`. Shared state: from a dependency graph when you have one, and the files `next` lists by rule; record each `SHARED_EDGE_RECORDED`. A quality dimension can be a piece. A one-piece goal is one loop; its confirmed win is the whole gate.
 4. **A referent per piece.** `piece open` with its named, frozen referent; a piece with no matching part anywhere takes `--champion-challenger` and the nearest real one. Install the project's locked dependencies in its worktree yourself. Then `pair --prepare`, once: the matched part, the adapter, `PROMPT.md`. Match by function, section or passage; never cut either side to fit.
 5. **Floors.** Beyond the size `next` names, an `author` writes the floors; the freeze is yours at any size. The builder sees the required names, never the held-out ones. `floor add` each; what the user did not supply is `--derived`. Reading floors go into `PROMPT.md`.
-6. `commit --plan` before any builder exists: what is judged and how, never how a piece is built. Attended: stop for approval. Unattended: DERIVED items go under open questions and you proceed on stated assumptions. From here a floor changes only through `floor add|amend --from <file an author staged>`.
+6. `commit --plan` before any builder exists: what is judged and how, never how a piece is built. Attended: stop for approval. Unattended: file each DERIVED item with `QUESTION_FILED` and proceed on it. From here a floor changes only through `floor add|amend --from <file an author staged>`.
 
 ## A round
 
@@ -74,6 +74,6 @@ CRITIC: the pair's path, nothing else. AUTHOR: the floor files to write, each wi
 
 ## Workbench and report
 
-`.gauntlet/workbench.md` is a projection, regenerated after every event; a question to the user lands under its open questions, and unattended you proceed on your best assumption and say which.
+`.gauntlet/workbench.md` is a projection, regenerated after every event; a question to the user is a `QUESTION_FILED`; unattended, proceed on your best assumption and say which.
 
 `report --notes <file>` computes `.gauntlet/report.md` from the log: conflicts and parked pieces first, the result, pieces, gaps by class, escalations, every `metrics` number. Yours is the notes file: what is still below the bar and why, and per scope failure an intent draft (what the goal said; what the whole gate showed; what the goal should have said). Nothing in a run acts on a metric.

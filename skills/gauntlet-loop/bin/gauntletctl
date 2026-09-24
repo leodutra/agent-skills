@@ -164,6 +164,7 @@ JUDGMENTS = {
     "GAP_ROUTED": ["piece", "class"], "NOT_REPRODUCED_ACCEPTED": ["piece", "rerun"],
     "PARK_REQUESTED": ["piece", "reason", "class"], "BLOCK_REQUESTED": ["piece", "reason"],
     "BLOCKER_CLEARED": ["piece", "note"], "SHARED_EDGE_RECORDED": ["pieces"], "SCOPE_FAILURE_FILED": ["note"],
+    "QUESTION_FILED": ["note"],
 }
 # Fact events: produced only by the command or hook that observed them, or derived by the rules below.
 FACTS = {"RUN_STARTED", "REFERENCE_FROZEN", "REFERENCE_VERIFIED", "PIECE_OPENED", "FLOOR_ADDED", "FLOOR_AMENDED",
@@ -416,6 +417,9 @@ def apply(state, e):
         set_accounts(state)
     elif name == "SHARED_EDGE_RECORDED":
         state["shared_edges"].append(e["pieces"])
+    elif name == "QUESTION_FILED":  # for the user, where they look; it moves nothing (F23)
+        state["open_questions"].append((f"{e['piece']}: " if e.get("piece") else "") + e["note"])
+        return
     elif name == "SCOPE_FAILURE_FILED":
         state["scope_failures"].append(e["note"])
         state["gaps"].append({"piece": e.get("piece") or "whole", "round": 0, "event": name, "class": "scope", "gap": e["note"]})
@@ -1707,6 +1711,7 @@ def cmd_report(args):
                                                  "everything the piece did after the first was voided" for x in state["conflicts"]] + [""]
     lines += ["## Parked"] + ([f"- {p['piece']} ({p['class']}): {p['reason']}. Last verdict: {p['last_verdict'] or 'none'}. Builder: {p['builder'] or 'none'}"
                                for p in state["parked"]] or ["- (none)"]) + [""]
+    lines += ["## Open questions for the user"] + ([f"- {q}" for q in state["open_questions"]] or ["- (none)"]) + [""]
     acc = run["accounts"] or {}
     lines += ["## Result", f"- How the run ended: {run['ended'] or 'it has not ended'}", f"- Bar: {run['bar'] or ''}",
               f"- Reference manifest: {', '.join(os.path.join(ref, 'MANIFEST') for ref in run['frozen']) or '(none)'}",

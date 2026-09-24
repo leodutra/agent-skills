@@ -285,6 +285,23 @@ class EventCommand(Repo):
             self.assertIn("judgment", err)
         self.assertEqual(self.names(), ["RUN_STARTED"])
 
+    def test_a_question_for_the_user_is_filed_where_they_look(self):  # F23: the units lead had nowhere to put five
+        self.ok("event", "QUESTION_FILED", "note=Is a KB 1000 or 1024 bytes? Assumed 1024 (DERIVED)")
+        self.write("upstream/index.js")
+        self.ok("freeze", os.path.join(self.root, "upstream"), os.path.join(self.root, "reference/ms"))
+        self.ok("event", "SPLIT_DECIDED", "pieces=1")
+        self.ok("piece", "open", "parse", "--referent", "reference/ms")
+        self.ok("event", "QUESTION_FILED", "piece=parse", "note=Throw or return null on bad input? Assumed throw")
+        self.assertEqual(ctl.load()["open_questions"], ["Is a KB 1000 or 1024 bytes? Assumed 1024 (DERIVED)",
+                                                        "parse: Throw or return null on bad input? Assumed throw"])
+        self.assertEqual(ctl.load()["pieces"]["parse"]["state"], "ACTIVE")  # a question moves nothing
+        self.assertIn("parse: Throw or return null", pathlib.Path(self.root, ".gauntlet/workbench.md").read_text())
+        self.assertEqual(self.run_ctl("event", "QUESTION_FILED")[0], 2)  # no note
+        self.ok("report")
+        report = pathlib.Path(self.root, ".gauntlet/report.md").read_text()
+        self.assertIn("## Open questions for the user", report)
+        self.assertIn("Is a KB 1000 or 1024 bytes?", report)
+
     def test_judgments_need_their_fields(self):
         self.assertEqual(self.run_ctl("event", "PARK_REQUESTED", "piece=parse")[0], 2)  # no reason, no class
         self.assertEqual(self.run_ctl("event", "GAP_ROUTED", "piece=parse", "class=taste")[0], 2)  # not a class

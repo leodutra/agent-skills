@@ -40,6 +40,10 @@ class Docs(unittest.TestCase):
         self.assertIn("your directory for code", text)
         self.assertIn("a single document", text)
 
+    def test_the_lead_can_file_a_question(self):  # F23
+        self.assertIn("QUESTION_FILED", (REFS / "running-the-loop.md").read_text())
+        self.assertIn("`QUESTION_FILED` (note", (REFS / "controller.md").read_text())
+
     def test_the_freeze_is_never_offloaded(self):  # A9
         text = (REFS / "running-the-loop.md").read_text()
         self.assertNotIn("does the freeze", text)
