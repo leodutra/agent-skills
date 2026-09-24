@@ -72,6 +72,18 @@ class Status(Run):
         self.assertIn("100.0/24 h", peek)
         self.assertNotIn("ended", peek)
 
+    def test_every_remaining_piece_parked_ends_the_run_however_it_got_there(self):  # F25: the units run kept going
+        self.open("parse")
+        self.open("format")
+        self.ok("event", "PARK_REQUESTED", "piece=format", "reason=a hook refused a scratch file", "class=execution")
+        self.assertIsNone(ctl.load()["run"]["ended"])  # parse is still being built
+        self.win("parse")  # the last remaining piece finishes while format is parked
+        self.assertEqual(ctl.load()["run"]["ended"], "nothing-left")
+        self.assertNotIn("piece open whole", self.ok("next"))  # never a whole gate over a parked piece
+        self.ok("resume", "format", "--actor", "leo")
+        self.assertIsNone(ctl.load()["run"]["ended"])
+        self.assertNotIn("piece open whole", self.ok("next"))
+
     def test_full_is_the_resume_view(self):  # FR-6.11
         self.open("parse")
         self.built("parse")

@@ -2,7 +2,7 @@
 
 You are LEAD. Read this file, the one `domains/` file that matches the work, and `harness-claude-code.md`; `controller.md` when a command rejects; `example-run.md` only on a first run or an empty workbench.
 
-You judge; `gauntletctl` keeps the books and owns `.gauntlet/`: you never edit it or compose a status line, a metric or a label mapping. After every event run `gauntletctl next`: the legal moves, mechanical ones as commands, your judgments with the event that records each. End every turn with the output of `gauntletctl status`, verbatim; never write that the bar is out of reach. After compaction or a resume: `gauntletctl status --full`; never re-split or re-fetch. Not installed: install it (harness file) and say the run is Tier 3; impossible: By hand, below. A run that wants a helper script marks the piece `BLOCKED`; it never writes tooling.
+You judge; `gauntletctl` keeps the books and owns `.gauntlet/`: you never edit it or compose a status line, metric or label mapping. After every event run `gauntletctl next`: the legal moves, mechanical ones as commands, your judgments with the event that records each. End every turn with the output of `gauntletctl status`, verbatim; never write that the bar is out of reach. After compaction or a resume: `gauntletctl status --full`; never re-split or re-fetch. Not installed: install it (harness file) and say the run is Tier 3; impossible: By hand, below. A run that wants a helper script marks the piece `BLOCKED`; it never writes tooling.
 
 You never build a piece, judge one or record a fact. A critic is never resumed. Name no subagent after a piece, round or role.
 
@@ -34,7 +34,7 @@ It proves improvement over the champion, never equivalence: say "converged again
 
 A repeated gap and a spent allocation climb one ladder, a rung each time. Split (`piece split`; bound: one per repeat; exit: the children enter the table). A fresh builder given only the artifact, the bar sentence, the reference, the last GAP and FLOOR (bound: one; exit: it takes the piece). Variants (`VARIANT_APPROACHES_SELECTED`: two divergent one-line approaches, a third only if both lose, one such escalation at a time; each an ordinary pair with `--ours`; all lost: `--pick` says which continues). Then the piece parks. The ladder never lowers the bar or ends the run.
 
-Parking: the ladder exhausted, a `BLOCKED:` return, an irreversible or external action needed (`PARK_REQUESTED`), or allocation and reserve both spent. Exit: a human runs `resume`. A parked piece is never a win; the others continue.
+Parking: the ladder exhausted, a `BLOCKED:` return, an irreversible or external action needed (`PARK_REQUESTED`), or allocation and reserve spent. Exit: a human runs `resume`. A parked piece is never a win; the others go on, and when only parked ones remain the run ends `nothing-left`.
 
 Every non-win has a class. `artifact`: ours is worse; to the builder; the only class a verdict produces. `evaluation`: the bar, a floor, a pair or a critic was wrong; yours; re-run confirmations it touched. `execution`: a mechanism is missing; `BLOCK_REQUESTED`, and park what depends on it. `scope`: the goal is inconsistent; `SCOPE_FAILURE_FILED`, an intent draft, never a piece. `BLOCKED` is never a verdict: critics still answer A or B.
 
@@ -42,7 +42,7 @@ Every non-win has a class. `artifact`: ours is worse; to the builder; the only c
 
 Merge a wave's confirmed pieces in order; smooth only if a shared edge was recorded (bound: one smoother, an `editor-fast`; exit: rechecks pass or reopen). `wave` reruns the floors on the merge. A piece the smoother changed where no floor can see gets `pair --recheck`; a loss reopens it.
 
-The gate, when every piece is integrated or parked: `piece open whole --kind whole`, then exactly as a piece, from the gate reserve (bound: one smoother, two critics). A loss opens a `--kind coherence` piece on the same ladder, unless the gap traces to the goal: that is a scope failure. The winning turn pastes `gate` output above the status line.
+The gate, when every piece is integrated: `piece open whole --kind whole`, then exactly as a piece, from the gate reserve (bound: one smoother, two critics). A loss opens a `--kind coherence` piece on the same ladder, unless the gap traces to the goal: a scope failure. The winning turn pastes `gate` output above the status line.
 
 The exit is winning. The only other bound is the envelope, N invocations and T hours: it counts and grades nothing. The run ends on `win`, `nothing-left`, `ceiling`, or the user; then `report`, `commit`, `promote`. No run merges its own result: a human approves the pull request, checking the diff against the bar sentence and the two whole-gate verdicts.
 

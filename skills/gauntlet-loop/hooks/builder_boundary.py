@@ -5,8 +5,8 @@ import fnmatch
 import os
 import re
 
-from _paths import (allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, shell_base,
-                    tree_of, unresolved, write_targets)
+from _paths import (allow, binding, deny, glob_base, inside, path_tokens, payload, policy, project, resolve, scratch,
+                    shell_base, tree_of, unresolved, write_targets)
 
 ROLES = ("editor", "editor-fast")
 B = policy()["builder_boundary"]
@@ -33,9 +33,16 @@ def main():
         if inside(real, os.path.join(root, ".gauntlet")) and not inside(real, home):
             block("run state", what)
 
+    def outside(what):
+        deny(f"builder-boundary (outside your directory): keep your files inside {home}, a scratch file too, or in the "
+             "harness's scratchpad. Return `BLOCKED: <reason>` only when the work itself needs something outside it.",
+             "BOUNDARY_BLOCK", p, what)
+
     def check_write(real, what):
+        if scratch(real):
+            return
         if not inside(real, home) or real == wt:
-            block("outside your directory", what)
+            outside(what)
         inner = os.path.join(wt, os.path.relpath(real, wt).split(os.sep)[0])
         tree = tree_of(real, NO_WRITE_TREES, inner)
         if tree:
@@ -52,8 +59,8 @@ def main():
         for token in path_tokens(command, base):
             check_read(resolve(token, base), command)
         for target in write_targets(command, base):
-            if unresolved(target) or not inside(resolve(target, base), home):
-                block("outside your directory", command)
+            if unresolved(target) or not (inside(resolve(target, base), home) or scratch(resolve(target, base))):
+                outside(command)
         allow()
 
     target = ti.get("file_path") or ti.get("path") or "."
@@ -62,7 +69,7 @@ def main():
     real = resolve(target, root)
     if tool in ("Edit", "Write"):
         check_write(real, target)
-        if not piece:
+        if not piece and not scratch(real):
             binding(agent, os.path.relpath(real, wt).split(os.sep)[0])
     else:
         check_read(real, target)

@@ -2,7 +2,7 @@
 """PreToolUse, Edit|Write|Bash: an author writes check files and frozen copies, nowhere else. Other agents pass through."""
 import os
 
-from _paths import allow, deny, inside, payload, policy, project, resolve, shell_base, unresolved, write_targets
+from _paths import allow, deny, inside, payload, policy, project, resolve, scratch, shell_base, unresolved, write_targets
 
 TREES = policy()["floor_trees"] + policy()["author_scope"]["beyond_floor_trees"]
 
@@ -13,7 +13,7 @@ def main():
         allow()
     root = project()
     ti = p.get("tool_input", {})
-    mine = lambda real: any(inside(real, os.path.join(root, tree)) for tree in TREES)
+    mine = lambda real: scratch(real) or any(inside(real, os.path.join(root, tree)) for tree in TREES)
     if p.get("tool_name") == "Bash":
         command = ti.get("command", "")
         base = shell_base(command, root)

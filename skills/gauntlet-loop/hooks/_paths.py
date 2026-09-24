@@ -1,4 +1,5 @@
 """Shared by every gauntlet hook: payload, path resolution, segment matching, bindings, deny-and-log."""
+import fnmatch
 import json
 import os
 import re
@@ -98,6 +99,12 @@ def controller_alone(command):
     unsingled = re.sub(r"'[^']*'", "''", _no_heredoc_bodies(command))
     return (bool(re.search(r"gauntletctl\S*\s+\w", command)) and not re.search(r"&&|\|\||[;|<>]", _shell_text(command))
             and not re.search(r"`|\$\(", unsingled))
+
+
+def scratch(real):
+    """The harness's session scratchpad, where it tells every agent to keep temporary files (F24). Outside the project,
+    so nothing a run judges or guards lives there, and no reader can open it."""
+    return any(fnmatch.fnmatch(real, pat) or fnmatch.fnmatch(real + "/", pat) for pat in policy()["scratch_writes"])
 
 
 def glob_base(pattern):

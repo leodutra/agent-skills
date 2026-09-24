@@ -156,6 +156,16 @@ class BuilderBoundary(Project):
         self.assertEqual(self.hook("Bash", {"command": heredoc}), {})  # a here-document body is data, not shell
         self.denied(self.hook("Bash", {"command": "cat > src/x.js <<'EOF'\n1\nEOF"}), "outside")
 
+    def test_the_harness_scratchpad_is_writable_and_nothing_else_outside(self):  # F24: bytes parked over check.mjs
+        self.hook("Write", {"file_path": self.path(".gauntlet/wt/parse/src/parse.ts")})
+        scratch = "/tmp/claude-1000/-home-leo-Work-units/860117bb/scratchpad/check.mjs"
+        self.assertEqual(self.hook("Write", {"file_path": scratch}), {})
+        self.assertEqual(self.hook("Bash", {"command": f"mkdir -p {scratch.rsplit('/', 1)[0]} && cat > {scratch} <<'EOF'\n1\nEOF"}), {})
+        out = self.hook("Write", {"file_path": "/tmp/claude-1000/elsewhere/check.mjs"})
+        self.denied(out, "outside")
+        self.assertIn("inside", out["permissionDecisionReason"])  # keep it inside the worktree; BLOCKED only for real need
+        self.assertNotIn("Do not retry", out["permissionDecisionReason"])
+
     def test_a_script_argument_is_not_a_write_target(self):  # F14, the builder side
         self.hook("Write", {"file_path": self.path(".gauntlet/wt/parse/src/parse.ts")})
         self.assertEqual(self.hook("Bash", {"command": "cd .gauntlet/wt/parse && sed -e 's/a/b/' src/parse.ts > src/out.ts 2>&1"}), {})
@@ -285,6 +295,11 @@ class AuthorScope(Project):
                         "cd heldout && touch new.mjs"):
             self.assertEqual(hook(command), {}, command)
         self.assertEqual(hook("echo x > src/app.js", agent_type="editor"), {})  # other agents pass through
+
+    def test_the_author_may_use_the_harness_scratchpad(self):  # F24: the units author, twice
+        scratch = "/tmp/claude-1000/-home-leo-Work-units/860117bb/scratchpad/impl/src/index.js"
+        self.assertEqual(run_hook("author_scope.py", self.root, "Write", {"file_path": scratch}, agent_type="author"), {})
+        self.assertEqual(run_hook("author_scope.py", self.root, "Bash", {"command": f"echo x > {scratch}"}, agent_type="author"), {})
 
     def test_only_what_a_command_writes_must_stay_inside(self):  # F14: six author commands denied in bytesize-3
         hook = lambda command: run_hook("author_scope.py", self.root, "Bash", {"command": command}, agent_type="author")

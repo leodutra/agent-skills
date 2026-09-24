@@ -87,6 +87,10 @@
       ".gauntlet/private"
     ]
   },
+  "scratch_writes": [
+    "/tmp/claude-*/scratchpad/*",
+    "/private/tmp/claude-*/scratchpad/*"
+  ],
   "builder_boundary": {
     "no_read": [
       "heldout",
