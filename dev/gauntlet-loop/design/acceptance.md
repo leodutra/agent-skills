@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 152 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A37 record the changes to the spec.
+Claude Code 2.1.280 installed. 153 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A38 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -33,6 +33,7 @@ Claude Code 2.1.280 installed. 152 tests, all passing, with `sizes.sh`, `harness
 | F23. The lead could not file a question where the user looks: only a blocked piece filled the open questions (the units run) | fixed (A34); deployed after that run ends | `QUESTION_FILED`; tests: `test_a_question_for_the_user_is_filed_where_they_look`, `test_the_lead_can_file_a_question` |
 | F24. A builder's scratch file in the harness's scratchpad was denied; it returned `BLOCKED` as told and its piece parked with its suite green (the units run) | fixed (A36); deployed after that run ends | tests: `test_the_harness_scratchpad_is_writable_and_nothing_else_outside`, `test_the_author_may_use_the_harness_scratchpad` |
 | F25. With every remaining piece parked, the run did not end when the last active piece finished, and `next` offered a whole gate over a parked piece (the units run) | fixed (A37); deployed after that run ends | test: `test_every_remaining_piece_parked_ends_the_run_however_it_got_there` |
+| F26. `controller_only` denied staging a piece's own worktree for its merge: any `git add` naming `.gauntlet` (the units run) | fixed (A38); deployed after that run ends | test: `test_committing_a_pieces_worktree_is_allowed` |
 
 The bytesize-3 run, 2026-09-23: the lead a Claude Code session opened in `~/Work/bytesize-3` with the prompt pasted under `/goal`; Tier 2, attestation tier-1, the sandbox on in strict mode. It ended on a win with one piece, the lead's coarsest split, so a whole gate over two pieces is still owed (TODO, C3). A fable reader picked ours, and an opus reader-alt picked ours again with the sides swapped. Every agent returned through the handback tool, so without A16 both verdicts would have been discarded. Both critics judged by reading, since no reference was verified. `gauntletctl status --peek`, then `gate`, from the run's own controller:
 

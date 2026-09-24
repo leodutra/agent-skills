@@ -257,6 +257,15 @@ class ControllerOnly(Project):
                         '.claude/hooks/gauntlet/gauntletctl pair parse --ours "$(rm -rf .gauntlet/state.json)"'):
             self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
 
+    def test_committing_a_pieces_worktree_is_allowed(self):  # F26: the units lead could not stage bytes for its merge
+        wt = self.path(".gauntlet/wt/parse")
+        for command in (f'cd {wt} && git status --short && git add src/bytes.js && git commit -q -m "feat: bytes"',
+                        f"git -C {wt} add -A", "cd .gauntlet/wt/parse && git add ."):
+            self.assertEqual(self.hook("Bash", {"command": command}), {}, command)
+        for command in (f"cd {wt} && git add -f ../../private/secret", "git add .gauntlet/workbench.md",
+                        f"cd {wt} && git add ../../verdicts/x.md"):
+            self.assertEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
+
     def test_a_chained_controller_call_is_told_to_stand_alone(self):  # F12: seen in bytesize-2
         out = self.hook("Bash", {"command": "rmdir .gauntlet/staging/x; ls -la .gauntlet/; .claude/hooks/gauntlet/gauntletctl init 2>&1 | tail -2"})
         self.assertEqual(out.get("permissionDecision"), "deny")
