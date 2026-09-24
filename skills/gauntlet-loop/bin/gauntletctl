@@ -1211,6 +1211,19 @@ def run_floors(pid):
     return 2 if failed else 0
 
 
+def cmd_round(args):
+    """E3: the mechanical round in one call, in its order: floors, then the pair only if they are green. The gap-only,
+    pick and recheck pairs stay with `pair`, and the confirmation with `swap`."""
+    code = run_floors(args.piece)
+    if code != 0:
+        return code  # a red floor ends the round; route it
+    piece = load()["pieces"][args.piece]
+    if piece["mode"] == CC and (piece["champion"] == piece["round"] or piece["challenger_losses"] >= 2):
+        return 0  # a new champion stands unjudged, or the gap-only pair is due: the next lines say which
+    return cmd_pair(argparse.Namespace(piece=args.piece, prepare=False, reference=None, prompt=None, adapter=None, ours=None,
+                                       gap_only=False, recheck=False, pick=None))
+
+
 def cmd_rerun(args):
     state = load()
     if args.piece not in state["pieces"]:
@@ -1479,7 +1492,7 @@ def next_actions(state):
             elif p["building"]:
                 out.append((pid, "waiting", f"on its builder ({p['builder'] or 'not yet attested'}); dispatch an editor if none is running"))
             elif p["floor_round"] != p["round"]:
-                out.append((pid, "mechanical", f"{ctl} floors {pid}"))
+                out.append((pid, "mechanical", f"{ctl} round {pid}  (floors, then the pair if green; dispatch a reader with its path)"))
             elif not p["floor_ok"]:
                 out.append((pid, "judgment", f"route the floor output as FLOOR: {ctl} event GAP_ROUTED piece={pid} class=artifact"))
             elif p["last_verdict"] and state["attempts"] and p["last_gap"] and rung == "split" and not p["building"]:
@@ -1590,13 +1603,16 @@ def cmd_status(args):
     return 0
 
 
+def next_lines(state):
+    return "".join(f"{kind:<11} {text}" + ("" if pid == "-" else f"  [{pid}]") + "\n" for pid, kind, text in next_actions(state))
+
+
 def cmd_next(args):
     state = load()
     if not state["run"]:
         print(f"mechanical  gauntletctl init --invocations <N> --hours <T> --goal ... --bar ... --critic-bar ...")
         return 0
-    for pid, kind, text in next_actions(state):
-        print(f"{kind:<11} {text}" + ("" if pid == "-" else f"  [{pid}]"))
+    print(next_lines(state), end="")
     return 0
 
 
@@ -1876,6 +1892,11 @@ def cmd_log_block(args):
     return 0
 
 
+# Commands that move the run end with what is next. Not status (the turn's last line), not the hooks' doors.
+ADVANCING = ("init", "freeze", "freeze-verify", "piece", "pair", "swap", "floor", "floors", "rerun", "event", "wave",
+             "resume", "commit", "promote", "report", "round")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="gauntletctl")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -1926,6 +1947,9 @@ def main(argv=None):
     p = sub.add_parser("floors", help="run the lead-side floors on ours; FLOOR_PASS or FLOOR_FAIL")
     p.add_argument("piece")
     p.set_defaults(fn=cmd_floors)
+    p = sub.add_parser("round", help="floors, then the pair if they are green: one call per mechanical round")
+    p.add_argument("piece")
+    p.set_defaults(fn=cmd_round)
     p = sub.add_parser("rerun", help="re-execute one cited command and record what was observed")
     p.add_argument("piece")
     p.add_argument("command")
@@ -1978,7 +2002,10 @@ def main(argv=None):
     sub.add_parser("detect", help="report tier and containment from installed files and settings").set_defaults(fn=cmd_detect)
     args = parser.parse_args(argv)
     try:
-        return args.fn(args)
+        code = args.fn(args)
+        if args.cmd in ADVANCING and load()["run"]:  # E1: the lead reads what is next here, not in another call
+            print("next:\n" + next_lines(load()), end="", file=sys.stderr)
+        return code
     except (Rejected, Spent) as err:
         print(f"{'refused' if err.code == 3 else 'rejected'}: {err}", file=sys.stderr)
         return err.code

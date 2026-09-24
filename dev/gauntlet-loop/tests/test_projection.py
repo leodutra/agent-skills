@@ -88,7 +88,7 @@ class Status(Run):
         self.open("parse")
         self.built("parse")
         full = self.ok("status", "--full")
-        for needle in ("parse", "ACTIVE", "round 1", "b-parse", "floors parse", "never touch the payments code"):
+        for needle in ("parse", "ACTIVE", "round 1", "b-parse", "round parse", "never touch the payments code"):
             self.assertIn(needle, full)
 
 
@@ -98,7 +98,7 @@ class Next(Run):
         self.open("parse")
         self.assertIn("commit --plan", self.ok("next"))
         self.built("parse")
-        self.assertIn("mechanical  gauntletctl floors parse", self.ok("next"))
+        self.assertIn("mechanical  gauntletctl round parse", self.ok("next"))  # E3
         self.ok("floors", "parse")
         self.assertIn("mechanical  gauntletctl pair parse", self.ok("next"))
         self.ok("pair", "parse")
@@ -111,6 +111,37 @@ class Next(Run):
         self.ok("event", "GAP_SAME_AS_LAST", "piece=parse")
         self.assertIn("piece split parse", self.ok("next"))  # rung one: split
 
+
+    def test_a_command_that_moves_the_run_ends_with_what_is_next(self):  # E1: the units lead called next 30 times
+        code, out, err = self.run_ctl("piece", "open", "parse", "--referent", "reference/ms")
+        self.assertEqual(code, 0)
+        self.assertIn("parse: ACTIVE", out)  # the command's own output is unchanged
+        self.assertIn("next:", err)
+        self.assertIn("commit --plan", err)  # the same lines `next` prints
+        self.assertEqual(err.split("next:\n", 1)[1], self.ok("next"))
+        self.assertNotIn("next:", self.run_ctl("status")[2])  # status is the turn's last line, not a move
+        self.assertNotIn("next:", self.run_ctl("event", "GAP_ROUTED", "piece=nosuch", "class=artifact")[2])  # refused
+
+    def test_round_is_floors_then_the_pair_and_a_red_floor_ends_it(self):  # E3: one lead call per mechanical round
+        self.open("parse")
+        self.built("parse")
+        code, out, _ = self.run_ctl("round", "parse")
+        self.assertEqual(code, 0)
+        self.assertEqual(self.names()[-2:], ["FLOOR_PASS", "CRITIC_DISPATCHED"])
+        self.assertIn(".gauntlet/pairs/parse", out)
+        self.assertIn("dispatch a reader", out)
+        self.open("format")
+        self.ok("floor", "add", "held", "--cmd", "false", "--piece", "format")
+        self.built("format")
+        code, out, _ = self.run_ctl("round", "format")
+        self.assertEqual(code, 2)
+        self.assertEqual(self.names()[-1], "FLOOR_FAIL")  # no pair: a red floor ends the round
+        self.assertNotIn(".gauntlet/pairs/format", out)
+        self.open("locale", "--champion-challenger")
+        self.built("locale")
+        self.ok("round", "locale")  # the first green attempt is the champion, unjudged: no pair
+        self.assertEqual(self.names()[-1], "FLOOR_PASS")
+        self.assertIn("the champion stands", self.ok("next"))
 
     def test_names_the_policys_offload_sizes_and_shared_by_rule_globs(self):  # FR-6.12, FR-6.13: read, not remembered
         offload, shared = ctl.POLICY["offload"], ctl.POLICY["shared_by_rule"]
@@ -159,7 +190,7 @@ class GateAndMetrics(Run):
         self.ok("piece", "open", "whole", "--referent", "reference/ms", "--kind", "whole")
         self.ok("pair", "whole", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
         self.assertEqual(self.run_ctl("gate")[0], 2)  # not yet
-        self.assertIn("gauntletctl floors whole", self.ok("next"))  # the whole is the merge: nothing builds it
+        self.assertIn("gauntletctl round whole", self.ok("next"))  # the whole is the merge: nothing builds it
         self.win("whole", built=False)
         lines = self.ok("gate").strip().splitlines()
         self.assertEqual(len(lines), 2)
