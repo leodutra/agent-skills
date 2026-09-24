@@ -113,7 +113,7 @@ The bytesize-3 run, 2026-09-23: `ended: win`, 5 of 40 invocations, 0.9 hours, Ti
 - [x] **D4. Commit and re-mirror.** Done 2026-09-23 after bytesize-3: `c388692`, deployed, mirror diff empty; repeated 2026-09-24 after C3 from `f47df9e` (F18, F21 to F30 deployed), mirror diff empty. A second `fix:` commit on `main`; `config/stack-init.sh global`; the mirror diff prints nothing.
 - [x] **D5. Ponytail audit.** Done 2026-09-24 on `skills/gauntlet-loop`; it only reported. Candidates, each test-first with its spec row, none touching a non-negotiable (about -92 lines, no dependencies):
   - [x] one shell matcher (done 2026-09-24, A43; about +9 lines, not -30, since the old matcher's accidental coverage had to be kept): move `controller_only` and `protect_floors` onto `write_targets` (add `chmod`), drop `_Writes`, `_WRITE_VERBS`, `_REDIRECT` and `path_tokens`' bare-word branch (about -30)
-  - [ ] the report and the workbench build their shared sections in one function (about -20)
+  - [x] ~~the report and the workbench build their shared sections in one function (about -20)~~ declined 2026-09-24: tried and measured at +13 lines, since the duplicated code was one-line comprehensions; the only gain was one wording for both, not worth the lines
   - [x] drop the installer's `verify()` and `--verify`; `detect` checks the manifest, and the tests use it (about -16)
   - [x] drop `hooks/register.py`: settings pass `attest.py --start` (about -9)
   - [x] drop the `workbench` subcommand: every transaction rewrites the file (about -8)
