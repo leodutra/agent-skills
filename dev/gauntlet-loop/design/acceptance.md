@@ -4,7 +4,7 @@ Every criterion in `spec.md` §13, with how it was checked on branch `gauntlet-l
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 155 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A42 record the changes to the spec.
+Claude Code 2.1.280 installed. 161 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A52 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -41,6 +41,8 @@ Claude Code 2.1.280 installed. 155 tests, all passing, with `sizes.sh`, `harness
 | D5, cut 1. Two shell matchers did one job | done (A43) | one matcher; the five writes the old one caught by accident (`find -delete`, `xargs rm`, `sudo rm`, `A=1 rm`, `cp -t`) and a substitution inside double quotes are held; tests: `test_one_matcher_still_sees_indirect_and_permission_writes`, `test_a_script_argument_is_not_a_write_target`. The audit estimated -30 lines; closing those gaps made it about +9 |
 | E1. The lead called `next` after every event | done (A44) | commands that move the run end with the next lines; test: `test_a_command_that_moves_the_run_ends_with_what_is_next`. Measured on units-2 |
 | E3. Two lead calls per mechanical round | done (A45) | `round <piece>`; test: `test_round_is_floors_then_the_pair_and_a_red_floor_ends_it`. Measured on units-2 |
+| E2. The lead loaded 18 KB of example run, 12 KB of harness evidence and up to 28 KB of controller source | done (A51); closes F20 | tests: `test_the_lead_loads_less`; the harness file is 8.2 KB. Measured on units-2 |
+| E4. One model call per piece where one would do | done (A52) | the runbook; test: `test_the_runbook_spends_fewer_lead_calls`. Measured on units-2 |
 | D5, cuts 3 to 7 | done (A46 to A50) | the installer's `--verify`, `register.py`, the `workbench` subcommand and three unread policy and allowlist fields are gone; tests: `test_manifest_verifies_until_a_hook_is_edited`, `test_second_run_changes_nothing_and_keeps_what_was_there`, `test_what_the_audit_cut_is_gone` |
 | D5, cut 2. The report and the workbench render shared sections twice | declined | tried: one shared builder came to +13 lines, not -20, because the duplicates were one-line comprehensions; reverted |
 

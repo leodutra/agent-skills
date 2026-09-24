@@ -8,11 +8,12 @@ import unittest
 from _util import SKILL, ctl
 
 REFS = pathlib.Path(SKILL, "references")
+EVIDENCE = pathlib.Path(SKILL, "..", "..", "dev", "gauntlet-loop", "design", "harness-evidence.md")
 
 
 class Docs(unittest.TestCase):
     def test_the_harness_file_does_not_say_detect_reads_folder_trust(self):
-        s1 = next(line for line in (REFS / "harness-claude-code.md").read_text().splitlines() if line.startswith("| S1 |"))
+        s1 = next(line for line in EVIDENCE.read_text().splitlines() if line.startswith("| S1 |"))
         self.assertNotIn("`detect` reads the folder's trust", s1)
         self.assertIn("never reads the folder's trust", s1)
         self.assertNotIn("trust", inspect.getsource(ctl.detect).lower())  # and it does not
@@ -43,6 +44,22 @@ class Docs(unittest.TestCase):
     def test_the_lead_can_file_a_question(self):  # F23
         self.assertIn("QUESTION_FILED", (REFS / "running-the-loop.md").read_text())
         self.assertIn("`QUESTION_FILED` (note", (REFS / "controller.md").read_text())
+
+    def test_the_runbook_spends_fewer_lead_calls(self):  # Stage E1, E3, E4
+        text = (REFS / "running-the-loop.md").read_text()
+        self.assertNotIn("After every event run `gauntletctl next`", text)
+        self.assertIn("ends with its next lines", text)  # E1
+        self.assertIn("`round`", text.split("## A round")[1].split("## ")[0])  # E3
+        self.assertIn("parallel", text)  # E4
+
+    def test_the_lead_loads_less(self):  # Stage E2
+        text = (REFS / "running-the-loop.md").read_text()
+        self.assertIn("`example-run.md` only when stuck", text)
+        self.assertIn("never read the controller's or the hooks' source", text)
+        harness = (REFS / "harness-claude-code.md").read_text()
+        for evidence in ("## Spikes", "## Checks by hand", "| S1 |"):
+            self.assertNotIn(evidence, harness)  # dated evidence is for humans, in dev/
+        self.assertIn("| S14 |", EVIDENCE.read_text())
 
     def test_the_freeze_is_never_offloaded(self):  # A9
         text = (REFS / "running-the-loop.md").read_text()

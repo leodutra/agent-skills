@@ -1277,7 +1277,7 @@ def parse_verdict(text, shape):
 
 
 def transcript_tokens(path):
-    """Tokens one agent spent, from the transcript its hook names (harness-claude-code.md, S8): input, cache writes and
+    """Tokens one agent spent, from the transcript its hook names (S8 in the skill's harness evidence): input, cache writes and
     output, once per message. A message's usage repeats on each of its lines and, in a subagent's transcript, grows as it
     streams, so the last line of a message holds its count. Cache reads re-read context already counted and are left
     out. None when unreadable."""
@@ -1300,7 +1300,7 @@ def transcript_tokens(path):
 
 def final_text(p):
     """What the agent returned: its last handback through the harness's tool, from the transcript its stop hook names;
-    otherwise its last message. After a handback the last message is only chatter (harness-claude-code.md, S11)."""
+    otherwise its last message. After a handback the last message is only chatter (S11 in the skill's harness evidence)."""
     text = None
     try:
         with open(p.get("agent_transcript_path") or "") as f:
@@ -1406,7 +1406,7 @@ def cmd_attest(args):
         except FileExistsError:
             pass
     if state["run"]["attestation"] == "tier-1":
-        # Only a hook process runs outside the sandbox, so only it can read the key (harness-claude-code.md, S4).
+        # Only a hook process runs outside the sandbox, so only it can read the key (S4 in the skill's harness evidence).
         try:
             same = args.key_file and os.path.samefile(args.key_file, gdir("private", "attest.key")) and read_text(args.key_file)
         except OSError:
