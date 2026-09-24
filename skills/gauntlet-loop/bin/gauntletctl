@@ -938,9 +938,10 @@ COMMENT_LINE = re.compile(r"^\s*(//|#|\*|/\*|<!--)")
 
 
 def anonymise(side, names):
-    """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file, a package
-    manifest loses its identity fields, and a comment-only line that carries a copyright or the reference's name goes.
-    Code is never touched: a critic who knows the code itself is the residual risk README D8 states."""
+    """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file; a package
+    manifest keeps only what loads it, since a version, keywords or dev tooling said which side was published (F36); and
+    a comment-only line that carries a copyright or the reference's name goes. Code is never touched: a critic who knows
+    the code itself is the residual risk README D8 states."""
     marks = re.compile("|".join([r"\bcopyright\b", r"\(c\)\s*\d{4}", r"@license\b", r"@author\b"] +
                                 [rf"\b{re.escape(n)}\b" for n in names]), re.I)
     files = [os.path.join(folder, f) for folder, _, fs in os.walk(side) for f in fs]
@@ -952,7 +953,7 @@ def anonymise(side, names):
             data = read_json(path)
             if data:
                 with open(path, "w") as f:
-                    json.dump({k: v for k, v in data.items() if k not in IDENTITY["fields"]}, f, indent=2)
+                    json.dump({k: v for k, v in data.items() if k in IDENTITY["manifest_keep"]}, f, indent=2)  # what loads it (F36)
                     f.write("\n")
         elif os.path.getsize(path) <= 1_000_000:
             try:
@@ -1085,9 +1086,13 @@ def cmd_pair(args):
         dispatch(tx, pid, pair_id, shape, "first", recheck=args.recheck)  # rejects before any file is written
         with open(os.path.join(prepared, "PROMPT.md")) as f:
             prompt = f.read() + (GAP_ONLY_LINE if args.gap_only else CC_LINE if cc else "")
-        verified = [os.path.join(root(), v) for v in tx.state["run"]["verified"]]
+        run = tx.state["run"]
         referent = os.path.join(root(), piece["referent"] or "")
-        if not any(referent == v or referent.startswith(v + os.sep) for v in verified):
+        under = lambda path, top: path == top or path.startswith(top + os.sep)
+        verified = [os.path.join(root(), v) for v in run["verified"]]
+        copies = [os.path.join(root(), f) for f in run["frozen"] if under(os.path.join(root(), f), referent)]
+        # verified: inside a verified copy, or over frozen copies that are all verified (the whole's referent, F35)
+        if not (any(under(referent, v) for v in verified) or (copies and all(c in verified for c in copies))):
             prompt += READ_ONLY_LINE
         live = build_pair(pid, pair_id, sides, prompt)
         known = set().union(*(reference_names(read_json(os.path.join(root(), f, "MANIFEST")).get("source") or f)

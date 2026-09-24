@@ -98,6 +98,16 @@ class CriticBlind(Project):
         for command in ("cat PAIR_ID", f"cat {pair}/PAIR_ID {self.path('.gauntlet/pairs/format/a')}", f"cat {pair}/../../state.json"):
             self.denied(self.hook("Bash", {"command": command}, agent_id="a3"))  # nothing to bind to, two pairs, an escape
 
+    def test_a_variable_the_command_sets_is_judged_where_it_points(self):  # F31: nine false blocks in units-2
+        pair = self.path(".gauntlet/pairs/parse")
+        for command in (f"D={pair}; cat $D/PROMPT.md; cat $D/a/index.js",
+                        f"cd {pair} && for f in a/index.js PROMPT.md; do echo \"== $f\"; cat $f; done",
+                        f'cd {pair} && for f in a/*; do cat "$f"; done', f"D={pair}; for f in $D/a/*; do echo \"-- $f\"; cat $f; done",
+                        f"D={pair}; cat $D/adapter.mjs; for f in $D/a/*; do echo \"-- $f\"; cat $f; done; ls $D/a"):
+            self.assertIn("updatedInput", self.hook("Bash", {"command": command}), command)
+        for command in (f"D={pair}/../..; cat $D/state.json", "cat $UNKNOWN/x", f"cd {pair} && for f in ../../state.json; do cat $f; done"):
+            self.denied(self.hook("Bash", {"command": command}))
+
     def test_other_agents_pass_through(self):
         self.assertEqual(self.hook("Read", {"file_path": self.path("src/secret.txt")}, agent_type="editor"), {})
         self.assertEqual(self.hook("Read", {"file_path": self.path("src/secret.txt")}, agent_type=None), {})
@@ -161,7 +171,11 @@ class BuilderBoundary(Project):
         scratch = "/tmp/claude-1000/-home-leo-Work-units/860117bb/scratchpad/check.mjs"
         self.assertEqual(self.hook("Write", {"file_path": scratch}), {})
         self.assertEqual(self.hook("Bash", {"command": f"mkdir -p {scratch.rsplit('/', 1)[0]} && cat > {scratch} <<'EOF'\n1\nEOF"}), {})
-        out = self.hook("Write", {"file_path": "/tmp/claude-1000/elsewhere/check.mjs"})
+        for command in ("S=/tmp/claude-1000/-home-leo-Work-units-2/c2f4/scratchpad; mkdir -p $S/cjs && cat > $S/cjs/index.js <<'EOF'\n1\nEOF",
+                        "cat > $TMPDIR/hostile.mjs <<'EOF'\n1\nEOF", "echo x > /tmp/claude-1000/elsewhere/check.mjs"):
+            self.assertEqual(self.hook("Bash", {"command": command}), {}, command)  # F31, F32: the harness's temp dir, named or not
+        self.denied(self.hook("Write", {"file_path": self.path("src/inside-the-project.js")}), "outside")  # never the project itself
+        out = self.hook("Write", {"file_path": os.path.expanduser("~/gauntlet-elsewhere/check.mjs")})
         self.denied(out, "outside")
         self.assertIn("inside", out["permissionDecisionReason"])  # keep it inside the worktree; BLOCKED only for real need
         self.assertNotIn("Do not retry", out["permissionDecisionReason"])
@@ -313,7 +327,7 @@ class AuthorScope(Project):
     def test_an_authors_shell_writes_are_held_to_the_same_trees(self):
         hook = lambda command, **kw: run_hook("author_scope.py", self.root, "Bash", {"command": command}, **{"agent_type": "author", **kw})
         for command in ("echo x > src/app.js", "cp heldout/x.mjs src/x.mjs", "rm -rf src", "git clone https://example.com/a/b src/b",
-                        "cd src && touch app.js", "tee ../outside.txt < heldout/x.mjs"):
+                        "cd src && touch app.js", "tee ~/gauntlet-outside.txt < heldout/x.mjs"):
             self.assertEqual(hook(command).get("permissionDecision"), "deny", command)
         for command in ("echo x > heldout/new.mjs", "mkdir -p .gauntlet/staging && cp heldout/x.mjs .gauntlet/staging/t.mjs",
                         "node --test heldout/ 2>&1", "cat src/secret.txt", "git clone https://example.com/a/b reference/b",
@@ -333,7 +347,11 @@ class AuthorScope(Project):
                         "sed -e 's/^var b = require(.b.);$/var b = 1;/' src/secret.txt > reference/anon/Readme.md && cp src/secret.txt heldout/x.mjs reference/anon/",
                         "mkdir -p reference/anon 2>/dev/null && cat src/secret.txt 2>&1 > reference/anon/a.js"):
             self.assertEqual(hook(command), {}, command)
-        for command in ("A=reference/anon && mkdir -p $A/test", "echo x > $(pwd)/../out", "sed -i 's/a/b/' src/secret.txt",
+        self.assertEqual(hook("A=reference/anon && mkdir -p $A/test"), {})  # F31: a variable it sets is judged where it points
+        scratch = "/tmp/claude-1000/-home-leo-Work-units-2/c2f4/scratchpad"
+        self.assertEqual(hook(f"S={scratch}; mkdir -p $S/cjs && cd $S/cjs && cat > index.js <<'EOF'\n1\nEOF"), {})  # a cd mid-chain moves the writes
+        self.assertEqual(hook("mkdir -p heldout/x && cd src && touch app.js").get("permissionDecision"), "deny")
+        for command in ("mkdir -p $UNSET/test", "A=src && mkdir -p $A/x", "echo x > $(pwd)/../out", "sed -i 's/a/b/' src/secret.txt",
                         "cp heldout/x.mjs src/", "mv reference/x src/x", "rm -f heldout/x.mjs src/secret.txt"):
             self.assertEqual(hook(command).get("permissionDecision"), "deny", command)
 

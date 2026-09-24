@@ -61,6 +61,18 @@ class Docs(unittest.TestCase):
             self.assertNotIn(evidence, harness)  # dated evidence is for humans, in dev/
         self.assertIn("| S14 |", EVIDENCE.read_text())
 
+    def test_a_reader_is_told_how_its_first_command_binds_and_where_scratch_goes(self):  # F33
+        for name in ("reader.md", "reader-alt.md"):
+            text = pathlib.Path(SKILL, "agents", name).read_text()
+            self.assertIn("full path in your first command", text)
+            self.assertIn("never in a temp folder", text)
+            self.assertNotIn("your shell already starts there", text)
+
+    def test_a_critic_runs_only_what_the_pair_holds(self):  # F34: units-2 critics hunted for the hostile script
+        coding = (REFS / "domains" / "coding.md").read_text()
+        self.assertNotIn("the hostile-input script from a clean checkout", coding)
+        self.assertIn("FLOORS/", coding)
+
     def test_the_freeze_is_never_offloaded(self):  # A9
         text = (REFS / "running-the-loop.md").read_text()
         self.assertNotIn("does the freeze", text)

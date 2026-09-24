@@ -70,6 +70,24 @@ def _shell_text(command):
     return re.sub(r"'[^']*'|\"(?:\\.|[^\"\\])*\"", "''", _no_heredoc_bodies(command))
 
 
+def variants(command):
+    """The command with what the shell would put in its variables: one it sets itself (`S=/x; cat $S/a`), a loop's words
+    (`for f in a b; do cat $f`), $TMPDIR and $HOME. One variant per loop word, so each value is judged; a variable it
+    cannot know stays as written and is judged unresolved (F31). Single-quoted text is left as the shell leaves it."""
+    tmp = os.environ.get("TMPDIR", "")
+    values = {"HOME": [os.path.expanduser("~")], "TMPDIR": [tmp if "claude" in tmp else f"/tmp/claude-{os.getuid()}"]}
+    for name, value in re.findall(r"(?:^|[\s;&|(])([A-Za-z_]\w*)=((?:\"[^\"]*\"|'[^']*'|[^\s;&|()])+)", command):
+        values[name] = [value.strip("\"'")]
+    for name, words in re.findall(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*;\s*do\b", command):
+        values[name] = [w.strip("\"'") for w in words.split()] or [""]
+    out = [command]
+    for name, options in reversed(list(values.items())):  # later ones first: a loop's list may use an earlier variable
+        if re.search(rf"\$\{{?{name}\b", command):
+            pattern = re.compile(rf"'[^']*'|\$\{{{name}\}}|\${name}\b")
+            out = [pattern.sub(lambda m, o=o: m.group(0) if m.group(0).startswith("'") else o, v) for v in out for o in options[:8]]
+    return out[:64]
+
+
 def shell_base(command, root):
     """Where a command's relative paths resolve: the project root, or the directory a leading `cd` names."""
     m = re.match(r"\s*cd\s+(\S+)\s*(&&|;)", command)
@@ -89,9 +107,11 @@ def controller_alone(command):
 
 
 def scratch(real):
-    """The harness's session scratchpad, where it tells every agent to keep temporary files (F24). Outside the project,
-    so nothing a run judges or guards lives there, and no reader can open it."""
-    return any(fnmatch.fnmatch(real, pat) or fnmatch.fnmatch(real + "/", pat) for pat in policy()["scratch_writes"])
+    """The harness's temp dir, where it tells every agent to keep temporary files ($TMPDIR and the session scratchpad
+    under it; F24, F32). Never a path inside the project, so nothing a run judges or guards lives there, and no reader
+    can open it."""
+    return not inside(real, project()) and any(fnmatch.fnmatch(real, pat) or fnmatch.fnmatch(real + "/", pat)
+                                               for pat in policy()["scratch_writes"])
 
 
 def glob_base(pattern):
@@ -105,6 +125,10 @@ def glob_base(pattern):
 
 
 def path_tokens(command, base=None):
+    return [t for v in variants(command) for t in _path_tokens(v, base)]
+
+
+def _path_tokens(command, base=None):
     """Tokens of a shell command that name a path: path-looking ones, and, given a base, a bare word that exists there
     (`cat heldout`). What a command writes is write_targets'. A string match, not a shell parser: Tier 2, never isolation."""
     try:
@@ -117,7 +141,7 @@ def path_tokens(command, base=None):
     for token in tokens:
         if "://" in token:  # a URL is not a path
             continue
-        for part in re.split(r"[=:]", token):  # `a=b`, and a revision path such as `HEAD:heldout/x`
+        for part in re.split(r"[=:\s]", token):  # `a=b`, a revision path `HEAD:heldout/x`, a quoted "-- /path"
             if part and part not in SAFE and ("/" in part or part.startswith((".", "~")) or
                                                (base and os.path.lexists(os.path.join(base, part)))):
                 out.append(part)
@@ -131,6 +155,10 @@ _SEPARATORS = ("&&", "||", ";", "|", "&", "(", ")")
 
 
 def write_targets(command, base):
+    return [t for v in variants(command) for t in _write_targets(v, base)]
+
+
+def _write_targets(command, base):
     """The paths a shell command writes: redirect targets, the operands of a write verb (the last one of a copy or a
     move), a `sed -i` file, `dd of=`, a git path. A sed script or a file that is only read is not one. A string match
     like the rest: Tier 2, never isolation. A caller denies a target it cannot resolve (see unresolved)."""
@@ -140,33 +168,40 @@ def write_targets(command, base):
         tokens = list(lexer)
     except ValueError:
         tokens = command.split()
-    out, words, skip, heads = [], [], None, [0]
+    out, words, skip, heads, cwd = [], [], None, [0], [base]
+
+    def add(*targets):  # resolved where the shell is at that point in the chain; one it cannot know stays as written
+        out.extend(t if unresolved(t) else resolve(t, cwd[0]) for t in targets)
 
     def flush():
-        if words:
+        if words and words[0] == "cd":
+            args = [w for w in words[1:] if not w.startswith("-")]
+            if args and not unresolved(args[0]):
+                cwd[0] = resolve(args[0], cwd[0])  # a cd mid-chain moves where the next commands write
+        elif words:
             verb, args = words[0], [w for w in words[1:] if not w.startswith("-")]
             if verb in _ALL_OPERANDS + _LAST_OPERAND + ("dd",) or (verb == "git" and args and args[0] in ("rm", "mv")):
                 heads[0] += 1  # a write verb that heads its command; the hidden ones are counted below
             if verb in _ALL_OPERANDS:
-                out.extend(args)
+                add(*args)
             elif verb in _LAST_OPERAND and ("-t" in words[:-1] or any(w.startswith("--target-directory=") for w in words)):
                 if "-t" in words[:-1]:
-                    out.append(words[words.index("-t") + 1])
-                out.extend(w.split("=", 1)[1] for w in words if w.startswith("--target-directory="))
+                    add(words[words.index("-t") + 1])
+                add(*(w.split("=", 1)[1] for w in words if w.startswith("--target-directory=")))
             elif verb in _LAST_OPERAND and args:
-                out.append(args[-1])
+                add(args[-1])
             elif verb == "sed" and any(w.startswith("-i") or w.startswith("--in-place") for w in words[1:]):
-                out.extend(_sed_files(words[1:]))
+                add(*_sed_files(words[1:]))
             elif verb == "dd":
-                out.extend(w[3:] for w in words[1:] if w.startswith("of="))
+                add(*(w[3:] for w in words[1:] if w.startswith("of=")))
             elif verb == "git" and args and args[0] in _GIT_WRITES:
-                out.extend(a for a in args[1:] if "://" not in a and ("/" in a or a.startswith(".")))
+                add(*(a for a in args[1:] if "://" not in a and ("/" in a or a.startswith("."))))
         words.clear()
 
     for token in tokens:
         if skip:  # the word after a redirect: a target after `>`, a source after `<`, a descriptor after `>&`
             if skip == ">" and token not in SAFE:
-                out.append(token)
+                add(token)
             skip = None
         elif token in _SEPARATORS:
             flush()
@@ -182,10 +217,10 @@ def write_targets(command, base):
     hidden = re.findall(r"(?<![\w./-])(rm|mv|cp|tee|touch|mkdir|rmdir|truncate|dd|ln|install|chmod|chown|-delete)(?![\w./-])",
                         _shell_text(command))
     if len(hidden) > heads[0]:
-        out.extend(path_tokens(command, base))
+        out.extend(_path_tokens(command, base))
     # A substitution runs even inside double quotes: what it writes is written (single-quoted text is only text)
     for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", re.sub(r"'[^']*'", "''", command)):
-        out.extend(write_targets(inner[0] or inner[1], base))
+        out.extend(_write_targets(inner[0] or inner[1], base))
     return out
 
 

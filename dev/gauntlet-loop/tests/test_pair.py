@@ -123,6 +123,22 @@ class Pair(PairRepo):
         self.ok("swap", "parse")  # the confirming critic reads the same line
         self.assertIn(ctl.READ_ONLY_LINE, pathlib.Path(self.pair_dir, "PROMPT.md").read_text())
 
+    def test_a_referent_over_verified_copies_counts_as_verified(self):  # F35: units-2's whole gate read only
+        self.write("upstream2/index.js", "export const format = () => 1\n")
+        self.ok("freeze", os.path.join(self.root, "upstream2"), os.path.join(self.root, "reference/other"))
+        with ctl.transaction() as tx:
+            tx.emit("REFERENCE_VERIFIED", "fact", "test", artifact="reference/ms")
+        self.ok("piece", "open", "whole", "--referent", "reference", "--kind", "whole")
+        self.ok("pair", "whole", "--prepare", "--reference", "reference", "--prompt", ".gauntlet/staging/prompt.md")
+        with ctl.transaction() as tx:
+            tx.emit("FLOOR_PASS", "fact", "test", piece="whole")
+        self.ok("pair", "whole")
+        self.assertIn(ctl.READ_ONLY_LINE, pathlib.Path(self.root, ".gauntlet/pairs/whole/PROMPT.md").read_text())  # one copy unverified
+        with ctl.transaction() as tx:
+            tx.emit("REFERENCE_VERIFIED", "fact", "test", artifact="reference/other")
+        self.ok("pair", "whole")  # the same attempt: the pair is rebuilt, and now every copy under the referent is verified
+        self.assertNotIn(ctl.READ_ONLY_LINE, pathlib.Path(self.root, ".gauntlet/pairs/whole/PROMPT.md").read_text())
+
     def test_a_verified_reference_lets_the_critic_run_both_sides(self):
         with ctl.transaction() as tx:
             tx.emit("REFERENCE_VERIFIED", "fact", "test", artifact="reference/ms")
@@ -132,7 +148,9 @@ class Pair(PairRepo):
     def test_a_pair_carries_no_name_on_either_side(self):  # F16, FR-6.5: bytesize-3's lead anonymised the reference by hand
         ref = os.path.join(self.root, "reference/ms")
         for rel, text in (("README.md", "# upstream\n"), ("LICENSE", "MIT (c) 2020 Someone\n"),
-                          ("package.json", '{"name": "upstream", "author": "Someone", "repository": "someone/upstream", "version": "1.0.0"}\n'),
+                          ("package.json", '{"name": "upstream", "author": "Someone", "repository": "someone/upstream", "version": "3.1.2", '
+                                           '"description": "Utility", "keywords": ["bytes"], "devDependencies": {"mocha": "9"}, "type": "module", '
+                                           '"exports": "./index.js"}\n'),
                           ("index.js", "/*!\n * upstream\n * Copyright(c) 2020 Someone\n */\nexport const parse = () => 1 // upstream\n")):
             pathlib.Path(ref, rel).write_text(text)
         self.write(".gauntlet/wt/parse/README.md", "# bytesize\n")
@@ -141,7 +159,7 @@ class Pair(PairRepo):
         files = tree(self.pair_dir)
         self.assertFalse([f for f in files if os.path.basename(f) in ("README.md", "LICENSE")])  # both sides
         side = next(os.path.dirname(f) for f in files if f.endswith("package.json"))
-        self.assertEqual(json.loads(files[os.path.join(side, "package.json")]), {"version": "1.0.0"})
+        self.assertEqual(json.loads(files[os.path.join(side, "package.json")]), {"type": "module", "exports": "./index.js"})  # F36: what loads it
         code = files[os.path.join(side, "index.js")].decode()
         self.assertEqual(code, "/*!\n */\nexport const parse = () => 1 // upstream\n")  # comments go, code stays
 

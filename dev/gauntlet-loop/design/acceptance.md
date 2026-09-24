@@ -20,7 +20,7 @@ An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 161 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A52 record the changes to the spec.
+Claude Code 2.1.280 installed. 165 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A58 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
@@ -59,6 +59,9 @@ Claude Code 2.1.280 installed. 161 tests, all passing, with `sizes.sh`, `harness
 | E3. Two lead calls per mechanical round | done (A45) | `round <piece>`; test: `test_round_is_floors_then_the_pair_and_a_red_floor_ends_it`. Measured on units-2 |
 | E2. The lead loaded 18 KB of example run, 12 KB of harness evidence and up to 28 KB of controller source | done (A51); closes F20 | tests: `test_the_lead_loads_less`; the harness file is 8.2 KB. Measured on units-2 |
 | E4. One model call per piece where one would do | done (A52) | the runbook; test: `test_the_runbook_spends_fewer_lead_calls`. Measured on units-2 |
+| F31 to F34. units-2 logged 18 hook blocks, most of them false | fixed (A53 to A56) | replayed through the fixed hooks on a copy of units-2: all five builder, author and lead blocks now pass; of the 13 reader blocks, 7 are right (hunting outside the pair, running held-out scripts) and 6 come from wording the reader and domain files now fix. Tests: `test_a_variable_the_command_sets_is_judged_where_it_points`, `test_the_harness_scratchpad_is_writable_and_nothing_else_outside`, `test_only_what_a_command_writes_must_stay_inside`, `test_a_reader_is_told_how_its_first_command_binds_and_where_scratch_goes`, `test_a_critic_runs_only_what_the_pair_holds` |
+| F35. units-2's whole-gate critics were told not to run code though both references were verified | fixed (A57) | test: `test_a_referent_over_verified_copies_counts_as_verified` |
+| F36. Every units-2 critic identified the reference from `package.json` (version, keywords, dev tooling) | fixed (A58) | test: `test_a_pair_carries_no_name_on_either_side` |
 | D5, cuts 3 to 7 | done (A46 to A50) | the installer's `--verify`, `register.py`, the `workbench` subcommand and three unread policy and allowlist fields are gone; tests: `test_manifest_verifies_until_a_hook_is_edited`, `test_second_run_changes_nothing_and_keeps_what_was_there`, `test_what_the_audit_cut_is_gone` |
 | D5, cut 2. The report and the workbench render shared sections twice | declined | tried: one shared builder came to +13 lines, not -20, because the duplicates were one-line comprehensions; reverted |
 

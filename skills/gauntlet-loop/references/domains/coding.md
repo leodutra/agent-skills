@@ -12,7 +12,7 @@ Command floors, run by the LEAD on ours before any CRITIC: required tests green,
 
 ## What the critic physically does
 
-It runs both suites, the benchmark and the hostile-input script from a clean checkout, pastes counts and numbers, then reads both sources for hardcoded test values. Evidence is pasted output, a measured number, or a quoted line with path:line.
+It runs what the pair holds (each side's own suite, the adapter) and reads the floor outputs under each side's `FLOORS/`; the held-out and hostile scripts are the LEAD's and never in the pair. It pastes counts and numbers, then reads both sources for hardcoded test values. Evidence is pasted output, a measured number, or a quoted line with path:line.
 
 Pair preparation: at round zero `pair --prepare` takes the matched function or feature of the frozen reference (never a cut of either side), one adapter so the same script calls each side, and the reference's floor outputs from `freeze-verify`. Every round `pair` copies ours beside it under seeded labels, same layout and runtime, and leaves out git history, dependencies, build output and everything a harness reads as instructions; it refuses a tree with a comment or filename naming a round or the CRITIC. UI is rendered by the LEAD, never from BUILDER screenshots; a piece with a UI also takes its floors and pair preparation from design.md.
 

@@ -83,8 +83,8 @@
     ]
   },
   "scratch_writes": [
-    "/tmp/claude-*/scratchpad/*",
-    "/private/tmp/claude-*/scratchpad/*"
+    "/tmp/claude-*",
+    "/private/tmp/claude-*"
   ],
   "builder_boundary": {
     "no_read": [
@@ -179,15 +179,17 @@
       "contributors*",
       "notice*"
     ],
-    "fields": [
-      "name",
-      "author",
-      "contributors",
-      "maintainers",
-      "repository",
-      "homepage",
-      "bugs",
-      "funding"
+    "manifest_keep": [
+      "type",
+      "main",
+      "module",
+      "exports",
+      "imports",
+      "bin",
+      "dependencies",
+      "peerDependencies",
+      "optionalDependencies",
+      "engines"
     ]
   },
   "credential_files": [
