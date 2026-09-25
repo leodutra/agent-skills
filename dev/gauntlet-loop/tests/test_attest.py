@@ -5,6 +5,7 @@ import json
 import os
 import pathlib
 import sys
+import time
 
 from _util import HERE, Repo, ctl
 
@@ -250,6 +251,29 @@ class Usage(AttestRepo):
         self.start("r1", "reader")  # an agent at its maxTurns fires no stop hook (S3), nor does one cut off
         m = ctl.metrics(ctl.read_events(), ctl.load())
         self.assertEqual((m["most_turns_by_role"], m["agents_that_never_stopped"]), ({"author": 27, "editor": 15}, 1))
+
+
+class Stalls(AttestRepo):
+    def test_an_agent_whose_transcript_went_quiet_is_named_stalled(self):  # F41: four stuck agents cost units-docs 1 h 45 min
+        # Their tool calls waited on the harness with no answer while the lead sat idle; the lead then stopped a working
+        # critic after 3 minutes. Quiet time is the signal: a working agent's transcript grows every few seconds.
+        lead = pathlib.Path(self.base, "lead.jsonl")
+        lead.write_text("")
+        self.hook({"hook_event_name": "SubagentStart", "agent_id": "b1", "agent_type": "editor", "transcript_path": str(lead)}, "--start")
+        mine = pathlib.Path(self.base, "lead", "subagents", "agent-b1.jsonl")  # where the harness writes it (2.1.281)
+        self.assertEqual(self.events()[-1]["transcript"], str(mine))
+        mine.parent.mkdir(parents=True)
+        mine.write_text("{}\n")
+        self.assertIn("running     1 agent", self.ok("next"))
+        self.assertNotIn("stalled", self.ok("next"))
+        old = time.time() - 16 * 60
+        os.utime(mine, (old, old))
+        self.assertIn("stalled     editor b1 quiet 16 min", self.ok("next"))
+        self.assertIn("stalled", self.ok("wait", "--poll", "0"))  # returns at once, for the lead it wakes
+        mine.write_text(json.dumps({"message": {"content": [{"type": "text", "text": "[Request interrupted by user for tool use]"}]}}) + "\n")
+        os.utime(mine, (old, old))
+        self.assertNotIn("agent", self.ok("next"))  # the lead stopped it: nothing is running
+        self.assertIn("no agent running", self.ok("wait", "--poll", "0"))
 
 
 class Editors(AttestRepo):

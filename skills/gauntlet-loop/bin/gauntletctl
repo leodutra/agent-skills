@@ -368,7 +368,8 @@ def apply(state, e):
                         "accounts": None, "spent": {"local": 0, "escalation": 0, "gate": 0}, "lead_turns": 0,
                         "ended": None, "frozen": [], "verified": [], "plan_committed": False,
                         "goal": e.get("goal"), "bar": e.get("bar"), "critic_bar": e.get("critic_bar"),
-                        "envelope_policy": e.get("envelope_policy"), "lease_hours": e.get("lease_hours") or 2}
+                        "envelope_policy": e.get("envelope_policy"), "lease_hours": e.get("lease_hours") or 2,
+                        "branch": e.get("branch")}
         state["readers"] = e["readers"]
         state["invariants"] = e.get("invariants", [])
         return
@@ -380,7 +381,7 @@ def apply(state, e):
     if run["ended"] and name in WORK:
         raise Rejected(f"the run ended ({run['ended']}); write the report. A new bar is a new run")
     if name == "RUN_ENDED":
-        run["ended"] = e["reason"]
+        run["ended"], run["ended_at"] = e["reason"], e["ts"]  # the clock stops with the run (F43)
         return
 
     # Run-level events.
@@ -594,6 +595,9 @@ HARNESS = {
     "readers": [".claude/agents/reader.md", ".claude/agents/reader-alt.md"],
     "attest_key": ".gauntlet/private/attest.key",
     "handback_tool": "SubagentHandback",  # an agent's return, when it hands back through a tool (2.1.277)
+    "subagent_transcript": "subagents/agent-{agent_id}.jsonl",  # under a folder named like the lead's transcript (2.1.281)
+    "interrupted": "[Request interrupted by user",  # the last line of an agent the lead stopped
+    "stop_agent": "TaskStop",  # the lead's tool that stops a running agent
 }
 LOOP_WORDS = r"(?i)\b(gauntlet|critic|the bar|champion|challenger)\b"
 
@@ -934,6 +938,7 @@ def attach_floors(src, dst, *hide):
 
 
 IDENTITY = POLICY["pair_identity"]
+DOCUMENTS = (".md", ".markdown", ".mdx", ".rst", ".adoc", ".txt")
 COMMENT_LINE = re.compile(r"^\s*(//|#|\*|/\*|<!--)")
 
 
@@ -941,7 +946,8 @@ def anonymise(side, names, keep=None):
     """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file, except one
     named like the file being judged (`keep`: a README goal's README is the work, F38); a package
     manifest keeps only what loads it, since a version, keywords or dev tooling said which side was published (F36); and
-    a comment-only line that carries a copyright or the reference's name goes. Code is never touched: a critic who knows
+    a comment-only line that carries a copyright or the reference's name goes, in code only: in a document a heading, a
+    bullet or an example's comment is content, and names are the lead's to strip (F40). Code is never touched: a critic who knows
     the code itself is the residual risk README D8 states."""
     marks = re.compile("|".join([r"\bcopyright\b", r"\(c\)\s*\d{4}", r"@license\b", r"@author\b"] +
                                 [rf"\b{re.escape(n)}\b" for n in names]), re.I)
@@ -956,7 +962,7 @@ def anonymise(side, names, keep=None):
                 with open(path, "w") as f:
                     json.dump({k: v for k, v in data.items() if k in IDENTITY["manifest_keep"]}, f, indent=2)  # what loads it (F36)
                     f.write("\n")
-        elif os.path.getsize(path) <= 1_000_000:
+        elif os.path.getsize(path) <= 1_000_000 and not name.lower().endswith(DOCUMENTS):
             try:
                 with open(path, encoding="utf-8") as f:
                     lines = f.readlines()
@@ -1424,7 +1430,10 @@ def cmd_attest(args):
         if tx.state["run"]["ended"]:
             return 0
         if args.start:  # builders and critics are paid for where their attempt opens; these two have no attempt
+            lead = p.get("transcript_path")
             tx.emit("AGENT_REGISTERED", "fact", "attest", agent_id=p.get("agent_id"), agent_type=p.get("agent_type"),
+                    transcript=os.path.join(os.path.splitext(lead)[0], HARNESS["subagent_transcript"].format(agent_id=p.get("agent_id")))
+                    if lead and p.get("agent_id") else None,
                     lead_tokens=transcript_usage(p.get("transcript_path") or "").get("tokens"),  # the lead's so far, from its transcript (S2)
                     cost=1 if p.get("agent_type") in ("author", "editor-fast") else None)
         elif p.get("agent_type") in READERS:
@@ -1458,7 +1467,7 @@ def status_line(state, at=None):
     solo = len(live_pieces(state)) == 1 and pieces and pieces[0]["state"] in DONE
     env = run["envelope"] or {"E": "?", "T_hours": "?"}
     total = f"{env['T_hours']:g}" if run["envelope"] else "?"
-    hours = (epoch(at or now()) - epoch(run["started"])) / 3600
+    hours = (epoch(at or run.get("ended_at") or now()) - epoch(run["started"])) / 3600
     head = (f"confirmed {sum(p['state'] in DONE for p in pieces)}/{len(pieces)} pieces, "
             f"whole: {'yes (2/2)' if (whole and whole['state'] in DONE) or solo else 'no'}"
             f" | parked: {sum(p['state'] == 'PARKED' for p in live_pieces(state).values())}"
@@ -1596,9 +1605,12 @@ def cmd_status(args):
                 for pid, p in tx.state["pieces"].items():
                     if p["state"] == "INTEGRATED":
                         tx.emit("PR_MERGED", "fact", "status", piece=pid, artifact=state["run"]["pr"])
-    with transaction() as tx:
-        tx.emit("LEAD_TURN", "fact", "status")
-        state = tx.state
+    if not state["run"]["ended"]:  # after the end a turn is nobody's, and the committed log stays whole (F43)
+        with transaction() as tx:
+            tx.emit("LEAD_TURN", "fact", "status")
+            state = tx.state
+    else:
+        state = load()
     if args.full:
         print(render_workbench(state))
         for pid, p in live_pieces(state).items():
@@ -1613,8 +1625,55 @@ def cmd_status(args):
     return 0
 
 
+def running_agents(ev):
+    """Agents registered and not stopped, each with the minutes since its transcript last grew: a working agent's grows
+    every few seconds, and one whose tool call waits on an answer that never comes goes quiet (F41). One the lead stopped
+    ends its transcript with the harness's interruption line and is not running."""
+    running = {}
+    for e in ev:
+        if e["event"] == "AGENT_REGISTERED":
+            running[e["agent_id"]] = e
+        elif e["event"] in STOPS:
+            running.pop(e.get("agent_id"), None)
+    out = []
+    for agent_id, e in running.items():
+        try:
+            with open(e.get("transcript") or "", "rb") as f:
+                f.seek(max(0, os.path.getsize(f.name) - 4096))
+                if HARNESS["interrupted"].encode() in f.read().splitlines()[-1]:
+                    continue
+            last = os.path.getmtime(e["transcript"])
+        except (OSError, IndexError):
+            last = epoch(e["ts"])
+        out.append((e["agent_type"], agent_id, int((time.time() - last) / 60)))
+    return out
+
+
+def agent_lines(agents):
+    stall = POLICY["stall_minutes"]
+    lines = [("-", "stalled", f"{kind} {agent_id} quiet {quiet} min: {HARNESS['stop_agent']} it, then dispatch a fresh {kind} "
+                              "with the same prompt") for kind, agent_id, quiet in agents if quiet >= stall]
+    if agents:
+        lines.append(("-", "running", f"{len(agents)} agent{'s' * (len(agents) > 1)}; before you end the turn start `gauntletctl "
+                                      f"wait` in the background: it returns when one is quiet {stall} min or none is left"))
+    return lines
+
+
 def next_lines(state):
-    return "".join(f"{kind:<11} {text}" + ("" if pid == "-" else f"  [{pid}]") + "\n" for pid, kind, text in next_actions(state))
+    actions = next_actions(state) + (agent_lines(running_agents(read_events())) if not state["run"]["ended"] else [])
+    return "".join(f"{kind:<11} {text}" + ("" if pid == "-" else f"  [{pid}]") + "\n" for pid, kind, text in actions)
+
+
+def cmd_wait(args):
+    """Read-only. Returns when a running agent has gone quiet, or none is running: the lead starts it in the background
+    before it ends a turn, so a stuck agent wakes it instead of an hour of silence (F41)."""
+    deadline = time.time() + args.minutes * 60
+    while True:
+        agents = running_agents(read_events())
+        if not agents or any(quiet >= POLICY["stall_minutes"] for _, _, quiet in agents) or time.time() >= deadline:
+            print("".join(f"{kind:<11} {text}\n" for _, kind, text in agent_lines(agents)) or "no agent running", end="\n" * (not agents))
+            return 0
+        time.sleep(args.poll)
 
 
 def cmd_next(args):
@@ -1643,6 +1702,10 @@ def cmd_wave(args):
     for pid in args.pieces:
         if state["pieces"].get(pid, {}).get("state") != "CONFIRMED":
             raise Rejected(f"{pid} is not CONFIRMED; a wave is made of confirmed pieces")
+    branch = state["run"].get("branch")  # F42: no run merges its own work where it started, not even a wave
+    if branch and sh(["git", "merge-base", "--is-ancestor", args.merge, branch]).returncode == 0:
+        raise Rejected(f"{args.merge} is on {branch}, the branch the run started on, where only a reviewed pull request "
+                       f"lands. Merge the wave on its own branch (gauntlet/wave-<n>) and pass that commit")
     red = [pid for pid in args.pieces if run_floors(pid) != 0]  # floors again, on the merge
     with transaction() as tx:
         for pid in args.pieces:
@@ -1878,7 +1941,8 @@ def cmd_init(args):
                 policy=pol["version"], tier=facts["tier"], containment=facts["containment"],
                 attestation=facts["attestation"], readers=pins, envelope=envelope,
                 envelope_policy=pol["envelope"], lease_hours=pol["lease_hours"], goal=args.goal, bar=args.bar,
-                critic_bar=args.critic_bar, invariants=args.invariant)
+                critic_bar=args.critic_bar, invariants=args.invariant,
+                branch=sh(["git", "rev-parse", "--abbrev-ref", "HEAD"]).stdout.strip() or None)
     return 0
 
 
@@ -1970,6 +2034,10 @@ def main(argv=None):
     p.add_argument("--peek", action="store_true", help="for a human: print the line and record nothing (no lead turn, no lease expiry)")
     p.set_defaults(fn=cmd_status)
     sub.add_parser("next", help="the legal actions now: mechanical ones, and the judgments the lead owes").set_defaults(fn=cmd_next)
+    p = sub.add_parser("wait", help="read-only: returns when a running agent goes quiet or none is left; start it in the background")
+    p.add_argument("--minutes", type=float, default=60, help="return anyway after this long")
+    p.add_argument("--poll", type=float, default=20, help="seconds between looks")
+    p.set_defaults(fn=cmd_wait)
     sub.add_parser("gate", help="the two whole-gate verdict files and their WINNER lines").set_defaults(fn=cmd_gate)
     p = sub.add_parser("wave", help="floors again on the merge, then WAVE_COMPLETE for each confirmed piece")
     p.add_argument("pieces", nargs="+")

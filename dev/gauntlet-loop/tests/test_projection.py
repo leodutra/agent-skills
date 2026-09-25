@@ -58,7 +58,7 @@ class Status(Run):
         self.ok("event", "PARK_REQUESTED", "piece=format", "reason=needs a migration", "class=execution")
         self.assertEqual(self.ok("status").strip(),
                          "confirmed 1/1 pieces, whole: no | parked: 1 | blocked: 0 | spent: 4/150 inv, 0.0/24 h | ended: nothing-left")
-        self.assertEqual(ctl.load()["run"]["lead_turns"], 2)
+        self.assertEqual(ctl.load()["run"]["lead_turns"], 1)  # F43: the status after the end counts no turn
 
     def test_peek_is_the_same_line_and_changes_nothing(self):  # A7: a human's `status` ended bytesize, 2026-09-23
         self.open("parse")
@@ -71,6 +71,20 @@ class Status(Run):
         self.assertEqual(log.read_bytes(), before)  # no lead turn, no expired lease, no end of the run
         self.assertIn("100.0/24 h", peek)
         self.assertNotIn("ended", peek)
+
+    def test_an_ended_run_keeps_its_clock_and_its_log(self):  # F43: units-docs read 3.2 of 3 hours the next morning
+        self.open("parse")
+        self.open("format")
+        for pid in ("parse", "format"):
+            self.ok("event", "PARK_REQUESTED", f"piece={pid}", "reason=out of reach", "class=scope")
+        self.assertEqual(ctl.load()["run"]["ended"], "nothing-left")
+        log = pathlib.Path(self.root, ".gauntlet/events.jsonl")
+        before = log.read_bytes()
+        started = ctl.epoch(ctl.load()["run"]["started"])
+        clock, ctl.now = ctl.now, lambda: ctl.time.strftime("%Y-%m-%dT%H:%M:%SZ", ctl.time.gmtime(started + 100 * 3600))
+        self.addCleanup(setattr, ctl, "now", clock)
+        self.assertIn(" inv, 0.0/24 h", self.ok("status"))  # the hours it took, not the hours since
+        self.assertEqual(log.read_bytes(), before)  # a turn after the end is nobody's: the committed log stays whole
 
     def test_every_remaining_piece_parked_ends_the_run_however_it_got_there(self):  # F25: the units run kept going
         self.open("parse")
@@ -180,6 +194,21 @@ class Workbench(Run):
 
 
 class GateAndMetrics(Run):
+    def test_a_wave_merged_on_the_branch_the_run_started_on_is_refused(self):  # F42: units-docs merged its sections into main
+        # Merged there, the product sits on the default branch before any human reads it, and the pull request shows only
+        # what came after. A wave has its own branch.
+        self.assertEqual(ctl.load()["run"]["branch"], "main")
+        self.open("parse")
+        self.win("parse")
+        self.git("commit", "-q", "--allow-empty", "-m", "Merge the confirmed pieces")
+        code, _, err = self.run_ctl("wave", "parse", "--merge", self.git("rev-parse", "HEAD").strip())
+        self.assertEqual((code, "gauntlet/wave-" in err), (2, True))
+        self.assertEqual(ctl.load()["pieces"]["parse"]["state"], "CONFIRMED")
+        self.git("checkout", "-q", "-b", "gauntlet/wave-1", "HEAD~1")
+        self.git("commit", "-q", "--allow-empty", "-m", "Merge wave 1")
+        self.ok("wave", "parse", "--merge", self.git("rev-parse", "HEAD").strip())
+        self.assertEqual(ctl.load()["pieces"]["parse"]["state"], "INTEGRATED")
+
     def test_gate_prints_the_two_verdict_files_and_their_winner_lines(self):  # FR-10.3
         self.open("parse")
         self.open("format")

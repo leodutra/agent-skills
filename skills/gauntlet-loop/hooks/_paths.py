@@ -81,11 +81,12 @@ def variants(command):
     for name, words in re.findall(r"\bfor\s+([A-Za-z_]\w*)\s+in\s+([^;\n]*?)\s*;\s*do\b", command):
         values[name] = [w.strip("\"'") for w in words.split()] or [""]
     out = [command]
-    for name, options in reversed(list(values.items())):  # later ones first: a loop's list may use an earlier variable
-        if re.search(rf"\$\{{?{name}\b", command):
-            pattern = re.compile(rf"'[^']*'|\$\{{{name}\}}|\${name}\b")
-            out = [pattern.sub(lambda m, o=o: m.group(0) if m.group(0).startswith("'") else o, v) for v in out for o in options[:8]]
-    return out[:64]
+    for _ in range(2):  # a value can name another variable (`f=$D/$s`): the second pass fills in what the first put in
+        for name, options in reversed(list(values.items())):  # later ones first: a loop's list may use an earlier variable
+            if any(re.search(rf"\$\{{?{name}\b", v) for v in out):
+                pattern = re.compile(rf"'[^']*'|\$\{{{name}\}}|\${name}\b")
+                out = [pattern.sub(lambda m, o=o: m.group(0) if m.group(0).startswith("'") else o, v) for v in out for o in options[:8]][:64]
+    return out
 
 
 def shell_base(command, root):
@@ -218,8 +219,9 @@ def _write_targets(command, base):
                         _shell_text(command))
     if len(hidden) > heads[0]:
         out.extend(_path_tokens(command, base))
-    # A substitution runs even inside double quotes: what it writes is written (single-quoted text is only text)
-    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", re.sub(r"'[^']*'", "''", command)):
+    # A substitution runs even inside double quotes: what it writes is written. Single-quoted text and a here-document's
+    # body are only text: a JS template literal in a heredoc driver is not a command (F39)
+    for inner in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", re.sub(r"'[^']*'", "''", _no_heredoc_bodies(command))):
         out.extend(_write_targets(inner[0] or inner[1], base))
     return out
 
@@ -235,6 +237,120 @@ def _sed_files(words):
         elif not w.startswith("-"):
             files.append(w)
     return files if scripted else files[1:]
+
+
+_TEXT_ONLY = ("echo", "printf", "tr", "expr", "seq", "basename", "dirname", "true", "false", ":", "for", "case")
+_PROGRAM_FIRST = ("grep", "egrep", "fgrep", "rg", "awk", "gawk", "mawk", "sed", "jq")  # their first operand is a program
+_CODE = ("python", "python3", "node", "deno", "bun", "ruby", "perl")  # -c, -e: the next word is code
+_SHELLS = ("sh", "bash", "zsh", "dash")
+_KEYWORDS = ("do", "then", "else", "elif", "!", "time", "if", "while", "until", "{")
+_LITERAL = re.compile(r"""(['"`])((?:/|\.\./|~)[^'"`\n]*)\1""")  # a quoted path in code or data
+
+
+def read_targets(command, base):
+    """The paths a shell command could open, by the shell's rules (F39): quotes gone, the variables it sets expanded
+    (variants), each substitution judged as the command it runs and, where it stands as an operand, as a path nobody can
+    resolve. Text, not paths: what echo or printf prints, the program grep, sed, awk or jq is given first, the code of
+    `python -c` or `node -e`, and a here-document's data; in code and data a quoted path counts. What a command writes is
+    write_targets'. Tier 2, never isolation: a matcher that knows a few commands, for a reader not trying to escape."""
+    return [t for v in variants(command) for t in _read_targets(v, base)]
+
+
+def _read_targets(command, base):
+    bodies = [(bool(m.group(1)), m.group(3)) for m in re.finditer(
+        r"<<-?\s*(['\"]?)(\w+)\1[^\n]*\n(.*?)(?:\n[ \t]*\2[ \t]*(?=\n|$)|$)", command, re.S)]
+    shell, inner = _no_heredoc_bodies(command), []
+    while True:  # innermost first; single-quoted text is only text, and `$((` is arithmetic
+        blank = re.sub(r"'[^']*'", lambda m: "'" + " " * (len(m.group()) - 2) + "'", shell)
+        m = re.search(r"\$\(([^()]*)\)|`([^`]*)`", blank)
+        if not m:
+            break
+        g = 1 if m.group(1) is not None else 2
+        inner.append(shell[m.start(g):m.end(g)])
+        shell = shell[:m.start()] + "$SUBST" + shell[m.end():]
+    out = [t for i in inner for t in _read_targets(i, base)]
+    try:
+        lexer = shlex.shlex(shell, posix=True, punctuation_chars=True)
+        lexer.whitespace_split = True
+        tokens = list(lexer)
+    except ValueError:
+        tokens = shell.split()
+    words, skip, owners, cwd = [], None, [], [base]
+
+    def path(word):
+        if re.search(r"\$[A-Za-z_{]|`", word):
+            out.append(word)  # a variable it cannot know, or a substitution: the caller cannot say where it points
+        elif "://" in word or word in SAFE or not ("/" in word or word.startswith((".", "~")) or
+                                                    os.path.lexists(os.path.join(cwd[0], word))):
+            return
+        elif re.search(r"[*?\[]", word):
+            base = glob_base(word)
+            out.append(resolve("/" if word.startswith("/") and base == "." else base, cwd[0]))
+        else:
+            out.append(resolve(word, cwd[0]))
+
+    def flush():
+        w = list(words)
+        words.clear()
+        while w and (w[0] in _KEYWORDS or re.match(r"[A-Za-z_]\w*=", w[0])):
+            w.pop(0)  # `do`, `then`, `A=1 cmd`
+        if not w or os.path.basename(w[0]) in _TEXT_ONLY:
+            return
+        verb, args = os.path.basename(w[0]), w[1:]
+        if verb == "cd":
+            args = [a for a in args if not a.startswith("-")]
+            path(args[0] if args else "~")
+            if args and not re.search(r"\$[A-Za-z_{]|`", args[0]):
+                cwd[0] = resolve(args[0], cwd[0])
+            return
+        scripted = verb in _PROGRAM_FIRST and any(a in ("-e", "-f", "--regexp", "--file", "--expression") or
+                                                  a.startswith(("--regexp=", "--file=", "--expression=")) for a in args)
+        program = verb in _PROGRAM_FIRST and not scripted
+        value = None
+        for a in args:
+            if value:
+                if value in ("-f", "--file"):
+                    path(a)
+                elif value == "code":
+                    out.extend(resolve(lit, cwd[0]) for _, lit in _LITERAL.findall(a) if lit not in SAFE)
+                value = None
+            elif verb in _CODE and a in ("-c", "-e", "-p", "--eval", "--print"):
+                value = "code"
+            elif a in ("-e", "-f", "--regexp", "--file", "--expression") or (verb in _PROGRAM_FIRST and a in (
+                    ("-F", "-v") if "awk" in verb else ("-A", "-B", "-C", "-m", "--max-count"))):
+                value = a
+            elif a.startswith("-"):
+                if "=" in a and a.startswith(("--file=", "--input=")):
+                    path(a.split("=", 1)[1])
+            elif program:
+                program = False  # the pattern, or the program
+            else:
+                path(a)
+
+    for token in tokens:
+        if skip:
+            if skip == "<":
+                path(token)
+            elif skip == "<<":
+                owners.append(os.path.basename(next((x for x in words if x not in _KEYWORDS), "")))
+            skip = None
+        elif token in _SEPARATORS:
+            flush()
+        elif token in (">", ">>", ">|", "&>", "&>>", "<", "<<", "<<-", "<<<", ">&", "<&"):
+            if words and words[-1].isdigit():
+                words.pop()
+            skip = "<" if token == "<" else "<<" if token in ("<<", "<<-") else ">"
+        else:
+            words.append(token)
+    flush()
+    for owner, (delimiter_quoted, body) in zip(owners, bodies):
+        if owner in _SHELLS:
+            out.extend(_read_targets(body, cwd[0]))
+        else:
+            out.extend(resolve(lit, cwd[0]) for _, lit in _LITERAL.findall(body) if lit not in SAFE)
+            if not delimiter_quoted:  # an unquoted delimiter: the shell runs the body's substitutions
+                out.extend(t for i in re.findall(r"\$\(([^()]*)\)|`([^`]*)`", body) for t in _read_targets(i[0] or i[1], cwd[0]))
+    return out
 
 
 def unresolved(target):

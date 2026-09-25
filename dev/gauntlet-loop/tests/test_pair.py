@@ -189,6 +189,16 @@ class Pair(PairRepo):
         self.assertEqual(sorted(n.lower() for n in names if n.lower() == "readme.md"), ["readme.md", "readme.md"])
         self.assertNotIn("LICENSE", names)
 
+    def test_a_document_keeps_its_bullets_headings_and_example_comments(self):  # F40: units-docs lost ours' unit bullet
+        # A comment-looking line in prose is content: a bullet, a heading, a comment inside an example. Stripping them for
+        # the reference's name took a line from ours on every piece, and every critic docked ours for the missing item.
+        pathlib.Path(self.root, "reference/ms/Readme.md").write_text("Convert time formats.\n")
+        doc = "# Sizes, upstream style\n\n* upstream units: `B`, `KB`\n\n```js\n// like upstream: 1 KB is 1024 bytes\nparse('1KB')\n```\n"
+        self.write(".gauntlet/wt/parse/README.md", doc)
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse", "--ours", ".gauntlet/wt/parse/README.md")
+        self.assertIn(doc, [v.decode() for k, v in tree(self.pair_dir).items() if k.lower().endswith("readme.md")])
+
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:
             tx.emit("FLOOR_FAIL", "fact", "test", piece="parse", **{"class": "artifact"})

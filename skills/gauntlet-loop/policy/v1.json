@@ -209,5 +209,6 @@
     "slack token": "\\bxox[baprs]-[A-Za-z0-9-]{10,}",
     "api key": "\\bsk-[A-Za-z0-9_-]{20,}",
     "assigned secret": "(?i)\\b[\\w.-]*(api[_-]?key|secret|token|passw(or)?d)[\\w.-]*\\s*[=:]\\s*['\\\"]?(?=[\\w+/=-]*\\d)[\\w+/=-]{12,}"
-  }
+  },
+  "stall_minutes": 15
 }

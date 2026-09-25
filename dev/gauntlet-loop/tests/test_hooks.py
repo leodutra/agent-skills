@@ -84,6 +84,12 @@ class CriticBlind(Project):
             self.denied(self.hook("Bash", {"command": command}))
         driver = "node --input-type=module <<'EOF'\nfor (const c of ['2h']) { const m = await import(`./a/index.js`); console.log(`${c} -> ${m.x}`) }\nEOF"
         self.assertIn("updatedInput", self.hook("Bash", {"command": driver}))  # seen live: a reader's heredoc test driver
+        from _util import installer  # noqa: F401  (the hooks' shared helpers, loaded the way the tests load the skill)
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("_paths", os.path.join(SKILL, "hooks", "_paths.py"))
+        paths = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(paths)
+        self.assertEqual(paths.write_targets(driver, self.root), [])  # F39: a template literal in a heredoc body writes nothing
         self.denied(self.hook("Bash", {"command": "node <<'EOF'\nrequire('fs').readFileSync('../../private/secret')\nEOF"}))
         loop = """for s in a b; do node -e "import('./$s/index.js').then(m=>console.log(m.x))" 2>&1; done"""
         self.assertIn("updatedInput", self.hook("Bash", {"command": loop}))  # seen in a live run: a reader loops over both sides
@@ -103,9 +109,37 @@ class CriticBlind(Project):
         for command in (f"D={pair}; cat $D/PROMPT.md; cat $D/a/index.js",
                         f"cd {pair} && for f in a/index.js PROMPT.md; do echo \"== $f\"; cat $f; done",
                         f'cd {pair} && for f in a/*; do cat "$f"; done', f"D={pair}; for f in $D/a/*; do echo \"-- $f\"; cat $f; done",
-                        f"D={pair}; cat $D/adapter.mjs; for f in $D/a/*; do echo \"-- $f\"; cat $f; done; ls $D/a"):
+                        f"D={pair}; cat $D/adapter.mjs; for f in $D/a/*; do echo \"-- $f\"; cat $f; done; ls $D/a",
+                        f"for s in a b; do f={pair}/$s/x.md; wc -w < $f; done"):  # F39: a value that names the loop's variable
             self.assertIn("updatedInput", self.hook("Bash", {"command": command}), command)
         for command in (f"D={pair}/../..; cat $D/state.json", "cat $UNKNOWN/x", f"cd {pair} && for f in ../../state.json; do cat $f; done"):
+            self.denied(self.hook("Bash", {"command": command}))
+
+    def test_text_tools_on_the_pair_pass(self):  # F39: 28 false blocks in units-docs, every one a critic reading its own pair
+        pair = self.path(".gauntlet/pairs/parse")
+        self.hook("Read", {"file_path": f"{pair}/PROMPT.md"})
+        fence = "`" * 3
+        for command in (
+                """echo "--- word totals ---" && wc -w a/x.md b/x.md && sed -n '120p' a/x.md | grep -o 'range: "[9]*' | tr -d 'range: "' | awk '{print length($0)}'""",
+                """python3 -c "print('A:195 1e40/1024**5 =', repr(1e40/1024**5)); print(1048575 /1024**2)\"""",
+                "grep -c $'\\xef\\xbd\\x9c' b/x.md; grep -n 'B/KB\\|`pb`' b/x.md",
+                "awk '/^" + fence + "js/{f=1;next}/^" + fence + "/{f=0}f && /^(parse|format)\\(/ && !/\\/\\/ (throws)/{print \"A:\"NR\": \"$0}' a/x.md; echo \"A-done\"",
+                "grep -n '^parse(' a/x.md | grep -v '// ->' | grep -v -c '//'",
+                f"cd {pair} && for s in a b; do printf \"%s total=%s prose=%s\\n\" $s \"$(wc -w < $s/x.md)\" \"$(awk '/^{fence}/{{f=!f;next}} !f' $s/x.md | wc -w)\"; done",
+                f"cd {pair} && cat > strike.txt <<'EOF'\n# struck words per span\nA 3 2 / 7\nEOF",
+                "awk '{s[$1]+=$3} END{printf \"A struck %d / 789\\n\", s[\"A\"]}' <<'EOF'\nA 3 2\nA 7-9 18 / x\nEOF",
+                'echo "A struck: $((2+18+4)) / 789"',
+                "grep -n -A 3 -E '^(size|duration)' a/x.md",
+                'grep -nE "import|require" a/x.md; grep -niE "throw|error" a/x.md; echo "hits=$?"'):
+            self.assertIn("updatedInput", self.hook("Bash", {"command": command}), command)
+
+    def test_an_escape_through_a_text_tool_is_still_denied(self):  # F39: what the parser knows it also holds
+        self.hook("Read", {"file_path": self.path(".gauntlet/pairs/parse/PROMPT.md")})
+        secret = "../../../src/secret.txt"
+        for command in (f"echo `cat {secret}`", f'echo "$(cat {secret})"', f"grep -f {secret} a/x", f"awk -f {secret} a/x",
+                        "python3 -c \"print(open('/etc/passwd').read())\"", "grep -r x /", "find / -name x", f"cat < {secret}",
+                        "echo hi > ../../wt/parse/src/x.js", f"sh <<'EOF'\ncat {secret}\nEOF", f"cat <<EOF\n$(cat {secret})\nEOF",
+                        f"grep -e x {secret}", f"sed -n 1p {secret}", "ls ../format", "cat $(ls ../format)"):
             self.denied(self.hook("Bash", {"command": command}))
 
     def test_other_agents_pass_through(self):

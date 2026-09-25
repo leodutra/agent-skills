@@ -20,6 +20,39 @@ units-2 ended 2026-09-24 on a win, 12 of 60 invocations and 0.8 of 4 hours (unit
 
 An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
 
+## 2026-09-25, units-docs: the writing domain
+
+The first run outside code: a README for units, the package units-2 built, judged per piece against the bytes.js 3.1.2 and ms 2.1.3 readmes; 40 invocations, 3 hours; the lead a session opened in `~/Work/units-docs` under `/goal`, sandbox strict, Tier 2, attestation tier-1, builders and critics pinned at `xhigh`. Ended `win`: both pieces and the whole README won blind twice, the second each time on a different model with the sides swapped; the whole on its third round. The README is on `gauntlet/whole`; every example in it runs (13 blocks, 98 claims). From the run's own controller:
+
+```text
+confirmed 2/2 pieces, whole: yes (2/2) | parked: 0 | blocked: 0 | spent: 16/40 inv, 2.3/3 h | ended: win
+.gauntlet/verdicts/whole-r3-1.md: WINNER: B
+.gauntlet/verdicts/whole-r3-2.md: WINNER: A
+rounds per confirmed piece                       1.5
+red floor share                                  0.44
+confirmation flip rate                           0.0
+invocations per confirmed piece                  8.0
+lead turns per confirmed piece                   9.5
+lead tokens per confirmed piece                  138424.5
+worker minutes per confirmed piece               14.5
+tokens per confirmed piece                       212778.0
+most turns by role                               {'author': 15, 'editor': 7, 'reader': 10, 'reader-alt': 8, 'editor-fast': 15}
+agents that never stopped                        4
+spend                                            {'local': '11/24', 'escalation': '0/10', 'gate': '5/6'}
+```
+
+The status line is the lead's at the end (2.3 h); read the next morning it said 3.2, which is F43. Metrics were computed from the log in memory, read-only; the lines that carry a value are shown.
+
+| Finding | Test and fix |
+| --- | --- |
+| F39 (A62) | 28 of the run's 31 hook blocks were false, every one a critic reading its own pair with awk, grep, wc or arithmetic: the critic hook read `/^```/` as a path and a backtick as a command. It now judges what a command opens by the shell's rules. Replayed on a copy of the run: 28 of 28 pass; the other three blocks (an author's scratch in the project root, the lead chaining the controller) were right. `test_hooks.py` |
+| F40 (A63) | `pair` cut prose lines naming the reference from both sides: ours lost its unit bullet, and every critic docked ours for the missing item. Documents keep their lines. `test_pair.py` |
+| F41 (A64) | Four agents never stopped: three sat on a tool call the harness's auto-mode check never answered (12 to 53 minutes), and the lead's own three-minute watch stopped a working one. 1 h 45 min of 2.3 h. `next` names an agent quiet 15 minutes; `wait` wakes the lead. Hook denials are not the cause (S15). `test_attest.py` |
+| F42 (A65) | The lead merged the wave into `main`, so the sections sat there unreviewed. `wave` refuses a merge on the branch the run started on. `test_projection.py` |
+| F43 (A66) | An ended run's clock kept running and a `status` after the end changed the committed log. `test_projection.py` |
+
+Left to the user: the README's install line is a placeholder (`npm install /path/to/units`: the npm name `units` is taken and the repository has no remote); the two halves quote example output differently, a nit one critic named; `main` in units-docs already carries the wave merge.
+
 ## 2026-09-24, after units-2
 
 | Item | Result |
@@ -32,7 +65,7 @@ An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 169 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A61 record the changes to the spec.
+Claude Code 2.1.280 installed. 175 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A66 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |
