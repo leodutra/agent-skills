@@ -138,12 +138,32 @@ The lead is about 85 to 89 percent of every token processed, and the runs are le
 - [x] **E4. Independent pieces in one turn.** The runbook says commands for different pieces go in one turn as parallel tool calls: one model call instead of one per piece.
 - [x] **E5a, the pin, done 2026-09-24 (A59).** Removal condition in README D36: a pin comes out when the role's model defaults to the pinned level, or when the critic eval and one measured run at the default show no loss. **E5. Effort where quality is bought, pinned.** `editor`, `reader` and `reader-alt` set `effort: xhigh` in their definitions (today they inherit the session's, so a forgotten `/effort` shortchanges them). With that pinned, the lead's own effort becomes a separate question: one measured run with the session at `high`, compared on lead output, rounds, flip rate and the verdicts, before any default changes (D36 stays until the numbers say otherwise).
 - [ ] **E5b. The lead at `high`, measured.** `~/Work/units-3` is units-2 again with the pins installed: same skeleton, bars, envelope and prompt. The user runs it with `/effort high`. Compare the lead's rows with units-2 (calls, tokens, cache reads, output, wall) and quality (rounds, flips, verdicts, gaps). One run is a signal, not proof. E6 waits until it ends: the runbook is global, so changing it before would put two changes in one run.
+  - Prepared 2026-09-24: `~/Work/units-3`, units-2's skeleton (`1356920`) and the skill as of `2b9953d` (`6d1cc55`); `detect` says Tier 2, and the three pins are installed. The prompt is C3's, unchanged. Waiting on the user: open `claude` there, accept trust, `/effort high` (the one difference from units-2), auto mode, `/sandbox` strict (units-2 had it on), paste. When it ends, add a units-3 column to the baseline table in `acceptance.md`.
 - [ ] **E6. Floor review by case list (experiment).** The author returns one line per case beside the paths, and the lead reviews the list and the red run on the skeleton instead of reading every file (units: about 21 KB of test code in the lead's context). D14's custody holds: the lead can open any file. Measured against the floor corrections a run needs.
 
 - [x] **F31 to F36, from units-2.** Hook blocks from variables the command sets, `$TMPDIR`, a chained `cd` and a quoted "-- /path" (F31, F32); a reader definition that sent first commands to the project root (F33); a domain line that sent critics after the hostile script (F34); a whole gate told to read only (F35); `package.json` fields that named the published side (F36). Fixed test-first (A53 to A58); replayed on units-2's own blocks.
 - [x] **`maxTurns` review, 2026-09-24.** Measured over four runs, the most turns any one agent used: editor 15 of 300, reader 14 of 40, reader-alt 11 of 40, author 27 of 80, editor-fast 15 of 80. No agent came near its cap. The caps stay: they are runaway guards, a capped agent fires no stop hook (S3) and its attempt waits for the lease, and every piece so far was small. `metrics` now reports the most turns per role and the agents that never stopped, so each run re-checks this (A60). Found on the way: F37, an author's stop recorded nothing, so every run's token and minute totals left authors out. Open: nothing in the runbook tells the lead what to do with a capped agent's PARTIAL result; the lease closes the attempt, and the runbook has 4 bytes of room.
 - [x] **F38, preparing the writing run.** `pair` deleted a README from a side of more than one file, even when the README was the work being judged (A61).
 - [ ] **W1. A writing-domain run.** `~/Work/units-docs`: units-2's winning library (`gauntlet/wave-1`), no README, the skill installed. The goal is its README, judged per piece against the bytes.js 3.1.2 and ms 2.1.3 readmes; 40 invocations, 3 hours, like the first run. It checks the writing path: a writer instead of a builder, reading floors, a single-document artifact, prose critics. Its numbers are the writing baseline; nothing to compare them with yet.
+  - Prepared 2026-09-24: `~/Work/units-docs`, units-2's `gauntlet/wave-1` (source, tests, package file; no README) as `ceca567`, the skill as `7498c6a`; `detect` says Tier 2. The prompt, 270 words, goal and bar 65:
+
+    ```text
+    /goal Ours beats the bar blind: two fresh critics in a row, the second with A and B swapped on a different model, pick ours on every piece and on the README, or 40 invocations or 3 hours are spent. Until then, run a gauntlet loop:
+
+    Write the README for units, the package here: a first-time reader installs it, uses each function and knows what bad input does.
+
+    The bars are per piece: sizes against the visionmedia/bytes.js 3.1.2 readme, durations against the vercel/ms 2.1.3 readme. Freeze each; judge against the copy, never a description. Every example must run against src/ and print what it claims. Never document behaviour the code lacks.
+
+    Split it into the coarsest pieces that can be judged alone; each gets a writer and a fresh critic every round. Only you fetch the bars and cut each matching passage, names stripped. The critic gets ours and the bar as A and B in random order and hears the goal, never the bar's name, which is which, or who made either. It opens both, writes what it sees in each, picks one and names the biggest thing the loser lacks. No ties; a hedge is a loss. The writer closes that gap; repeat.
+
+    If the same gap comes back, split that piece, then change writers, then fan out variants; never mark it done. When every piece wins, judge the whole the same way.
+
+    Update a progress page after every verdict: piece, round, winner, gap. End every turn with pieces confirmed and what is spent. Questions go there, not to me. Only I end this earlier.
+
+    Fan out subagents.
+    ```
+
+  - Waiting on the user: open `claude` there, accept trust, `/effort xhigh`, auto mode, `/sandbox` strict, paste.
 - [x] **E-measure. units-2.** Done 2026-09-24: win, 12 of 60 invocations, 0.8 hours; lead calls -34%, lead tokens -53%, cache reads -66%, output -60%, wall -26% against units (E1 to E4 with F18 to F30; not separable from one run). Table in `acceptance.md`. Prepared 2026-09-24 after Stage E1 to E4 and the D5 cuts were deployed: `~/Work/units-2`, skeleton `7d96b81`, the skill `0afacf1`, `detect` Tier 2. The prompt is C3's, unchanged. When it ends, fill the units-2 column of the baseline table in `acceptance.md` the same way, comparing the lead's rows only.
 
 ## Left to the operator on purpose
