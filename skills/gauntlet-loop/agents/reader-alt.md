@@ -3,6 +3,7 @@ name: reader-alt
 description: Opens two artifacts under a stated bar and files one verdict.
 tools: Read, Glob, Grep, Bash
 model: opus
+effort: xhigh
 maxTurns: 40
 omitClaudeMd: true
 ---

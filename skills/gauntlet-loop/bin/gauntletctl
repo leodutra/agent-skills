@@ -171,7 +171,7 @@ JUDGMENTS = {
 }
 # Fact events: produced only by the command or hook that observed them, or derived by the rules below.
 FACTS = {"RUN_STARTED", "REFERENCE_FROZEN", "REFERENCE_VERIFIED", "PIECE_OPENED", "FLOOR_ADDED", "FLOOR_AMENDED",
-         "FLOOR_PASS", "FLOOR_FAIL", "CRITIC_DISPATCHED", "AGENT_REGISTERED", "BUILDER_DONE", "SMOOTHER_DONE",
+         "FLOOR_PASS", "FLOOR_FAIL", "CRITIC_DISPATCHED", "AGENT_REGISTERED", "BUILDER_DONE", "SMOOTHER_DONE", "AUTHOR_DONE",
          "CRITIC_RESULT", "ATTEST_CONFLICT", "CRITIC_WIN", "CRITIC_LOSS", "CONFIRMATION_WIN", "CONFIRMATION_LOSS",
          "VERDICT_INVALID", "GAP_ONLY_RESULT", "CHAMPION_REPLACED", "CONVERGED", "RECHECK_LOSS", "GAP_REPEATED",
          "ALLOCATION_SPENT", "BUDGET_EXHAUSTED", "LEASE_EXPIRED", "RERUN_OBSERVED", "SCAN_FAILED", "PLAN_COMMITTED",
@@ -937,8 +937,9 @@ IDENTITY = POLICY["pair_identity"]
 COMMENT_LINE = re.compile(r"^\s*(//|#|\*|/\*|<!--)")
 
 
-def anonymise(side, names):
-    """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file; a package
+def anonymise(side, names, keep=None):
+    """FR-6.5: a pair names nobody, on either side alike. Identity files leave a side of more than one file, except one
+    named like the file being judged (`keep`: a README goal's README is the work, F38); a package
     manifest keeps only what loads it, since a version, keywords or dev tooling said which side was published (F36); and
     a comment-only line that carries a copyright or the reference's name goes. Code is never touched: a critic who knows
     the code itself is the residual risk README D8 states."""
@@ -947,7 +948,7 @@ def anonymise(side, names):
     files = [os.path.join(folder, f) for folder, _, fs in os.walk(side) for f in fs]
     for path in files:
         name = os.path.basename(path)
-        if len(files) > 1 and any(fnmatch.fnmatch(name.lower(), pat.lower()) for pat in IDENTITY["files"]):
+        if len(files) > 1 and name.lower() != keep and any(fnmatch.fnmatch(name.lower(), pat.lower()) for pat in IDENTITY["files"]):
             os.remove(path)
         elif name == "package.json":
             data = read_json(path)
@@ -1100,7 +1101,7 @@ def cmd_pair(args):
         for label in sides:
             for tree in (t for t in FLOOR_TREES if t != "tests/required"):  # the reference, held-out material (F29)
                 shutil.rmtree(os.path.join(live, label, tree), ignore_errors=True)
-            anonymise(os.path.join(live, label), known)
+            anonymise(os.path.join(live, label), known, os.path.basename(ours).lower() if os.path.isfile(ours) else None)
         floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
         ours_label = "a" if first_is_a else "b"
         # Both sides or neither: outputs on one side alone say which side is ours, so they wait for a verified reference.
@@ -1246,6 +1247,7 @@ def cmd_rerun(args):
 
 READERS = ("reader", "reader-alt")
 EDITORS = ("editor", "editor-fast")
+STOPS = ("BUILDER_DONE", "CRITIC_RESULT", "SMOOTHER_DONE", "AUTHOR_DONE")
 
 
 def parse_verdict(text, shape):
@@ -1281,11 +1283,11 @@ def parse_verdict(text, shape):
     return {**out, "valid": True}
 
 
-def transcript_tokens(path):
-    """Tokens one agent spent, from the transcript its hook names (S8 in the skill's harness evidence): input, cache writes and
-    output, once per message. A message's usage repeats on each of its lines and, in a subagent's transcript, grows as it
+def transcript_usage(path):
+    """Tokens and model turns one agent spent, from the transcript its hook names (S8 in the skill's harness evidence).
+    Tokens are input, cache writes and output, once per message; a turn is one message, what `maxTurns` counts. A message's usage repeats on each of its lines and, in a subagent's transcript, grows as it
     streams, so the last line of a message holds its count. Cache reads re-read context already counted and are left
-    out. None when unreadable."""
+    out. Empty when unreadable."""
     try:
         final, anonymous = {}, []
         with open(path) as f:
@@ -1298,9 +1300,9 @@ def transcript_tokens(path):
                     anonymous.append(usage)
         total = sum(v for usage in [*final.values(), *anonymous] for k, v in usage.items()
                     if k.endswith("_tokens") and k != "cache_read_input_tokens" and isinstance(v, int))
-        return total or None
+        return {"tokens": total or None, "turns": len(final) + len(anonymous) or None}
     except (OSError, ValueError, TypeError, AttributeError):
-        return None
+        return {}
 
 
 def final_text(p):
@@ -1366,7 +1368,7 @@ def attest_reader(tx, p, text):
         side = mapping.get(verdict["label"].lower())  # a hedge maps to nothing: a loss for ours
         winner = side if attempt["shape"] == "pick" else "ours" if side in ("ours", "challenger") else "reference"
     return tx.emit("CRITIC_RESULT", "fact", "attest", piece=pid, attempt_id=attempt_id, valid=verdict["valid"],
-                   tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                   **transcript_usage(p.get("agent_transcript_path") or ""),
                    reason=verdict["reason"], winner=winner, gap=verdict["gap"], shape=attempt["shape"],
                    model=state["readers"].get(agent_type), artifact=os.path.relpath(path, root()), **base)
 
@@ -1381,7 +1383,7 @@ def attest_editor(tx, p, text):
     piece = tx.state["pieces"].get(pid)
     if agent_type == "editor-fast":
         return tx.emit("SMOOTHER_DONE", "fact", "attest", agent_id=agent_id, agent_type=agent_type, note=bound,
-                       tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                       **transcript_usage(p.get("agent_transcript_path") or ""),
                        **({"piece": pid} if piece and piece["state"] == "ACTIVE" else {}))
     if not piece or not piece["building"] or piece["state"] != "ACTIVE":
         print(f"note: {agent_id} stopped with no open builder attempt; nothing recorded")
@@ -1391,7 +1393,7 @@ def attest_editor(tx, p, text):
     candidate = first.split()[0].strip("`") if first and not returned else ""
     artifact = candidate if candidate and os.path.exists(os.path.join(root(), candidate)) else os.path.join(".gauntlet", "wt", bound)
     return tx.emit("BUILDER_DONE", "fact", "attest", piece=pid, agent_id=agent_id, agent_type=agent_type,
-                   tokens=transcript_tokens(p.get("agent_transcript_path") or ""),
+                   **transcript_usage(p.get("agent_transcript_path") or ""),
                    artifact=None if returned else artifact, returned=returned, note=first[:300] if returned else None)
 
 
@@ -1423,12 +1425,15 @@ def cmd_attest(args):
             return 0
         if args.start:  # builders and critics are paid for where their attempt opens; these two have no attempt
             tx.emit("AGENT_REGISTERED", "fact", "attest", agent_id=p.get("agent_id"), agent_type=p.get("agent_type"),
-                    lead_tokens=transcript_tokens(p.get("transcript_path") or ""),  # the lead's so far, from its transcript (S2)
+                    lead_tokens=transcript_usage(p.get("transcript_path") or "").get("tokens"),  # the lead's so far, from its transcript (S2)
                     cost=1 if p.get("agent_type") in ("author", "editor-fast") else None)
         elif p.get("agent_type") in READERS:
             attest_reader(tx, p, final_text(p))
         elif p.get("agent_type") in EDITORS:
             attest_editor(tx, p, final_text(p))
+        elif p.get("agent_type") == "author":  # moves no piece; recorded for what it spent (F37)
+            tx.emit("AUTHOR_DONE", "fact", "attest", agent_id=p.get("agent_id"), agent_type="author",
+                    **transcript_usage(p.get("agent_transcript_path") or ""))
     return 0
 
 
@@ -1671,13 +1676,17 @@ def metrics(events, state):
     for e in ev:
         if e["event"] == "AGENT_REGISTERED":
             starts[e["agent_id"]] = epoch(e["ts"])
-        elif e["event"] in ("BUILDER_DONE", "CRITIC_RESULT", "SMOOTHER_DONE") and e.get("agent_id") in starts:
+        elif e["event"] in STOPS and e.get("agent_id") in starts:
             minutes += (epoch(e["ts"]) - starts.pop(e["agent_id"])) / 60
     whole = [e for e in ev if state["pieces"].get(e.get("piece"), {}).get("kind") == "whole"]
     gate_losses = sum(e["event"] in ("CRITIC_LOSS", "CONFIRMATION_LOSS") for e in whole)
     gate_verdicts = sum(e["event"] in ("CRITIC_LOSS", "CONFIRMATION_LOSS", "CRITIC_WIN", "CONFIRMATION_WIN") for e in whole)
     children = [p for p in state["pieces"].values() if p["parent"] and p["state"] in DONE]
     tokens = sum(e.get("tokens") or 0 for e in ev)
+    turns = {}  # the most one agent of each role used, against its maxTurns; a capped agent never stops (S3)
+    for e in ev:
+        if e["event"] in STOPS and e.get("turns"):
+            turns[e["agent_type"]] = max(turns.get(e["agent_type"], 0), e["turns"])
     lead_tokens = max((e.get("lead_tokens") or 0 for e in ev if e["event"] == "AGENT_REGISTERED"), default=0)
     swaps = [x for x in escalations if x["rung"] == 2]  # the fresh-builder rung
 
@@ -1701,6 +1710,7 @@ def metrics(events, state):
         "controller_operations_per_confirmed_piece": per(sum(e["kind"] == "fact" for e in ev)),
         "worker_minutes_per_confirmed_piece": per(round(minutes, 1)),
         "tokens_per_confirmed_piece": per(tokens) if tokens else "n/a",
+        "most_turns_by_role": turns, "agents_that_never_stopped": len(starts),
         "spend": {k: f"{run['spent'][k]}/{acc[k]}" for k in ("local", "escalation", "gate")},
         "unused_reserve": {k: acc[k] - run["spent"][k] for k in ("escalation", "gate")},
         "ended": run["ended"], "ceiling_hit": run["ended"] == "ceiling",

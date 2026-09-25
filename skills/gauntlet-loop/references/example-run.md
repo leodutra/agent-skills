@@ -1,6 +1,6 @@
 # A run, turn by turn
 
-One coding run from paste to pull request, told through the controller's own output. Every status line below is what `gauntletctl status` printed; the event stream behind it is kept with the skill's tests (220 events), and a test folds it through the machine and compares these lines, so this page cannot drift from the code. Read it on a first run or an empty workbench only.
+One coding run from paste to pull request, told through the controller's own output. Every status line below is what `gauntletctl status` printed; the event stream behind it is kept with the skill's tests (222 events), and a test folds it through the machine and compares these lines, so this page cannot drift from the code. Read it on a first run or an empty workbench only.
 
 ## What the user pasted
 
@@ -122,7 +122,7 @@ $ gauntletctl swap parse
 dispatch a reader-alt with that path and nothing else
 ```
 
-The same files with the labels inverted, a different model: it picks ours. `CONFIRMATION_WIN`; `parse` is `CONFIRMED`. `format` round 2 loses on "B returns undefined for `1.5.5h` instead of throwing"; routed, and `7c02` answers with its one alternative line, `NOT REPRODUCED: node run.mjs b format 1.5.5h -> throws invalid duration: "1.5.5h"`. The lead runs it: `gauntletctl rerun format "node run.mjs b format 1.5.5h"` prints `exit 1  seq 66`, and the output agrees with the builder's, so `gauntletctl event NOT_REPRODUCED_ACCEPTED piece=format rerun=66`. The verdict is discarded (`evaluation`), no gap is routed, and `pair format` spawns a fresh critic.
+The same files with the labels inverted, a different model: it picks ours. `CONFIRMATION_WIN`; `parse` is `CONFIRMED`. `format` round 2 loses on "B returns undefined for `1.5.5h` instead of throwing"; routed, and `7c02` answers with its one alternative line, `NOT REPRODUCED: node run.mjs b format 1.5.5h -> throws invalid duration: "1.5.5h"`. The lead runs it: `gauntletctl rerun format "node run.mjs b format 1.5.5h"` prints `exit 1  seq 68`, and the output agrees with the builder's, so `gauntletctl event NOT_REPRODUCED_ACCEPTED piece=format rerun=68`. The verdict is discarded (`evaluation`), no gap is routed, and `pair format` spawns a fresh critic.
 
 ```text
 confirmed 1/3 pieces, whole: no | parked: 0 | blocked: 0 | spent: 14/150 inv, 2.5/24 h | tier: 2 | policy v1
@@ -253,9 +253,11 @@ share of escalations from spend                  0.0
 invocations per confirmed piece                  8.6
 lead turns per confirmed piece                   2.6
 lead tokens per confirmed piece                  75600.0
-controller operations per confirmed piece        40.8
-worker minutes per confirmed piece               58.8
-tokens per confirmed piece                       214000.0
+controller operations per confirmed piece        41.2
+worker minutes per confirmed piece               60.0
+tokens per confirmed piece                       221600.0
+most turns by role                               {'author': 21, 'editor': 12, 'reader': 9, 'reader-alt': 9, 'editor-fast': 10}
+agents that never stopped                        0
 spend                                            {'local': '38/90', 'escalation': '0/37', 'gate': '5/23'}
 unused reserve                                   {'escalation': 37, 'gate': 18}
 ended                                            win

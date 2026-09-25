@@ -126,7 +126,7 @@ class Readers(AttestRepo):
         lines += [{"message": {"id": "m3", "role": "assistant", "usage": {**usage, "output_tokens": n}}} for n in (7, 400, 1218)]
         path.write_text("".join(json.dumps(line) + "\n" for line in lines))
         # F27: a subagent's message streams over several lines and its usage grows; the last line holds the final count
-        self.assertEqual(ctl.transcript_tokens(str(path)), 125 + 135 + (105 + 1218))
+        self.assertEqual(ctl.transcript_usage(str(path))["tokens"], 125 + 135 + (105 + 1218))
 
     def test_a_confirmation_attested_from_reader_is_rejected(self):  # AC-17.7, FR-17.13
         self.green_pair()
@@ -221,6 +221,35 @@ class TierOne(AttestRepo):
         self.assertEqual((code, len(self.events())), (3, before))
         self.stop("r1", "reader", self.verdict("valid", self.label("ours")))
         self.assertEqual(self.names()[-1], "CRITIC_WIN")
+
+
+class Usage(AttestRepo):
+    """What each agent spent, recorded when it stops, so a run says how close a role came to its maxTurns."""
+
+    def transcript(self, name, turns):
+        path = pathlib.Path(self.base, f"{name}.jsonl")
+        path.write_text("".join(json.dumps({"message": {"id": f"m{i}", "role": "assistant", "usage": {"input_tokens": 10, "output_tokens": 5}}}) + "\n"
+                                for i in range(turns)))
+        return str(path)
+
+    def stopped(self, agent_id, agent_type, turns, message=""):
+        self.start(agent_id, agent_type)
+        self.hook({"hook_event_name": "SubagentStop", "agent_id": agent_id, "agent_type": agent_type,
+                   "last_assistant_message": message, "agent_transcript_path": self.transcript(agent_id, turns)})
+
+    def test_an_author_is_recorded_when_it_stops(self):  # F37: units and units-2 recorded no author, so metrics left out its spend
+        self.stopped("w1", "author", 27)
+        done = self.events()[-1]
+        self.assertEqual((done["event"], done["agent_type"], done["tokens"], done["turns"]), ("AUTHOR_DONE", "author", 405, 27))
+        self.assertEqual(self.piece["round"], 0)  # an author moves no piece
+
+    def test_metrics_name_the_most_turns_per_role_and_the_agents_that_never_stopped(self):  # maxTurns review, 2026-09-24
+        self.stopped("w1", "author", 27)
+        self.stopped("b1", "editor", 15, ".gauntlet/wt/parse")
+        self.assertEqual(self.events()[-1]["turns"], 15)
+        self.start("r1", "reader")  # an agent at its maxTurns fires no stop hook (S3), nor does one cut off
+        m = ctl.metrics(ctl.read_events(), ctl.load())
+        self.assertEqual((m["most_turns_by_role"], m["agents_that_never_stopped"]), ({"author": 27, "editor": 15}, 1))
 
 
 class Editors(AttestRepo):

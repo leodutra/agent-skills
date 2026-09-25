@@ -20,9 +20,19 @@ units-2 ended 2026-09-24 on a win, 12 of 60 invocations and 0.8 of 4 hours (unit
 
 An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
 
+## 2026-09-24, after units-2
+
+| Item | Result |
+| --- | --- |
+| E5a, effort pinned (A59) | `editor`, `reader`, `reader-alt` at `xhigh`; `editor-fast`, `author` at `high`. The docs (2.1.280) say a definition's `effort` overrides the session's, and that Opus 5.5 defaults to `medium`. Removal condition in README D36. Test: `test_install.py` |
+| `maxTurns` review (A60) | Most turns one agent used, four runs: editor 15 of 300, reader 14 of 40, reader-alt 11 of 40, author 27 of 80, editor-fast 15 of 80. None near a cap; caps kept. `metrics` now reports it per run |
+| F37 (A60) | An author's stop recorded nothing; units and units-2 left every author's tokens and minutes out of `metrics`. Now `AUTHOR_DONE`. Test: `test_attest.py` |
+| F38 (A61) | `pair` deleted a README from a side of more than one file even when the README was the work. Test: `test_pair.py` |
+| Plan 20.3 | `run.sh --skill-only --only writing-basic`: pass, $0.06, claude-sonnet-5 |
+
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 165 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A58 record the changes to the spec.
+Claude Code 2.1.280 installed. 169 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A61 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |

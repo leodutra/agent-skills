@@ -41,7 +41,7 @@ class Run:
     def built(self, pid, agent, minutes=14, returned=None, note=None):
         self.emit("AGENT_REGISTERED", source="attest", agent_id=agent, agent_type="editor")
         self.emit("BUILDER_DONE", source="attest", minutes=minutes, piece=pid, agent_id=agent, agent_type="editor",
-                  artifact=None if returned else f".gauntlet/wt/{pid}", returned=returned, note=note, tokens=41_000)
+                  artifact=None if returned else f".gauntlet/wt/{pid}", returned=returned, note=note, tokens=41_000, turns=12)
 
     def floors(self, pid, failed=None):
         rnd = self.tx.state["pieces"][pid]["round"]
@@ -63,7 +63,7 @@ class Run:
         n = 2 if order == "swapped" else 1
         self.emit("CRITIC_RESULT", source="attest", minutes=6, piece=pid, attempt_id=f"{pair}#{tries}", agent_id=agent,
                   agent_type=agent_type, model=self.tx.state["readers"][agent_type], valid=valid, reason=reason, winner=winner,
-                  gap=gap, shape=shape, artifact=f".gauntlet/verdicts/{pid}-r{rnd}-{n}{suffix}.md", tokens=18_000)
+                  gap=gap, shape=shape, artifact=f".gauntlet/verdicts/{pid}-r{rnd}-{n}{suffix}.md", tokens=18_000, turns=9)
 
     def win(self, pid):
         self.verdict(pid, "first", "ours")
@@ -96,6 +96,7 @@ def main():
                               ("hostile", "node heldout/hostile.mjs", True), ("bench", "node bench/parse.mjs --max-ms 500", None),
                               ("no-deps", "node bench/no-deps.mjs", True)):
         r.emit("FLOOR_ADDED", source="floor", floor=fid, cmd=cmd, derived=derived)
+    r.emit("AUTHOR_DONE", source="attest", minutes=0, agent_id="au01", agent_type="author", tokens=30_000, turns=21)
     r.open("parse", referent="reference/ms/parse")
     r.open("format", referent="reference/ms/format")
     r.open("locale", referent="reference/ms/format", mode="champion-challenger")
@@ -114,6 +115,7 @@ def main():
     r.emit("AGENT_REGISTERED", source="attest", agent_id="au02", agent_type="author", cost=1)
     r.emit("FLOOR_ADDED", source="floor", floor="heldout-whole-units", cmd="node --test heldout/whole-units.test.mjs", derived=True,
            for_piece="format", artifact="heldout/whole-units.test.mjs")
+    r.emit("AUTHOR_DONE", source="attest", minutes=0, agent_id="au02", agent_type="author", tokens=8_000, turns=6)
     r.judge("GAP_ROUTED", piece="format", gap="prints fractional units (1.5h) where the rest of the output is whole-unit", **{"class": "artifact"})
     r.judge("BLOCKER_CLEARED", piece="locale", note="full-icu installed in the lead's environment")
     r.turn("3 a loss, a finding, a floor")
@@ -179,7 +181,7 @@ def main():
     # Turn 9: the wave, then the gate: lost once on coherence, and a scope failure filed beside it.
     r.judge("SHARED_EDGE_RECORDED", pieces="format-short,format-long")
     r.emit("AGENT_REGISTERED", source="attest", agent_id="s001", agent_type="editor-fast", cost=1)
-    r.emit("SMOOTHER_DONE", source="attest", minutes=7, agent_id="s001", agent_type="editor-fast", note="wave-1", tokens=22_000)
+    r.emit("SMOOTHER_DONE", source="attest", minutes=7, agent_id="s001", agent_type="editor-fast", note="wave-1", tokens=22_000, turns=10)
     for pid in ("parse", "format-short", "format-long", "locale"):
         r.floors(pid)
         r.emit("WAVE_COMPLETE", source="wave", piece=pid, artifact="3f9c2ab")
@@ -198,7 +200,7 @@ def main():
     r.floors("coherence")
     r.emit("WAVE_COMPLETE", source="wave", piece="coherence", artifact="a81d07e")
     r.emit("AGENT_REGISTERED", source="attest", agent_id="s002", agent_type="editor-fast", cost=1)
-    r.emit("SMOOTHER_DONE", source="attest", minutes=5, piece="whole", agent_id="s002", agent_type="editor-fast", note="whole", tokens=19_000)
+    r.emit("SMOOTHER_DONE", source="attest", minutes=5, piece="whole", agent_id="s002", agent_type="editor-fast", note="whole", tokens=19_000, turns=8)
     r.floors("whole")
     r.win("whole")  # RUN_ENDED win
     r.turn("10 the whole wins")

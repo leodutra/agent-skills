@@ -3,6 +3,7 @@ name: reader
 description: Opens two artifacts under a stated bar and files one verdict.
 tools: Read, Glob, Grep, Bash
 model: fable
+effort: xhigh
 maxTurns: 40
 omitClaudeMd: true
 ---

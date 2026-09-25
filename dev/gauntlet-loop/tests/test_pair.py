@@ -176,6 +176,19 @@ class Pair(PairRepo):
             for top in ("reference", "heldout", "bench"):
                 self.assertFalse(os.path.exists(os.path.join(self.pair_dir, side, top)), f"{side}/{top}")
 
+    def test_a_document_goal_keeps_the_document_it_judges(self):  # F38, found preparing the writing run, 2026-09-24
+        # A README is an identity file in a code pair and the work itself when the goal is the README: with the reference
+        # passed as its folder, both sides lost the one file the critic was there to compare.
+        ref = os.path.join(self.root, "reference/ms")
+        pathlib.Path(ref, "Readme.md").write_text("Convert time formats.\n")
+        pathlib.Path(ref, "LICENSE").write_text("MIT (c) 2020 Someone\n")
+        self.write(".gauntlet/wt/parse/README.md", "Parse and format durations.\n")
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse", "--ours", ".gauntlet/wt/parse/README.md")
+        names = [os.path.basename(f) for f in tree(self.pair_dir)]
+        self.assertEqual(sorted(n.lower() for n in names if n.lower() == "readme.md"), ["readme.md", "readme.md"])
+        self.assertNotIn("LICENSE", names)
+
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:
             tx.emit("FLOOR_FAIL", "fact", "test", piece="parse", **{"class": "artifact"})

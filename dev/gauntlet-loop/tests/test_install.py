@@ -93,6 +93,14 @@ class Install(unittest.TestCase):
         facts = json.loads(subprocess.run(ctl + ["detect"], capture_output=True, text=True, env=env).stdout)
         self.assertEqual((facts["tier"], facts["checked_in"]), (2, True))
 
+    def test_the_roles_that_buy_quality_pin_their_effort(self):  # E5, A59
+        # A definition's effort overrides the session's, so a forgotten `/effort` no longer shortchanges a builder or a
+        # critic (Opus 5.5 defaults to medium). The pins are for today's models: README D36 says when to remove them.
+        import re
+        pinned = {p.stem: re.search(r"^effort: (\S+)$", p.read_text(), re.M) for p in pathlib.Path(SKILL, "agents").glob("*.md")}
+        self.assertEqual({name: m and m[1] for name, m in pinned.items()},
+                         {"editor": "xhigh", "reader": "xhigh", "reader-alt": "xhigh", "editor-fast": "high", "author": "high"})
+
     def test_the_two_reader_definitions_differ_in_name_and_model_only(self):
         a = pathlib.Path(SKILL, "agents", "reader.md").read_text().splitlines()
         b = pathlib.Path(SKILL, "agents", "reader-alt.md").read_text().splitlines()
