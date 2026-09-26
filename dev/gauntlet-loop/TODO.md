@@ -173,6 +173,16 @@ The lead is about 85 to 89 percent of every token processed, and the runs are le
 - [ ] **A whole gate over per-piece references is not blind by structure.** Two named libraries against one package: a critic can tell which side is ours without naming the bar. Candidates: the lead assembles the reference whole as one package, as units-docs did for its README; or the report states it. Needs a decision.
 - [ ] **A replacement agent is not billed.** A builder or critic dispatched to replace a stalled one registers with no new attempt, so the envelope undercounts (units-3: 12 agents, 10 counted). Bill an `editor` or reader registration that finds no open attempt of its own?
 
+- [ ] **P1. The gauntlet against a plain `/goal`, same job.** `~/Work/units-plain` is units-2's skeleton (`602ed51`) with no skill installed. The user runs the prompt below the way units-2 ran: `/effort xhigh`, auto mode, `/sandbox` strict. Then grade its `src/` with units-2's held-out set and hostile script, which that session never sees, and total its tokens the way `acceptance.md` does for the gauntlet runs. units-2's own result scores 40/40 held-out and 129/129 hostile for each part (2026-09-26). The prompt:
+
+    ```text
+    /goal units parses and formats byte sizes ("1.5 GB") and durations ("2h 30m") at least as well as visionmedia/bytes.js 3.1.2 and vercel/ms 2.1.3, survives hostile input without crashing, has no runtime dependency, and its own tests pass.
+
+    Build units, the JavaScript package in this repository: parseBytes, formatBytes, parseDuration and formatDuration, exported from src/index.js. Study bytes.js 3.1.2 and ms 2.1.3 and do better than them. Write thorough tests. Never add a runtime dependency.
+    ```
+
+    Grading: `G=~/Work/units-2/heldout; GAUNTLET_OURS=~/Work/units-plain node --test $G/bytes.test.js $G/duration.test.js; for p in bytes duration; do node $G/hostile.mjs $p ~/Work/units-plain; done`. Optional: one blind critic pair, the plain result against units-2's.
+
 ## Left to the operator on purpose
 
 - Push `main`.
