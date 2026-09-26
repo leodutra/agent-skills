@@ -6,11 +6,11 @@ description: >
   with thiserror, capability traits, async/cancellation discipline, and invariant testing.
   Use this skill whenever writing, reviewing, refactoring, or designing Rust that models a
   domain — HTTP/RPC handlers, database or queue boundaries, state machines, value objects,
-  error types, service layers. Trigger on mentions of: parse don't validate, newtype,
+  error types. Trigger on mentions of: parse don't validate, newtype,
   illegal states, typestate, thiserror, anyhow, TryFrom, domain model, validation, Result
   or Option design, trait/DI decisions, tokio tasks, cancellation safety, spawn_blocking,
   proptest. Also trigger when Rust code under review uses raw String/i64/Uuid in signatures,
-  stringly typed errors, `_ => {}` on its own enums, or unwrap()/expect() outside tests.
+  stringly typed errors, `_ =>` arms on its own enums, or unwrap()/expect() outside tests.
   For GPU/render/performance-critical Rust use rust-wgpu-functional; for Bevy ECS layout
   use rust-bevy-architecture.
 ---
@@ -49,6 +49,10 @@ Rules:
 - Inbound conversions SHOULD use `TryFrom` / `TryInto`.
 - Outbound conversions SHOULD use `From` / `Into`.
 - Code MUST NOT re-check an invariant after successful parsing.
+- Domain types MUST NOT derive `Deserialize` structurally: a derived `Deserialize` builds the
+  value without calling its constructor, so it skips the parse. Deserialize a record/DTO and
+  convert it with `TryFrom`, or route the derive through the constructor with
+  `#[serde(try_from = "…")]`.
 
 ```rust
 #[derive(Deserialize)]
@@ -79,10 +83,18 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 ### Core rules
 
 - Illegal states MUST be unrepresentable.
-- Newtypes SHOULD be used for domain concepts, invariants, and argument-order safety.
-- Local implementation details MUST NOT be wrapped without a real invariant.
-- Typestate SHOULD be used when the workflow has 3+ states, invalid transitions are costly, and the type crosses module boundaries.
-- Otherwise, code SHOULD use an enum.
+- A value SHOULD get a newtype when it carries an invariant, or when it could be swapped with
+  another value of the same primitive (`StoreName` / `StoreAddress`). A value with neither
+  SHOULD NOT be wrapped.
+- Fields of a type with an invariant MUST be private; a fallible constructor is the only way in.
+- Enum variant fields are always public. A variant whose fields share an invariant
+  (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
+- Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
+  `-1`) MUST NOT stand for absence. When `None` would mean two things, use an enum.
+- States that exclude each other MUST be one enum, not several `bool` flags or `Option`s.
+- Typestate SHOULD be used only when the state is known statically at every call site and
+  invalid transitions are costly. State read from storage or the wire MUST be an enum, since
+  its value is known only at runtime.
 - Enums + structs SHOULD be preferred over class hierarchies.
 - State transitions SHOULD default to immutable values.
 
@@ -116,8 +128,30 @@ impl Email {
 enum Shipment {
     Pending { order_id: OrderId },
     Shipped { order_id: OrderId, tracking: TrackingNumber },
-    Delivered { order_id: OrderId, tracking: TrackingNumber, delivered_at: DateTime },
+    Delivered { order_id: OrderId, tracking: TrackingNumber, delivered_at: DateTime<Utc> },
     Cancelled { order_id: OrderId, reason: CancellationReason },
+}
+
+// A cross-field invariant lives in a private-field struct, never in variant fields,
+// or `Price::Cut { sale: high, regular: low }` could be built by a struct literal.
+pub enum Price {
+    Regular(Money),
+    Cut(PriceCut),
+}
+
+pub struct PriceCut {
+    sale: Money,
+    regular: Money,
+}
+
+impl PriceCut {
+    pub fn new(sale: Money, regular: Money) -> Result<Self, PriceError> {
+        if sale < regular {
+            Ok(Self { sale, regular })
+        } else {
+            Err(PriceError::NotACut { sale, regular })
+        }
+    }
 }
 ```
 
@@ -137,8 +171,9 @@ impl Order {
             Some(next) => self.status.transition_to(next)?,
             None => self.status,
         };
+        let shipping = update.shipping.unwrap_or(self.shipping);
 
-        Ok(Self { status, ..self })
+        Ok(Self { status, shipping, ..self })
     }
 }
 ```
@@ -160,21 +195,23 @@ pub enum OrderError {
     EmptyOrder,
 }
 
+// The adapter translates its infrastructure error at the boundary and keeps it as the cause.
 #[derive(Debug, thiserror::Error)]
-pub enum AppError {
-    #[error(transparent)]
-    Order(#[from] OrderError),
-    #[error(transparent)]
-    Validation(#[from] ValidationError),
-    #[error("database query failed")]
-    Database(#[from] sqlx::Error),
+pub enum LoadError {
+    #[error("order {id} not found")]
+    NotFound { id: OrderId },
+    #[error("order store unavailable")]
+    StoreUnavailable(#[source] std::io::Error),
 }
 ```
 
 Rules:
 
 - Error variants MUST carry typed context, not ad-hoc strings.
+- Library code MUST return typed errors.
 - Errors SHOULD compose through explicit `From` impls so `?` stays honest.
+- An infrastructure error MUST NOT cross a domain or capability boundary raw: translate it into
+  the caller's error type there, and keep the original as `#[source]` so the chain survives.
 - Libraries SHOULD use `thiserror`; `anyhow` / `eyre` SHOULD be limited to process boundaries.
 - Application code using `anyhow` SHOULD add `.context(...)` when propagating fallible operations.
 - Code MUST NOT use `Err("something went wrong".into())`.
@@ -194,10 +231,13 @@ Rules:
 
 - User input MUST NOT be validated with assertions.
 - Exhaustive `match` SHOULD be preferred over `unreachable!()`.
-- If an invariant can live in the type system, it MUST NOT be enforced at runtime.
+- An invariant that can live in a type MUST be checked once, in its constructor, and never
+  re-checked downstream.
 
 ```rust
 impl Order {
+    // Non-empty items are held by the type that built this Order; only the rule
+    // that depends on two values is checked here.
     pub fn confirm(self) -> Result<ConfirmedOrder, OrderError> {
         if self.total > self.credit_limit {
             return Err(OrderError::CreditLimitExceeded {
@@ -205,8 +245,6 @@ impl Order {
                 limit: self.credit_limit,
             });
         }
-
-        debug_assert!(!self.items.is_empty(), "Order invariant violated: empty items");
         Ok(ConfirmedOrder { /* ... */ })
     }
 }
@@ -216,44 +254,30 @@ impl Order {
 
 ## Behavior Rules
 
-Functions, APIs, and state transitions follow these design principles.
-
-- Code SHOULD tell, not ask.
 - Functions SHOULD be total. Code MUST NOT panic on valid input.
-- Code MUST match exhaustively on its own enums.
+- Code MUST match exhaustively on its own enums: no wildcard `_ =>` arm, so adding a variant
+  breaks the build everywhere it matters.
 - `Result` / `Option` combinators SHOULD be used when they clarify the flow; pipelines SHOULD NOT be forced where straight-line code is clearer.
-
-### Function design
-
-- Functions SHOULD keep one level of abstraction.
-- Functions SHOULD be small and single-purpose.
-- Return values SHOULD be preferred over incidental side effects.
 - Functions SHOULD borrow inputs when ownership is not required.
 - Constructors SHOULD accept owned-friendly inputs such as `impl Into<String>` and return owned values.
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
-- Comments SHOULD explain why, not what, and SHOULD appear only when necessary.
+- Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
+  domain logic. That is what keeps domain tests deterministic.
+- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
 
 ### Mutation discipline
 
 - APIs SHOULD default to immutable interfaces.
 - `&mut self` SHOULD be used when it is the natural model, improves performance, or avoids unnecessary allocation.
-- Interior mutability (`Cell`, `RefCell`, `Mutex`) in pure, side-effect-free domain logic MUST be justified by multithreading or structural dependency needs.
+- Domain types MUST NOT use interior mutability (`Cell`, `RefCell`, `Mutex`).
 
 ### Allocation discipline
 
 - Owned types SHOULD be the default.
 - Borrowed types SHOULD be used for transient parsing and short-lived views.
 - Struct lifetimes SHOULD NOT be introduced unless profiling shows a measurable need.
-- Lifetimes SHOULD be elided when the compiler can infer them.
-- Borrows SHOULD be scoped narrowly to release them before unrelated work.
 - Code SHOULD prefer borrowing over cloning when ownership does not need to change.
-
-### Naming
-
-- Types MUST be named by meaning, not structure.
-- Functions MUST be named by what they do, not how they do it.
-- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
-- Domain vocabulary SHOULD be used.
+- `clone()` SHOULD NOT appear inside per-item loops or other hot paths without a stated reason.
 
 ---
 
@@ -262,7 +286,16 @@ Functions, APIs, and state transitions follow these design principles.
 - Traits SHOULD define capabilities: `LoadOrders`, `ChargePayment`, `PublishEvent`.
 - Callers SHOULD depend on capabilities; adapters SHOULD implement them at the edges.
 - A trait SHOULD NOT be introduced for a single implementation unless a real second implementation or test double is needed.
-- Async trait methods MAY be used, but they are NOT dyn-compatible; prefer generics unless trait objects are required.
+- Traits with `async fn` are not dyn-compatible, and their futures are not promised `Send`.
+  When a trait's futures are spawned onto a multithreaded runtime, the method MUST declare
+  `-> impl Future<Output = …> + Send`; implementors may still write `async fn`.
+- Generics or a closed `enum` over the implementations SHOULD be preferred to `dyn`.
+
+```rust
+pub trait LoadOrders {
+    fn load(&self, id: &OrderId) -> impl Future<Output = Result<Order, LoadError>> + Send;
+}
+```
 
 ### When to introduce a trait
 
@@ -299,7 +332,6 @@ Functions, APIs, and state transitions follow these design principles.
 
 - `panic!`, `unwrap()`, and `expect()` MUST NOT appear in production paths.
 - They MAY be used in tests and unrecoverable bootstrap code in `main.rs` with a clear message.
-- Library code MUST return typed errors.
 
 ---
 
@@ -307,9 +339,15 @@ Functions, APIs, and state transitions follow these design principles.
 
 - Unit tests for pure domain logic SHOULD be the default: fast, deterministic, no mocks.
 - Integration tests SHOULD live in `tests/` and exercise the public API only.
-- Parse tests SHOULD cover accepted and rejected inputs.
-- Property tests SHOULD be used for value objects and parsers with clear invariants.
 - Cancellation tests SHOULD be added for async workflows with externally visible side effects.
+
+### Budget
+
+- Each constructor gets one accepted input and one rejected input, plus one rejected input per
+  distinct *reason* for rejection. More examples of a rule already pinned SHOULD NOT be added.
+- Where a law exists (round-trip, idempotence, a charset), a property test SHOULD replace the
+  examples.
+- State transitions SHOULD be tested for each forbidden transition the type cannot rule out.
 
 ```rust
 #[cfg(test)]
@@ -330,9 +368,9 @@ use proptest::prelude::*;
 
 proptest! {
     #[test]
-    fn money_from_cents_roundtrips(cents in 0i64..=i64::MAX) {
-        let money = Money::from_cents(cents);
-        prop_assert_eq!(money.to_cents(), cents);
+    fn money_cents_roundtrip(cents in 1i64..=i64::MAX) {
+        let money = Money::from_cents(cents).unwrap();
+        prop_assert_eq!(money.cents(), cents);
     }
 }
 ```
@@ -341,26 +379,37 @@ proptest! {
 
 - Private helpers SHOULD be tested through the public API.
 - Framework glue SHOULD NOT be tested unless custom logic is involved.
-- Tests SHOULD NOT target properties the compiler already guarantees.
-
-### Type invariant checklist
-
-- Constructor invariants MUST be covered.
-- Transition invariants MUST be covered.
-- Roundtrip invariants MUST be covered.
-- Time and concurrency invariants MUST be covered where relevant.
+- Tests SHOULD NOT target what the compiler already guarantees, nor derives, getters or `Display`.
 
 ---
 
-## Anti-Patterns to Reject
+## Enforce with Lints
 
-- Code MUST NOT use raw `String`, `i64`, or `Uuid` in meaningful signatures.
-- Code MUST NOT re-validate a parsed type.
-- Code MUST NOT use stringly typed errors.
-- Code MUST NOT use `_ => {}` on its own enums.
-- Code SHOULD NOT introduce traits with one implementation and no test double.
-- Public `&mut self` SHOULD NOT be the default where returned values model the domain better.
-- Code MUST NOT use blind `clone()` in hot paths.
+Rules a lint can hold SHOULD be held by the lint, not by review.
+
+```toml
+# Cargo.toml
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+panic = "deny"
+wildcard_enum_match_arm = "deny"             # `_ =>` over several variants
+match_wildcard_for_single_variants = "deny"  # `_ =>` over one; the lint above skips it
+```
+
+```toml
+# clippy.toml
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+```
+
+The test allowances cover `#[cfg(test)]` code only. Each file under `tests/` is its own crate,
+so the denies apply there in full: integration tests SHOULD return `Result<(), Box<dyn Error>>`
+and use `?`.
 
 ---
 
@@ -368,31 +417,35 @@ proptest! {
 
 Before approving any change:
 
-- [ ] Any raw `String`, `i64`, or `Uuid` in meaningful signatures? Wrap in a newtype.
+- [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype.
+- [ ] Any domain type deriving `Deserialize` structurally? Parse through a record or `#[serde(try_from)]`.
+- [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor.
+- [ ] Any sentinel, `bool` flag, or pair of `Option`s standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
-- [ ] Any `_ => {}` on your own enum? Match exhaustively.
+- [ ] Any `_ =>` arm on your own enum? Match exhaustively.
 - [ ] Any new dependency where the standard library would be enough? Remove or justify it.
 - [ ] Any trait with a single implementor and no test double? Remove it.
+- [ ] Any spawned trait future without a `Send` bound? Declare it.
 - [ ] Any `clone()` in a hot path without justification? Restructure or document it.
 - [ ] Any owned parameter or clone where a borrow would work? Prefer borrowing.
 - [ ] Any `unsafe` block without minimal scope and documented invariants? Tighten or document it.
 - [ ] Any `unwrap()` / `expect()` outside tests or bootstrap? Replace it.
 - [ ] Any `anyhow` / `eyre` in reusable library code? Use a typed error.
+- [ ] Any infrastructure error crossing a boundary raw, or a cause dropped? Translate it, keep `#[source]`.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
 - [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
-- [ ] Tests cover happy path, error path, and parsing? Add what is missing.
+- [ ] Each constructor tested once accepted and once per rejection reason? Add what is missing, and nothing beyond it.
 
 ---
 
 ## Commands
 
 ```bash
-cargo check
-cargo build
-cargo test
-cargo clippy -- -D warnings
+cargo check                                  # first: fastest compile feedback
 cargo fmt --check
+cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
+cargo test
 ```
 
-`cargo check` SHOULD run first to validate compilation quickly before heavier commands. This is usually 2–10x faster than a full build on large projects. `cargo clippy` and `cargo test` MUST run before considering any task complete.
+All four MUST pass before a task is considered complete.
