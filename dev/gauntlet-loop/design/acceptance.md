@@ -20,6 +20,24 @@ units-2 ended 2026-09-24 on a win, 12 of 60 invocations and 0.8 of 4 hours (unit
 
 An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
 
+## 2026-09-26, the same job as a plain `/goal`
+
+`~/Work/units-plain`: units-2's skeleton, no skill, the same goal, bars and constraints as one plain `/goal`, `/effort xhigh`, auto mode, sandbox strict. Graded with units-2's held-out set and hostile script, which that session never saw.
+
+| | units-2 (gauntlet) | units-plain |
+| --- | --- | --- |
+| model calls | 194 | 28 |
+| new input + cache writes | 622 k | 145 k |
+| output | 82 k | 97 k |
+| cache reads | 10.8 M | 3.2 M |
+| agents | 12 | 0 |
+| minutes | 48 | 17 |
+| hostile inputs survived | 129/129 each part | 129/129 each part |
+| held-out, as written | 40/40 | 21/40 |
+| held-out, a returned `null` counted as the rejection a throw asserts | 40/40 | 38/40 |
+
+17 of the 19 failures are contract: the held-out set, written by the gauntlet's lead, expects bad input to throw; the plain result returns `null` for every one, which the prompt allowed. The 2 others are real: `formatDuration(1.6)` gives `1.6ms` and `59999.6` gives `59s 999.6ms` where rounding gives `2ms` and `1m`. On a small, well-specified library the plain run came within those two cases at about a third of the time and cache reads and a quarter of the new input. What the gauntlet added was a contract fixed before building and an independent judge; the plain session's claims against the references are its own. Untested: work a model cannot check against itself (taste, large systems, vague goals).
+
 ## 2026-09-26, units-3: the lead at `/effort high`
 
 units-2's prompt, bars and envelope, the skill at `20e1877`, builders and critics pinned at `xhigh`, the session at `high`, sandbox strict. Ended `win` at 10 of 60 invocations in 60 minutes, every piece and the whole in its first round; 218 required and 203 held-out tests green, the hostile script clean.
