@@ -390,55 +390,70 @@ by that tool, not by an agent's or a reviewer's reading. Review covers only what
 A tool is repeatable and cannot be talked out of a verdict; a reading is neither.
 
 ```toml
-# Cargo.toml
+# Cargo.toml — each lint names what it catches, then the rule it holds and where that rule lives above.
 [lints.rust]
+# Any `unsafe` at all. Philosophy: unsafe minimized; a crate that truly needs it lifts this with a stated reason.
 unsafe_code = "forbid"
 
 [lints.clippy]
-# Panic policy
+# `.unwrap()` outside tests. Panic policy: no unwrap in production paths; Behavior Rules: functions are total.
 unwrap_used = "deny"
+# `.expect()` outside tests. Panic policy: no expect in production paths.
 expect_used = "deny"
+# `panic!` outside tests. Panic policy: no panic in production paths; Behavior Rules: no panic on valid input.
 panic = "deny"
+# `todo!()`, a placeholder that panics. Behavior Rules: functions are total.
 todo = "deny"
+# `unimplemented!()`, a placeholder that panics. Behavior Rules: functions are total.
 unimplemented = "deny"
-unreachable = "deny"                         # prefer an exhaustive match
-# Exhaustive matching on your own enums
-wildcard_enum_match_arm = "deny"             # `_ =>` over several variants
-match_wildcard_for_single_variants = "deny"  # `_ =>` over one; the lint above skips it
-# Async discipline
-await_holding_lock = "deny"                  # a MutexGuard across .await
+# `unreachable!()`. Invariants and Assertions: prefer an exhaustive match, which the compiler checks.
+unreachable = "deny"
+# `_ =>` over several variants of your own enum. Behavior Rules: match exhaustively, so a new variant breaks the build.
+wildcard_enum_match_arm = "deny"
+# `_ =>` standing for a single variant, which the lint above skips. Same rule.
+match_wildcard_for_single_variants = "deny"
+# A std `MutexGuard` held across `.await`. Async, task boundaries: never hold one across an await.
+await_holding_lock = "deny"
+# A `RefCell` borrow held across `.await`. Async, task boundaries: the same hazard, and Mutation discipline.
 await_holding_refcell_ref = "deny"
-future_not_send = "deny"                     # a future that cannot be spawned multithreaded
-# Ownership and allocation
-needless_pass_by_value = "deny"              # owned where a borrow would do
+# A future that is not `Send`. Dependency Injection and task boundaries: a future spawned multithreaded must be Send.
+future_not_send = "deny"
+# A parameter taken by value but never consumed. Behavior Rules: borrow inputs when ownership is not required.
+needless_pass_by_value = "deny"
+# A clone whose original is never used again. Allocation discipline: borrow rather than clone when ownership stays.
 redundant_clone = "deny"
-# Exclusive states as flags
+# A struct with more than three bools. Type-Driven Design: exclusive states are one enum, not bool flags.
 struct_excessive_bools = "deny"
+# A function with more than three bool parameters. Same rule, at the call site.
 fn_params_excessive_bools = "deny"
-# Project bans, configured in clippy.toml
+# The types clippy.toml bans. Error Modeling (no anyhow or eyre in libraries); Mutation discipline (no interior mutability).
 disallowed_types = "deny"
+# The functions clippy.toml bans. Behavior Rules: time and randomness are parameters in domain logic.
 disallowed_methods = "deny"
-# A silenced lint states why
-allow_attributes = "deny"                    # use #[expect(...)], which fails once the lint no longer fires
+# A bare `#[allow]`. Enforce with Tools: silence with `#[expect]`, which fails once the lint no longer fires.
+allow_attributes = "deny"
+# A silencing attribute with no `reason`. Enforce with Tools: a tool's verdict is never waved away without saying why.
 allow_attributes_without_reason = "deny"
 ```
 
 ```toml
 # clippy.toml, in each crate's root (a crate without one inherits the workspace's)
+# Panic policy: unwrap, expect and panic MAY appear in tests.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
 disallowed-types = [
-  # library and domain crates; a binary crate's own clippy.toml leaves these out
+  # Error Modeling: libraries return typed errors; anyhow and eyre stay at process boundaries.
+  # Library and domain crates only; a binary crate's own clippy.toml leaves these two out.
   { path = "anyhow::Error", reason = "library code returns typed errors", allow-invalid = true },
   { path = "eyre::Report", reason = "library code returns typed errors", allow-invalid = true },
-  # domain crates
+  # Mutation discipline: domain types hold no interior mutability. Domain crates only.
   { path = "std::cell::Cell", reason = "domain types hold no interior mutability" },
   { path = "std::cell::RefCell", reason = "domain types hold no interior mutability" },
   { path = "std::sync::Mutex", reason = "domain types hold no interior mutability" },
 ]
 disallowed-methods = [
-  # domain crates: time and randomness are parameters
+  # Behavior Rules: time and randomness are parameters, which keeps domain tests deterministic. Domain crates only.
   { path = "std::time::SystemTime::now", reason = "pass the time in" },
   { path = "std::time::Instant::now", reason = "pass the time in" },
   { path = "chrono::Utc::now", reason = "pass the time in", allow-invalid = true },
@@ -456,7 +471,8 @@ and use `?`.
 A lint that misfires is silenced where it misfires, with `#[expect(clippy::name, reason = "…")]`,
 never switched off for the crate.
 
-Generic role names are a grep, since clippy cannot see type names:
+Generic role names are a grep, since clippy cannot see type names. It holds Behavior Rules: no
+`Service`, `Manager`, `Helper`, `Utils` or `Misc` types.
 
 ```bash
 ! rg -n --type rust '\b(struct|enum|trait|type)\s+\w*(Service|Manager|Helper|Utils|Misc)\b' src/
