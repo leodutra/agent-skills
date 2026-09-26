@@ -263,7 +263,7 @@ impl Order {
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
 - Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
   domain logic. That is what keeps domain tests deterministic.
-- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
+- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced (checked by the grep under Enforce with Tools).
 
 ### Mutation discipline
 
@@ -383,9 +383,11 @@ proptest! {
 
 ---
 
-## Enforce with Lints
+## Enforce with Tools
 
-Rules a lint can hold SHOULD be held by the lint, not by review.
+A rule a deterministic tool can check (the compiler, clippy, rustfmt, a grep in CI) MUST be checked
+by that tool, not by an agent's or a reviewer's reading. Review covers only what no tool can decide.
+A tool is repeatable and cannot be talked out of a verdict; a reading is neither.
 
 ```toml
 # Cargo.toml
@@ -393,44 +395,95 @@ Rules a lint can hold SHOULD be held by the lint, not by review.
 unsafe_code = "forbid"
 
 [lints.clippy]
+# Panic policy
 unwrap_used = "deny"
 expect_used = "deny"
 panic = "deny"
+todo = "deny"
+unimplemented = "deny"
+unreachable = "deny"                         # prefer an exhaustive match
+# Exhaustive matching on your own enums
 wildcard_enum_match_arm = "deny"             # `_ =>` over several variants
 match_wildcard_for_single_variants = "deny"  # `_ =>` over one; the lint above skips it
+# Async discipline
+await_holding_lock = "deny"                  # a MutexGuard across .await
+await_holding_refcell_ref = "deny"
+future_not_send = "deny"                     # a future that cannot be spawned multithreaded
+# Ownership and allocation
+needless_pass_by_value = "deny"              # owned where a borrow would do
+redundant_clone = "deny"
+# Exclusive states as flags
+struct_excessive_bools = "deny"
+fn_params_excessive_bools = "deny"
+# Project bans, configured in clippy.toml
+disallowed_types = "deny"
+disallowed_methods = "deny"
+# A silenced lint states why
+allow_attributes = "deny"                    # use #[expect(...)], which fails once the lint no longer fires
+allow_attributes_without_reason = "deny"
 ```
 
 ```toml
-# clippy.toml
+# clippy.toml, in each crate's root (a crate without one inherits the workspace's)
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+disallowed-types = [
+  # library and domain crates; a binary crate's own clippy.toml leaves these out
+  { path = "anyhow::Error", reason = "library code returns typed errors", allow-invalid = true },
+  { path = "eyre::Report", reason = "library code returns typed errors", allow-invalid = true },
+  # domain crates
+  { path = "std::cell::Cell", reason = "domain types hold no interior mutability" },
+  { path = "std::cell::RefCell", reason = "domain types hold no interior mutability" },
+  { path = "std::sync::Mutex", reason = "domain types hold no interior mutability" },
+]
+disallowed-methods = [
+  # domain crates: time and randomness are parameters
+  { path = "std::time::SystemTime::now", reason = "pass the time in" },
+  { path = "std::time::Instant::now", reason = "pass the time in" },
+  { path = "chrono::Utc::now", reason = "pass the time in", allow-invalid = true },
+  { path = "rand::random", reason = "pass the source of randomness in", allow-invalid = true },
+  { path = "rand::thread_rng", reason = "pass the source of randomness in", allow-invalid = true },
+]
 ```
+
+`allow-invalid` keeps an entry quiet in a crate that does not depend on that library.
 
 The test allowances cover `#[cfg(test)]` code only. Each file under `tests/` is its own crate,
 so the denies apply there in full: integration tests SHOULD return `Result<(), Box<dyn Error>>`
 and use `?`.
 
+A lint that misfires is silenced where it misfires, with `#[expect(clippy::name, reason = "…")]`,
+never switched off for the crate.
+
+Generic role names are a grep, since clippy cannot see type names:
+
+```bash
+! rg -n --type rust '\b(struct|enum|trait|type)\s+\w*(Service|Manager|Helper|Utils|Misc)\b' src/
+```
+
 ---
 
 ## Code Review Checklist
 
-Before approving any change:
+The tools above hold these rules, and review never re-checks them: `_ =>` on your own enums;
+`unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests;
+`unsafe`; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
+a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
+library code; interior mutability in domain types; ambient time or randomness in domain code;
+generic role names; formatting.
+
+Review checks only what no tool can decide:
 
 - [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype.
 - [ ] Any domain type deriving `Deserialize` structurally? Parse through a record or `#[serde(try_from)]`.
 - [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor.
-- [ ] Any sentinel, `bool` flag, or pair of `Option`s standing for exclusive states? Use one enum.
+- [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
-- [ ] Any `_ =>` arm on your own enum? Match exhaustively.
+- [ ] Any `Err("…".into())` or other stringly typed error? Use a typed variant.
 - [ ] Any new dependency where the standard library would be enough? Remove or justify it.
 - [ ] Any trait with a single implementor and no test double? Remove it.
-- [ ] Any spawned trait future without a `Send` bound? Declare it.
-- [ ] Any `clone()` in a hot path without justification? Restructure or document it.
-- [ ] Any owned parameter or clone where a borrow would work? Prefer borrowing.
-- [ ] Any `unsafe` block without minimal scope and documented invariants? Tighten or document it.
-- [ ] Any `unwrap()` / `expect()` outside tests or bootstrap? Replace it.
-- [ ] Any `anyhow` / `eyre` in reusable library code? Use a typed error.
+- [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
 - [ ] Any infrastructure error crossing a boundary raw, or a cause dropped? Translate it, keep `#[source]`.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
@@ -446,6 +499,7 @@ cargo check                                  # first: fastest compile feedback
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
 cargo test
+! rg -n --type rust '\b(struct|enum|trait|type)\s+\w*(Service|Manager|Helper|Utils|Misc)\b' src/
 ```
 
-All four MUST pass before a task is considered complete.
+All five MUST pass before a task is considered complete, locally and in CI.
