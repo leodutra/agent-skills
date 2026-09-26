@@ -949,8 +949,12 @@ def anonymise(side, names, keep=None):
     a comment-only line that carries a copyright or the reference's name goes, in code only: in a document a heading, a
     bullet or an example's comment is content, and names are the lead's to strip (F40). Code is never touched: a critic who knows
     the code itself is the residual risk README D8 states."""
-    marks = re.compile("|".join([r"\bcopyright\b", r"\(c\)\s*\d{4}", r"@license\b", r"@author\b"] +
-                                [rf"\b{re.escape(n)}\b" for n in names]), re.I)
+    # A name with a slash or a dot (`owner/repo`, `bytes.js`) identifies wherever it stands; a bare name is often the
+    # subject's own word (`bytes` in a bytes library), so it counts only as the whole of a comment, a title (F47)
+    bare = "|".join(re.escape(n) for n in names if not re.search(r"[/.]", n)) or "(?!)"
+    marks = re.compile("|".join([r"\bcopyright\b", r"\(c\)\s*\d{4}", r"@license\b", r"@author\b",
+                                 rf"^\s*(//|#|\*|/\*\*?|<!--)\s*({bare})(\s+v?[\d.]+)?\s*(\*/|-->)?\s*$", rf"/({bare})\b"] +
+                                [re.escape(n) for n in names if re.search(r"[/.]", n)]), re.I)
     files = [os.path.join(folder, f) for folder, _, fs in os.walk(side) for f in fs]
     for path in files:
         name = os.path.basename(path)
@@ -1105,7 +1109,7 @@ def cmd_pair(args):
         known = set().union(*(reference_names(read_json(os.path.join(root(), f, "MANIFEST")).get("source") or f)
                               for f in tx.state["run"]["frozen"]))
         for label in sides:
-            for tree in (t for t in FLOOR_TREES if t != "tests/required"):  # the reference, held-out material (F29)
+            for tree in FLOOR_TREES:  # the reference, held-out material (F29), and the required tests, which name the loop (F46)
                 shutil.rmtree(os.path.join(live, label, tree), ignore_errors=True)
             anonymise(os.path.join(live, label), known, os.path.basename(ours).lower() if os.path.isfile(ours) else None)
         floors, adapter = gdir("floors", pid, f"r{rnd}"), os.path.join(prepared, "adapter")
@@ -1637,14 +1641,19 @@ def running_agents(ev):
             running.pop(e.get("agent_id"), None)
     out = []
     for agent_id, e in running.items():
+        last = epoch(e["ts"])
         try:
             with open(e.get("transcript") or "", "rb") as f:
                 f.seek(max(0, os.path.getsize(f.name) - 4096))
                 if HARNESS["interrupted"].encode() in f.read().splitlines()[-1]:
                     continue
-            last = os.path.getmtime(e["transcript"])
+            last = max(last, os.path.getmtime(e["transcript"]))
         except (OSError, IndexError):
-            last = epoch(e["ts"])
+            pass  # the sandbox hides transcripts from a sandboxed controller (F45): the hooks' heartbeat is the signal
+        try:
+            last = max(last, os.path.getmtime(gdir("private", "activity", re.sub(r"\W", "_", agent_id))))
+        except OSError:
+            pass
         out.append((e["agent_type"], agent_id, int((time.time() - last) / 60)))
     return out
 

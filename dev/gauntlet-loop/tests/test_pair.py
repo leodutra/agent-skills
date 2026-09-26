@@ -168,12 +168,13 @@ class Pair(PairRepo):
         self.write(".gauntlet/wt/parse/Readme.MD", "# bytesize\n")
         self.write(".gauntlet/wt/parse/reference/ms/MANIFEST", "{}\n")  # committed by the plan; excluded, its folder was not
         self.write(".gauntlet/wt/parse/heldout/x.mjs", "export default 1\n")
+        self.write(".gauntlet/wt/parse/tests/required/x.test.js", "import(process.env.GAUNTLET_OURS)\n")
         self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
         self.ok("pair", "parse")
         files = tree(self.pair_dir)
         self.assertFalse([f for f in files if os.path.basename(f).lower() in ("license.md", "readme.md")])
         for side in ("a", "b"):
-            for top in ("reference", "heldout", "bench"):
+            for top in ("reference", "heldout", "bench", "tests/required"):  # F46: units-3's named the loop's variable
                 self.assertFalse(os.path.exists(os.path.join(self.pair_dir, side, top)), f"{side}/{top}")
 
     def test_a_document_goal_keeps_the_document_it_judges(self):  # F38, found preparing the writing run, 2026-09-24
@@ -198,6 +199,15 @@ class Pair(PairRepo):
         self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
         self.ok("pair", "parse", "--ours", ".gauntlet/wt/parse/README.md")
         self.assertIn(doc, [v.decode() for k, v in tree(self.pair_dir).items() if k.lower().endswith("readme.md")])
+
+    def test_a_comment_that_uses_the_name_as_a_word_stays(self):  # F47: units-3's bytes docs lost every line saying "bytes"
+        self.write(".gauntlet/wt/parse/src/parse.js", "/*!\n * upstream v3.1.2\n * github.com/someone/upstream.js\n */\n"
+                   "// Parse an upstream-style size into a number\n/** Returns the size, rounded like upstream does. */\nexport default 1\n")
+        self.ok("pair", "parse", "--prepare", "--reference", "reference/ms", "--prompt", ".gauntlet/staging/prompt.md")
+        self.ok("pair", "parse")
+        code = next(v.decode() for k, v in tree(self.pair_dir).items() if k.endswith("parse.js"))
+        self.assertEqual(code, "/*!\n */\n// Parse an upstream-style size into a number\n"
+                               "/** Returns the size, rounded like upstream does. */\nexport default 1\n")
 
     def test_refuses_on_a_red_floor(self):  # FR-NN.4
         with ctl.transaction() as tx:

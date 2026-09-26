@@ -4,6 +4,7 @@ import io
 import json
 import os
 import pathlib
+import subprocess
 import sys
 import time
 
@@ -259,7 +260,9 @@ class Stalls(AttestRepo):
         # critic after 3 minutes. Quiet time is the signal: a working agent's transcript grows every few seconds.
         lead = pathlib.Path(self.base, "lead.jsonl")
         lead.write_text("")
+        clock, ctl.now = ctl.now, lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 30 * 60))
         self.hook({"hook_event_name": "SubagentStart", "agent_id": "b1", "agent_type": "editor", "transcript_path": str(lead)}, "--start")
+        ctl.now = clock  # registered half an hour ago; the transcript says how long it has been quiet
         mine = pathlib.Path(self.base, "lead", "subagents", "agent-b1.jsonl")  # where the harness writes it (2.1.281)
         self.assertEqual(self.events()[-1]["transcript"], str(mine))
         mine.parent.mkdir(parents=True)
@@ -274,6 +277,21 @@ class Stalls(AttestRepo):
         os.utime(mine, (old, old))
         self.assertNotIn("agent", self.ok("next"))  # the lead stopped it: nothing is running
         self.assertIn("no agent running", self.ok("wait", "--poll", "0"))
+
+
+class Heartbeat(AttestRepo):
+    def test_a_hook_call_is_the_heartbeat_the_sandboxed_controller_reads(self):  # F45: units-3's sandbox hid every transcript
+        started = time.time() - 20 * 60
+        clock, ctl.now = ctl.now, lambda: time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(started))
+        self.start("b1", "editor")  # registered 20 minutes ago, no transcript the controller can read
+        ctl.now = clock
+        self.assertIn("stalled     editor b1 quiet 20 min", self.ok("next"))
+        hook = os.path.join(HERE, "..", "..", "..", "skills", "gauntlet-loop", "hooks", "critic_blind.py")
+        payload = {"hook_event_name": "PreToolUse", "tool_name": "Bash", "tool_input": {"command": "ls"}, "agent_id": "b1", "agent_type": "editor"}
+        subprocess.run([sys.executable, hook], input=json.dumps(payload), capture_output=True, text=True, check=True,
+                       env={**os.environ, "CLAUDE_PROJECT_DIR": self.root})  # any hook the agent's next tool call fires
+        self.assertNotIn("stalled", self.ok("next"))
+        self.assertIn("running     1 agent", self.ok("next"))
 
 
 class Editors(AttestRepo):

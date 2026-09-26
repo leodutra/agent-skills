@@ -285,6 +285,21 @@ class ControllerOnly(Project):
         for rel in (".gauntlet/staging/t.mjs", ".gauntlet/wt/parse/src/a.js", "src/app.js", ".claude/agents/my-own.md"):
             self.assertEqual(self.hook("Write", {"file_path": self.path(rel)}), {}, rel)
 
+    def test_the_lead_never_reads_the_tooling_during_a_run(self):  # F44: units-3's lead read 2,000 lines of it before init
+        tool = self.path(".claude/hooks/gauntlet")
+        os.makedirs(tool, exist_ok=True)
+        pathlib.Path(tool, "gauntletctl").write_text("x")
+        self.assertEqual(self.hook("Read", {"file_path": f"{tool}/gauntletctl"}), {})  # no run yet: nothing to protect
+        pathlib.Path(self.root, ".gauntlet/events.jsonl").write_text('{"event": "RUN_STARTED"}\n')
+        for tool_name, ti in (("Read", {"file_path": f"{tool}/gauntletctl"}), ("Grep", {"pattern": "def ", "path": tool}),
+                              ("Bash", {"command": f"sed -n 1,80p {tool}/gauntletctl"}), ("Bash", {"command": "cat .claude/hooks/gauntlet/_paths.py"})):
+            self.assertEqual(self.hook(tool_name, ti).get("permissionDecision"), "deny", ti)
+        for command in (f"python3 {tool}/gauntletctl next", f"{tool}/gauntletctl --help", f"python3 {tool}/gauntletctl status; echo done"):
+            self.assertNotEqual(self.hook("Bash", {"command": command}).get("permissionDecision"), "deny", command)
+        self.assertEqual(self.hook("Read", {"file_path": f"{tool}/gauntletctl"}, agent_type="editor"), {})  # the lead's rule
+        pathlib.Path(self.root, ".gauntlet/events.jsonl").write_text('{"event": "RUN_STARTED"}\n{"event": "RUN_ENDED"}\n')
+        self.assertEqual(self.hook("Read", {"file_path": f"{tool}/gauntletctl"}), {})
+
     def test_private_storage_is_unreadable_by_every_tool(self):  # F9: a hook, not a permission deny, so the sandbox masks nothing
         private = self.path(".gauntlet/private/mapping/x.json")
         for agent_type in (None, "author", "editor", "editor-fast"):

@@ -20,6 +20,20 @@ units-2 ended 2026-09-24 on a win, 12 of 60 invocations and 0.8 of 4 hours (unit
 
 An earlier count put the units run at 30 `next` calls and bytesize-3 at 12; both mixed in `status`. The right counts are 17 and 6, and the E1 commit message carries the old numbers.
 
+## 2026-09-26, units-3: the lead at `/effort high`
+
+units-2's prompt, bars and envelope, the skill at `20e1877`, builders and critics pinned at `xhigh`, the session at `high`, sandbox strict. Ended `win` at 10 of 60 invocations in 60 minutes, every piece and the whole in its first round; 218 required and 203 held-out tests green, the hostile script clean.
+
+| Lead, to `RUN_ENDED` | units-2 (`xhigh`) | units-3 (`high`) |
+| --- | --- | --- |
+| model calls | 80 | 91 |
+| tokens (new input, cache writes, output) | 164 k | 292 k |
+| cache reads | 8.2 M | 17.2 M |
+| output | 39 k | 76 k |
+| run minutes, `init` to end | 47 | 60 |
+
+Inconclusive, and not in `high`'s favour. Before `init` the units-3 lead read the controller's whole source and `_paths.py` (11 calls, 33 k output), which the runbook forbids; that context rode in every later call (about 189 k cache reads a call against 103 k). The effort setting cannot be separated from that, so D36 stays at `xhigh` and the source read is now denied (F44). Also found: F45 (the stall detector saw no transcripts under the sandbox and measured from each agent's start; the lead stopped a builder quiet 22 minutes), F46 (the whole pair carried the required tests, which name `GAUNTLET_OURS`), F47 (8 doc comment lines saying "bytes" cut from ours). Open: a whole gate over per-piece references is two named libraries against one package, so its structure says which side is ours (D8's residual risk); and a replacement builder is not billed, so units-3 ran 12 agents against 10 counted. Left to the user: `promote` (it pushes), and two small spec gaps the lead named (a tab between number and unit; repeated duration units).
+
 ## 2026-09-25, units-docs: the writing domain
 
 The first run outside code: a README for units, the package units-2 built, judged per piece against the bytes.js 3.1.2 and ms 2.1.3 readmes; 40 invocations, 3 hours; the lead a session opened in `~/Work/units-docs` under `/goal`, sandbox strict, Tier 2, attestation tier-1, builders and critics pinned at `xhigh`. Ended `win`: both pieces and the whole README won blind twice, the second each time on a different model with the sides swapped; the whole on its third round. The README is on `gauntlet/whole`; every example in it runs (13 blocks, 98 claims). From the run's own controller:
@@ -65,7 +79,7 @@ Left to the user: the README's install line is a placeholder (`npm install /path
 
 ## 2026-09-23: what the first real run exposed, fixed
 
-Claude Code 2.1.280 installed. 175 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A66 record the changes to the spec.
+Claude Code 2.1.280 installed. 178 tests, all passing, with `sizes.sh`, `harness_tokens.sh` and `wordcount.py`. Each fix below came test-first; `dev/gauntlet-loop/TODO.md` holds the plan these rows close, and spec amendments A15 to A70 record the changes to the spec.
 
 | Finding | Result | How |
 | --- | --- | --- |

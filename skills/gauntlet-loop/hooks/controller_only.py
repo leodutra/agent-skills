@@ -14,6 +14,22 @@ C = policy()["controller_only"]  # trees and files nobody writes; `open` is wher
 REASON = ("controller-only: run state and the run's tooling change only through gauntletctl. If you need a fact recorded, "
           "there is a command for it; if you need tooling that does not exist, mark the piece BLOCKED.")
 PRIVATE = "controller-only: .gauntlet/private/ is read by the controller alone; ask it (`gauntletctl status --full`, `next`)."
+SOURCE = ("controller-only: during a run the lead never reads the controller's or the hooks' source; it would ride in every "
+          "later call. The interface is `next`, `--help` and a refusal's reason.")
+READERS = r"\b(cat|sed|head|tail|less|more|bat|nl|awk|grep|rg|wc|strings)\b[^|;&]*"
+
+
+def live():
+    """A run is going: its log exists and has no end yet."""
+    try:
+        with open(os.path.join(project(), ".gauntlet", "events.jsonl")) as f:
+            return '"RUN_ENDED"' not in f.read()
+    except OSError:
+        return False
+
+
+def tooling(real, root):
+    return inside(real, os.path.join(root, C["trees"][1]))
 
 
 def protected(real, root, agent_type=None):
@@ -39,6 +55,8 @@ def main():
             target = os.path.join(target, glob_base(ti.get("pattern", "")))
         if unreadable(resolve(target, root), root):
             deny(PRIVATE, "BOUNDARY_BLOCK", p, target)
+        if not p.get("agent_type") and tooling(resolve(target, root), root) and live():  # the lead's context (F44)
+            deny(SOURCE, "BOUNDARY_BLOCK", p, target)
         allow()
     if p.get("tool_name") != "Bash":
         target = ti.get("file_path", "")
@@ -50,6 +68,8 @@ def main():
         deny("controller-only: attest is the harness's hook and never a tool call.", "BOUNDARY_BLOCK", p, command)
     if controller_alone(command):
         allow()
+    if not p.get("agent_type") and re.search(READERS + re.escape(C["trees"][1]), command) and live():  # F44
+        deny(SOURCE, "BOUNDARY_BLOCK", p, command)
     base = shell_base(command, root)
     if any(unreadable(resolve(token, base), root) for token in path_tokens(command, base)):
         deny(PRIVATE, "BOUNDARY_BLOCK", p, command)

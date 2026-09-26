@@ -12,7 +12,19 @@ SAFE = ("/dev/null",)
 
 
 def payload():
-    return json.load(sys.stdin)
+    """The hook's input. Each call also stamps the agent's activity where the sandboxed controller can read it: the
+    sandbox hides the agents' transcripts from it, so this is how `next` tells a quiet agent from a working one (F45)."""
+    p = json.load(sys.stdin)
+    if p.get("agent_id") and os.path.isdir(os.path.join(project(), ".gauntlet")):
+        try:
+            beats = os.path.join(project(), ".gauntlet", "private", "activity")
+            os.makedirs(beats, exist_ok=True)
+            with open(os.path.join(beats, re.sub(r"\W", "_", p["agent_id"])), "a"):
+                pass
+            os.utime(os.path.join(beats, re.sub(r"\W", "_", p["agent_id"])))
+        except OSError:
+            pass
+    return p
 
 
 def project():
