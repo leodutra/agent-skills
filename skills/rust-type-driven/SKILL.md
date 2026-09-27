@@ -52,7 +52,9 @@ Rules:
 - Domain types MUST NOT derive `Deserialize` structurally: a derived `Deserialize` builds the
   value without calling its constructor, so it skips the parse. Deserialize a record/DTO and
   convert it with `TryFrom`, or route the derive through the constructor with
-  `#[serde(try_from = "…")]`.
+  `#[serde(try_from = "…")]`. A fieldless enum MAY derive it: every value it can hold is valid.
+- Domain code SHOULD live under a `domain` path (a `domain/` module, or a crate whose path
+  contains `domain`), and records and DTOs elsewhere, so a tool can tell them apart.
 
 ```rust
 #[derive(Deserialize)]
@@ -263,7 +265,7 @@ impl Order {
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
 - Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
   domain logic. That is what keeps domain tests deterministic.
-- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced (checked by the grep under Enforce with Tools).
+- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced (checked by ast-grep under Enforce with Tools).
 
 ### Mutation discipline
 
@@ -471,12 +473,115 @@ and use `?`.
 A lint that misfires is silenced where it misfires, with `#[expect(clippy::name, reason = "…")]`,
 never switched off for the crate.
 
-Generic role names are a grep, since clippy cannot see type names. It holds Behavior Rules: no
-`Service`, `Manager`, `Helper`, `Utils` or `Misc` types.
+### Syntax rules: ast-grep
 
-```bash
-! rg -n --type rust '\b(struct|enum|trait|type)\s+\w*(Service|Manager|Helper|Utils|Misc)\b' src/
+What clippy cannot see, a syntax pattern can: attributes on a type, the shape of an error value, a
+type's name. [ast-grep](https://ast-grep.github.io) (`cargo install ast-grep --locked`; these rules
+were verified on 0.45.3) matches the syntax tree, so a comment or a string that mentions a name
+never counts. `ast-grep scan` exits non-zero on any finding.
+
+```yaml
+# sgconfig.yml, at the repository root
+ruleDirs:
+  - .ast-grep/rules
 ```
+
+```yaml
+# .ast-grep/rules/domain-structural-deserialize.yml
+# A domain type deriving Deserialize, which builds it without its constructor.
+# Holds Parse, Don't Validate: "Domain types MUST NOT derive Deserialize structurally".
+id: domain-structural-deserialize
+language: rust
+severity: error
+message: A domain type derives Deserialize without its constructor.
+note: "Parse, Don't Validate: deserialize a record and convert it with TryFrom, or add #[serde(try_from = \"...\")]."
+files: ["**/domain/**"]  # the domain path convention above; records and DTOs live elsewhere
+utils:
+  attributes-before:  # the attributes and comments directly above an item
+    not: { any: [{ kind: attribute_item }, { kind: line_comment }, { kind: block_comment }] }
+rule:
+  all:
+    - any: [{ kind: struct_item }, { kind: enum_item }]
+    - follows: { kind: attribute_item, regex: 'derive\([^)]*\bDeserialize\b', stopBy: { matches: attributes-before } }
+    - not:
+        follows: { kind: attribute_item, regex: 'serde\([^)]*\btry_from\b', stopBy: { matches: attributes-before } }
+    - not:  # a fieldless enum has no invalid value, so a derive skips no parse
+        all:
+          - kind: enum_item
+          - not: { has: { stopBy: end, any: [{ kind: ordered_field_declaration_list }, { kind: field_declaration_list }] } }
+```
+
+```yaml
+# .ast-grep/rules/stringly-typed-error.yml
+# A string where an error should be: a literal or format! in Err, or String as a Result's error type.
+# Holds Error Modeling: "Code MUST NOT use Err("something went wrong".into())"; variants carry typed context.
+id: stringly-typed-error
+language: rust
+severity: error
+message: A stringly typed error.
+note: "Error Modeling: errors are typed variants with typed context, never ad-hoc strings."
+ignores: ["tests/**"]
+rule:
+  any:
+    - pattern: Err($S.into())
+    - pattern: Err($S.to_string())
+    - pattern: Err($S.to_owned())
+    - pattern: Err(String::from($S))
+    - pattern: Err(format!($$$))
+    - pattern: { context: 'type T = Result<$A, String>;', selector: generic_type }
+constraints:
+  S: { kind: string_literal }  # Err(value.into()) converting a typed value stays legal
+```
+
+```yaml
+# .ast-grep/rules/infra-error-without-source.yml
+# An enum variant holding an infrastructure error with neither #[source] nor #[from], which drops the cause chain.
+# Holds Error Modeling: "keep the original as #[source] so the chain survives".
+id: infra-error-without-source
+language: rust
+severity: error
+message: An infrastructure error is held without #[source] or #[from], so its chain is lost.
+note: "Error Modeling: translate it at the boundary and keep the original as #[source]."
+utils:
+  infra-error:  # the project's adapters: extend this list with its own
+    any: [{ kind: scoped_type_identifier }, { kind: type_identifier }]
+    regex: '^((std::)?io::Error|sqlx::Error|reqwest::Error|serde_json::Error)$'
+  source-attribute:
+    kind: attribute_item
+    regex: '^#\[(source|from)\]$'
+rule:
+  all:
+    - matches: infra-error
+    - inside: { kind: enum_variant, stopBy: end }
+    - not:
+        any:
+          - follows: { matches: source-attribute }  # tuple variant: (#[source] io::Error)
+          - inside:  # struct variant: { #[source] err: io::Error }, or thiserror's implicit `source` field
+              kind: field_declaration
+              any:
+                - follows: { matches: source-attribute }
+                - has: { field: name, regex: '^source$' }
+```
+
+```yaml
+# .ast-grep/rules/generic-role-name.yml
+# A type named for a role instead of what it is.
+# Holds Behavior Rules: "Generic role names like Service, Manager, Helper, Utils, and Misc MUST NOT be introduced".
+id: generic-role-name
+language: rust
+severity: error
+message: A generic role name says what a type is for, not what it is.
+note: "Behavior Rules: name the capability (LoadOrders, ChargePayment), not a role."
+rule:
+  kind: type_identifier
+  regex: '(Service|Manager|Helper|Utils|Misc)$'
+  inside:  # the name being declared, never a use of one
+    any: [{ kind: struct_item }, { kind: enum_item }, { kind: trait_item }, { kind: type_item }]
+    field: name
+```
+
+The infrastructure list names types as they are written; an error imported as a bare `Error`
+is not seen, so write adapter errors with their path.
 
 ---
 
@@ -487,20 +592,19 @@ The tools above hold these rules, and review never re-checks them: `_ =>` on you
 `unsafe`; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
-generic role names; formatting.
+a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
+error held without `#[source]`; generic role names; formatting.
 
 Review checks only what no tool can decide:
 
 - [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype.
-- [ ] Any domain type deriving `Deserialize` structurally? Parse through a record or `#[serde(try_from)]`.
 - [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor.
 - [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
-- [ ] Any `Err("…".into())` or other stringly typed error? Use a typed variant.
 - [ ] Any new dependency where the standard library would be enough? Remove or justify it.
 - [ ] Any trait with a single implementor and no test double? Remove it.
 - [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
-- [ ] Any infrastructure error crossing a boundary raw, or a cause dropped? Translate it, keep `#[source]`.
+- [ ] Any infrastructure error crossing a boundary untranslated? Translate it into the caller's error type.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
 - [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
@@ -515,7 +619,7 @@ cargo check                                  # first: fastest compile feedback
 cargo fmt --check
 cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
 cargo test
-! rg -n --type rust '\b(struct|enum|trait|type)\s+\w*(Service|Manager|Helper|Utils|Misc)\b' src/
+ast-grep scan                                # the syntax rules
 ```
 
 All five MUST pass before a task is considered complete, locally and in CI.
