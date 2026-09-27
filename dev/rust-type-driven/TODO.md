@@ -29,9 +29,11 @@ ast-grep is not installed here. Verify with its release binary in `$TMPDIR`; the
 
 ## Tier 2: dependencies
 
-- [ ] **T2.1 Every dependency approved by name.** Philosophy: "The standard library SHOULD be preferred over new dependencies unless a crate provides clear value". `cargo-deny` (installed, check its version) with a `deny.toml` whose `[bans]` denies what is not on an allowlist, so a new crate fails CI until someone adds it on purpose, with a comment saying why. Verify: an unlisted crate fails; a listed one passes. Check that `cargo deny check bans` works offline or say what it needs.
-- [ ] **T2.2 Unused dependencies.** Same rule. `cargo-machete` (not installed: release binary in `$TMPDIR` for verification). Verify: an unused dependency fails; a used one passes. Note its known misses (a crate used only by a macro), and the `[package.metadata.cargo-machete] ignored` escape with a reason.
-- [ ] **T2.3 Wire it in.** Both become required commands; "any new dependency where the standard library would be enough" leaves the checklist, except the judgement at approval time, which the allowlist comment records.
+Done 2026-09-26: two commands in the skill's new Dependencies section, both required; `verify.py dependencies` 5 findings of 5 expected (an unapproved crate, an unused one, an empty reason, one that is both), clean cases clean, and both commands exit non-zero on findings.
+
+- [x] **T2.1 Every dependency approved by name.** Philosophy: "The standard library SHOULD be preferred over new dependencies unless a crate provides clear value". Plan changed on the way: cargo-deny 0.20.2's `[bans] allow` list covers the whole crate graph, transitive crates included (its own template says "use with care"), so it cannot say "every crate *we* add". Instead each package lists its dependencies, dev and build ones too, under `[package.metadata.approved-dependencies]` with the reason each earns its place, and `cargo metadata --no-deps | jq` fails on any dependency with no reason or an empty one. Works offline, needs only jq. cargo-deny stays useful for licenses and advisories, which this skill does not cover.
+- [x] **T2.2 Unused dependencies.** `cargo machete` (verified on 0.9.2; `cargo install cargo-machete`). It reads source, so a crate used only inside a macro's expansion looks unused: the skill says to list it under `[package.metadata.cargo-machete] ignored` with a comment saying why.
+- [x] **T2.3 Wire it in.** Both are required commands (seven in all). The checklist keeps only the judgement the tools cannot make: "an approval reason the standard library answers? Remove the crate."
 
 ## Tier 3: mutation testing for the test budget
 

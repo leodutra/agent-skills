@@ -583,6 +583,31 @@ rule:
 The infrastructure list names types as they are written; an error imported as a bare `Error`
 is not seen, so write adapter errors with their path.
 
+### Dependencies
+
+Philosophy: "The standard library SHOULD be preferred over new dependencies unless a crate
+provides clear value." The value is written down when the crate is added, and two checks hold it:
+every dependency (normal, dev and build) has an approval reason, and none is unused.
+
+```toml
+# Cargo.toml: one line per dependency, saying what it earns that the standard library does not.
+[package.metadata.approved-dependencies]
+serde = "the wire format of every boundary type"
+thiserror = "typed errors without hand-written Display and Error impls"
+proptest = "property tests where a law exists (Testing Strategy)"
+```
+
+```bash
+# A dependency without an approval reason. Holds Philosophy: std first, each crate added on purpose. Needs jq.
+cargo metadata --format-version 1 --no-deps | jq -r '.packages[] | . as $p | .dependencies[] | (.rename // .name) as $d | select((($p.metadata // {})["approved-dependencies"] // {})[$d] // "" | length == 0) | "\($p.name): \($d) (\(.kind // "normal")) has no reason in [package.metadata.approved-dependencies]"' | (! grep .)
+# A dependency no code uses. Holds Philosophy: every crate earns its place. cargo install cargo-machete; verified on 0.9.2.
+cargo machete
+```
+
+`cargo machete` reads source, not the compiled crate, so a crate used only inside a macro's
+expansion looks unused. List it under `[package.metadata.cargo-machete] ignored`, with a comment
+saying why.
+
 ---
 
 ## Code Review Checklist
@@ -593,7 +618,8 @@ The tools above hold these rules, and review never re-checks them: `_ =>` on you
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
 a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
-error held without `#[source]`; generic role names; formatting.
+error held without `#[source]`; generic role names; a dependency without an approval reason; an
+unused dependency; formatting.
 
 Review checks only what no tool can decide:
 
@@ -601,7 +627,7 @@ Review checks only what no tool can decide:
 - [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor.
 - [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
-- [ ] Any new dependency where the standard library would be enough? Remove or justify it.
+- [ ] Any approval reason in `[package.metadata.approved-dependencies]` that the standard library answers? Remove the crate.
 - [ ] Any trait with a single implementor and no test double? Remove it.
 - [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
 - [ ] Any infrastructure error crossing a boundary untranslated? Translate it into the caller's error type.
@@ -620,6 +646,8 @@ cargo fmt --check
 cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
 cargo test
 ast-grep scan                                # the syntax rules
+cargo machete                                # no unused dependency
+cargo metadata --format-version 1 --no-deps | jq -r '…' | (! grep .)   # each dependency approved: the full line is under Dependencies
 ```
 
-All five MUST pass before a task is considered complete, locally and in CI.
+All seven MUST pass before a task is considered complete, locally and in CI.

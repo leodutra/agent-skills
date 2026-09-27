@@ -6,9 +6,9 @@ the tool, and compares what it reports with the fixtures' markers: a line that m
 comment `expect: <rule>[, <rule>...]` (a rule repeated once per finding on that line). Every other line is
 clean or a near miss, and must not be flagged. Exit 0 when every part matches, 1 otherwise.
 
-    verify.py [part ...]        parts: clippy, ast-grep (default: all)
+    verify.py [part ...]        parts: clippy, ast-grep, dependencies (default: all)
 
-Tools come from PATH, or from AST_GREP and the like for binaries that are not installed.
+Tools come from PATH: put release binaries that are not installed first on it, e.g. PATH=/tmp/tools:$PATH.
 """
 import collections
 import json
@@ -109,7 +109,36 @@ def check_ast_grep():
     return ok
 
 
-PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep}
+def check_dependencies():
+    """The two commands under Dependencies, run as the skill prints them, on a crate with each case."""
+    root = scratch("dependencies")
+    section = open(SKILL).read().split("### Dependencies", 1)[1]
+    commands = re.search(r"```bash\n(.*?)```", section, re.S).group(1)
+    approved = next(l for l in commands.splitlines() if l.startswith("cargo metadata"))
+    machete = next(l for l in commands.splitlines() if l.startswith("cargo machete"))
+    manifest = open(os.path.join(root, "Cargo.toml")).read().splitlines()
+    line_of, table = {}, ""
+    for n, l in enumerate(manifest, 1):  # a dependency's own line, in a dependency table only
+        if l.startswith("["):
+            table = l
+        elif table.endswith("dependencies]") and "metadata" not in table and re.match(r"\S+\s*=", l):
+            line_of[re.match(r"(\S+)\s*=", l).group(1)] = n
+    got = collections.Counter()
+    a = subprocess.run(["bash", "-c", approved], cwd=root, capture_output=True, text=True)
+    for dep in re.findall(r"^\S+: (\S+) \(", a.stdout, re.M):
+        got[("Cargo.toml", line_of[dep], "unapproved-dependency")] += 1
+    m = subprocess.run(["bash", "-c", machete], cwd=root, capture_output=True, text=True)
+    for dep in re.findall(r"^\t(\S+)$", m.stdout, re.M):
+        got[("Cargo.toml", line_of[dep], "unused-dependency")] += 1
+    ok = report("dependencies", expected(root), got)
+    for name, run in (("approval check", a), ("cargo machete", m)):
+        if run.returncode == 0:
+            print(f"dependencies: FAIL ({name} exited 0 on findings, so it would not gate CI)")
+            ok = False
+    return ok
+
+
+PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep, "dependencies": check_dependencies}
 
 if __name__ == "__main__":
     wanted = sys.argv[1:] or list(PARTS)
