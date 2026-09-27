@@ -653,6 +653,39 @@ It mutates operators (`>`, `==`, `!`, `&&`) and whole function bodies, not metho
 that is one call, such as `if raw.is_empty()`, yields no mutant, so review still checks that its
 rejection has a test.
 
+### Type-aware lints: dylint, for a long-lived codebase
+
+Some rules need to know what a type is, who implements a trait, or which function a call reaches.
+[dylint](https://github.com/trailofbits/dylint) runs custom lints built against the compiler, and the
+library `rust_type_driven_lints` (`dev/rust-type-driven/lints` in this skill's repository) holds four.
+Its cost is a pinned nightly toolchain, about 1.5 GB fetched on the first run, and a rebuild whenever
+that nightly moves: adopt it in a codebase meant to live for years, not in every project.
+
+```toml
+# Cargo.toml, at the workspace root: where the lints come from, and the cfg dylint sets while it runs
+[workspace.metadata.dylint]
+libraries = [{ git = "https://github.com/leodutra/agent-skills", pattern = "dev/rust-type-driven/lints" }]
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(dylint_lib, values(any()))'] }
+```
+
+```bash
+# The type-aware rules below. cargo install cargo-dylint dylint-link; verified on 6.1.0.
+# --all-targets compiles the tests too, where single_impl_trait can see the test doubles.
+DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets
+```
+
+| Lint | Catches | Holds |
+| --- | --- | --- |
+| `pub_field_on_invariant_type` | a `pub` field on a type with a fallible constructor (an associated fn returning `Result<Self, _>`, or a `TryFrom` impl) | Type-Driven Design: fields of a type with an invariant are private |
+| `blocking_in_async` | a call into `std::fs`, `std::net`, `std::thread::sleep`, a `std::process` wait or stdin inside an `async fn` or block, outside a closure such as `spawn_blocking`'s | Async, Blocking work: async code never blocks the runtime |
+| `primitive_domain_param` | a heuristic: a `pub fn` in a `domain` module taking `String`, `&str`, an integer or `uuid::Uuid` for a parameter named `id`, `*_id`, `email`, `name` or `amount` | Type-Driven Design: a value with an invariant, or one swappable with another of its primitive, gets a newtype |
+| `single_impl_trait` | a trait not exported from the crate with exactly one implementation, test doubles included | Dependency Injection: no trait for a single implementation without a second one or a test double |
+
+A finding that is wrong, most likely the heuristic's, is silenced where it is wrong, with a reason:
+`#[cfg_attr(dylint_lib = "rust_type_driven_lints", expect(primitive_domain_param, reason = "…"))]`.
+
 ---
 
 ## Code Review Checklist
@@ -667,19 +700,20 @@ error held without `#[source]`; a fallible constructor named `new`; generic role
 dependency without an approval reason; an unused dependency; a constructor's rejection reason with
 no test; formatting.
 
-Review checks only what no tool can decide:
+Review checks only what no tool can decide. Where the dylint library is adopted, it holds the items
+marked (dylint), and review looks only at what it cannot see:
 
-- [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype.
-- [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor.
+- [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype. (dylint, for the parameter names it knows)
+- [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor. (dylint, for struct fields)
 - [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
 - [ ] Any approval reason in `[package.metadata.approved-dependencies]` that the standard library answers? Remove the crate.
-- [ ] Any trait with a single implementor and no test double? Remove it.
+- [ ] Any trait with a single implementor and no test double? Remove it. (dylint)
 - [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
 - [ ] Any infrastructure error crossing a boundary untranslated? Translate it into the caller's error type.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
-- [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
+- [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`. (dylint, for the calls it lists)
 - [ ] Any rejection guard that is a single method call (`is_empty()`), which mutation testing cannot break? Check it has a test.
 - [ ] Any test beyond the budget (a second example of a rule already pinned, a getter, a derive)? Remove it.
 
@@ -696,6 +730,8 @@ ast-grep scan                                # the syntax rules
 cargo machete                                # no unused dependency
 cargo mutants                                # CI and before a release: every rejection reason tested
 cargo metadata --format-version 1 --no-deps | jq -r '…' | (! grep .)   # each dependency approved: the full line is under Dependencies
+DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets   # where the dylint library is adopted
 ```
 
-All eight MUST pass before a task is considered complete, locally and in CI.
+All eight MUST pass before a task is considered complete, locally and in CI, and the ninth where
+the dylint library is adopted.

@@ -45,13 +45,16 @@ Done 2026-09-26 on cargo-mutants 27.1.0: a Mutation testing section in the skill
 
 ## Tier 4: dylint, type-aware custom lints (for a long-lived project)
 
-Needs `cargo-dylint`, `dylint-link` and a pinned nightly toolchain, none installed. Heavier to keep up: dylint lints use rustc internals and break as rustc changes. Build them as a lint library under `dev/rust-type-driven/lints/`, and let a project adopt it; the skill says when it is worth it.
+Done 2026-09-26 on cargo-dylint and dylint-link 6.1.0, nightly-2026-08-20: the library `rust_type_driven_lints` in `lints/`, four lints, each documented with what it catches and the rule it holds; a Type-aware lints section in the skill (when it is worth it, its cost, the adoption block, the command, one table row per lint, the silencing pattern); `verify.py dylint` 10 findings of 10 expected, near misses clean, the command gates CI. The checklist marks the four items dylint holds where it is adopted.
 
-- [ ] **T4.0 Toolchain.** Install `cargo-dylint` and `dylint-link` and the nightly they need; record the versions. Ask before installing if it is more than a few hundred MB.
-- [ ] **T4.1 Public fields on a type with a fallible constructor.** Type-Driven Design: "Fields of a type with an invariant MUST be private; a fallible constructor is the only way in." Rule: a struct with a `pub` field whose inherent impl has an associated function returning `Result<Self, _>`.
-- [ ] **T4.2 Blocking calls inside `async fn`.** Async, Blocking work: "Async code MUST NOT block the runtime." Rule: a call to a listed blocking function (`std::fs::*`, `std::thread::sleep`, `std::net::*`, `std::io::stdin().read_line`) in the body of an `async fn` or `async` block, outside `spawn_blocking`.
-- [ ] **T4.3 Raw primitives for domain concepts in signatures.** Philosophy and Core rules: a value with an invariant, or one that could be swapped with another of the same primitive, gets a newtype. Heuristic rule: a `pub fn` in domain code taking `String`, `&str`, `i64` or `Uuid` for a parameter named like `*_id`, `email`, `name`, `amount`. State it as a heuristic in the skill.
-- [ ] **T4.4 A trait with a single implementor and no test double.** Dependency Injection: "A trait SHOULD NOT be introduced for a single implementation unless a real second implementation or test double is needed." Rule: a crate-local trait with exactly one `impl` in the crate, including `#[cfg(test)]` code; `pub` traits of a library are exempt.
+- [x] **T4.0 Toolchain.** Release binaries in `$TMPDIR` (3 MB and 1 MB). The pinned nightly with `rustc-dev` and `llvm-tools-preview` took 1,451 MB in `~/.rustup/toolchains` (`rustup toolchain uninstall nightly-2026-08-20` removes it); installing it also self-updated rustup from 1.29.0 to 1.29.1. The library builds in about 30 s once dependencies are cached.
+- [x] **T4.1 `pub_field_on_invariant_type`.** A `pub` field on a struct with an associated fn returning `Result<Self, _>` or a `TryFrom` impl. Enum variant fields, always public, stay with review.
+- [x] **T4.2 `blocking_in_async`.** A call whose path starts with `std::fs::`, `std::net::`, `std::thread::sleep`, a `std::process` wait or `std::io::stdin`, whose nearest enclosing closure is an async body; a closure such as `spawn_blocking`'s ends the search, so offloaded work is not flagged. Blocking through a trait method (`Read::read_to_string` on a `File`) is not seen.
+- [x] **T4.3 `primitive_domain_param`.** A heuristic, stated as one in the skill: public fns in a module path containing `domain`, parameters named `id`, `*_id`, `email`, `name`, `amount`, typed `String`, `&str`, an integer or `uuid::Uuid`. Found on the way: on this compiler `String` is a language item, not a diagnostic item.
+- [x] **T4.4 `single_impl_trait`.** Runs only when the crate is compiled for tests (`--all-targets`), where `#[cfg(test)]` doubles exist; traits exported from the crate are exempt.
+- [x] **Silencing.** `#[cfg_attr(dylint_lib = "rust_type_driven_lints", expect(<lint>, reason = "…"))]`, with `unexpected_cfgs` taught the `dylint_lib` cfg; verified both ways: with the `check-cfg` line a plain `-D warnings` build passes, without it it fails.
+
+Open: the library pins a nightly; when that nightly is updated, rebuild, run `verify.py dylint`, and move `rust-toolchain.toml` and the `clippy_utils` rev together. Projects point `[workspace.metadata.dylint]` at this repository's `dev/rust-type-driven/lints`, so it must be pushed before anyone can adopt it.
 
 ## Stays with review (no tool can decide these)
 
@@ -59,5 +62,5 @@ A sentinel or a pair of `Option`s standing for exclusive states; validation afte
 
 ## Left to the user
 
-- Push `main` (`d7a24ac`, `5741b83` and this work are local).
+- Push `main` (T0 to T4 are local commits). Projects can adopt the dylint library only after the push.
 - `~/Work/ed-galnet-scraper/skills/rust-type-driven` is a separate copy of the skill; it is not updated by this work.
