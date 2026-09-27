@@ -37,9 +37,11 @@ Done 2026-09-26: two commands in the skill's new Dependencies section, both requ
 
 ## Tier 3: mutation testing for the test budget
 
-- [ ] **T3.1 Each constructor tested once per rejection reason.** Testing Strategy, Budget: "one accepted input and one rejected input, plus one rejected input per distinct reason for rejection". `cargo-mutants` (not installed: release binary in `$TMPDIR`) on the domain crate: a mutated guard that no test kills is a missing test. Verify: a constructor with a rejection reason that is not tested leaves a surviving mutant; adding the test kills it. Measure the run time on the scratch crate.
-- [ ] **T3.2 Scope and cost.** Mutants only in domain code (`--file` or `mutants.toml` `examine_globs`), in CI or before a release, never on every save. State the time budget and the command in the skill.
-- [ ] **T3.3 Wire it in.** The skill's Commands section gets it as a CI step; the checklist item becomes "surviving mutants in domain code are zero".
+Done 2026-09-26 on cargo-mutants 27.1.0: a Mutation testing section in the skill with `.cargo/mutants.toml` and `cargo mutants`; `verify.py mutants`: 16 mutants in about 2 s, the untested rejection guard found (1 line, 2 surviving mutants), the fully tested `try_new` and `try_from` constructors all caught, the untested getter out of scope; exit 2 gates CI.
+
+- [x] **T3.1 Each constructor tested once per rejection reason.** Testing Strategy, Budget. Found on the way: cargo-mutants never looks inside a function named `new` (hard-coded in `src/visit.rs`, no switch), so a fallible `new` would never have its rejection tests checked. Decided: a fallible constructor is named `parse` (from raw input) or `try_new`, never `new`, stated in Type-Driven Design; the `PriceCut` example became `try_new`; a fifth ast-grep rule, `fallible-new`, rejects a `new` returning `Result` (an `Option`-returning `new` stays legal). Also found: it mutates operators and function bodies, not method calls, so a guard that is one call (`if raw.is_empty()`) yields no mutant; the skill says so and the review checklist keeps that one case.
+- [x] **T3.2 Scope and cost.** `examine_globs = ["src/domain/**/*.rs"]`, `examine_re` for `parse`, `try_new` and `try_from`, so a surviving mutant is exactly a missing rejection test and getters, which Testing Strategy says not to test, are never demanded. CI and before a release, not on every save.
+- [x] **T3.3 Wire it in.** `cargo mutants` is the eighth required command, marked for CI. The checklist item on the constructor budget became its complement: "any test beyond the budget? Remove it."
 
 ## Tier 4: dylint, type-aware custom lints (for a long-lived project)
 

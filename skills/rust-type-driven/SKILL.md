@@ -89,6 +89,9 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
   another value of the same primitive (`StoreName` / `StoreAddress`). A value with neither
   SHOULD NOT be wrapped.
 - Fields of a type with an invariant MUST be private; a fallible constructor is the only way in.
+- A fallible constructor MUST be named `parse` (from raw input) or `try_new`, never `new`: `new`
+  reads as infallible, and mutation testing (Enforce with Tools) skips any function named `new`,
+  so its rejection tests would go unchecked.
 - Enum variant fields are always public. A variant whose fields share an invariant
   (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
 - Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
@@ -147,7 +150,7 @@ pub struct PriceCut {
 }
 
 impl PriceCut {
-    pub fn new(sale: Money, regular: Money) -> Result<Self, PriceError> {
+    pub fn try_new(sale: Money, regular: Money) -> Result<Self, PriceError> {
         if sale < regular {
             Ok(Self { sale, regular })
         } else {
@@ -580,6 +583,22 @@ rule:
     field: name
 ```
 
+```yaml
+# .ast-grep/rules/fallible-new.yml
+# A constructor named `new` that can fail.
+# Holds Type-Driven Design: "A fallible constructor MUST be named parse or try_new, never new" (mutation testing skips `new`).
+id: fallible-new
+language: rust
+severity: error
+message: A fallible constructor is named `new`.
+note: "Type-Driven Design: name it parse (from raw input) or try_new; cargo-mutants never mutates a function named new."
+rule:
+  kind: function_item
+  all:
+    - has: { field: name, regex: '^new$' }
+    - has: { field: return_type, regex: '^(\w+::)*Result\b' }  # Result or io::Result; an Option-returning new stays legal
+```
+
 The infrastructure list names types as they are written; an error imported as a bare `Error`
 is not seen, so write adapter errors with their path.
 
@@ -608,6 +627,32 @@ cargo machete
 expansion looks unused. List it under `[package.metadata.cargo-machete] ignored`, with a comment
 saying why.
 
+### Mutation testing
+
+Testing Strategy, Budget: "one accepted input and one rejected input, plus one rejected input per
+distinct reason for rejection". A tool proves it: [cargo-mutants](https://mutants.rs)
+(`cargo install cargo-mutants`; verified on 27.1.0) breaks each guard of a constructor in turn and
+runs the tests. A broken guard that no test notices is a rejection reason nobody tests.
+
+```toml
+# .cargo/mutants.toml
+# Mutate domain constructors only, so a surviving mutant is exactly a missing rejection test; mutating
+# getters would demand the tests Testing Strategy rules out. cargo-mutants skips any fn named `new`,
+# which is why a fallible constructor is named parse or try_new.
+examine_globs = ["src/domain/**/*.rs"]
+examine_re = ["::(parse|try_new|try_from)\\b"]
+```
+
+```bash
+# A constructor's rejection reason that no test covers. Holds Testing Strategy, Budget. Exits 2 on a missed mutant.
+cargo mutants
+```
+
+It builds and tests once per mutant, so it runs in CI and before a release, not on every save.
+It mutates operators (`>`, `==`, `!`, `&&`) and whole function bodies, not method calls: a guard
+that is one call, such as `if raw.is_empty()`, yields no mutant, so review still checks that its
+rejection has a test.
+
 ---
 
 ## Code Review Checklist
@@ -618,8 +663,9 @@ The tools above hold these rules, and review never re-checks them: `_ =>` on you
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
 a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
-error held without `#[source]`; generic role names; a dependency without an approval reason; an
-unused dependency; formatting.
+error held without `#[source]`; a fallible constructor named `new`; generic role names; a
+dependency without an approval reason; an unused dependency; a constructor's rejection reason with
+no test; formatting.
 
 Review checks only what no tool can decide:
 
@@ -634,7 +680,8 @@ Review checks only what no tool can decide:
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
 - [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
-- [ ] Each constructor tested once accepted and once per rejection reason? Add what is missing, and nothing beyond it.
+- [ ] Any rejection guard that is a single method call (`is_empty()`), which mutation testing cannot break? Check it has a test.
+- [ ] Any test beyond the budget (a second example of a rule already pinned, a getter, a derive)? Remove it.
 
 ---
 
@@ -647,7 +694,8 @@ cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
 cargo test
 ast-grep scan                                # the syntax rules
 cargo machete                                # no unused dependency
+cargo mutants                                # CI and before a release: every rejection reason tested
 cargo metadata --format-version 1 --no-deps | jq -r '…' | (! grep .)   # each dependency approved: the full line is under Dependencies
 ```
 
-All seven MUST pass before a task is considered complete, locally and in CI.
+All eight MUST pass before a task is considered complete, locally and in CI.
