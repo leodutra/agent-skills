@@ -121,6 +121,7 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
   `-1`) MUST NOT stand for absence. When `None` would mean two things, use an enum.
 - Enums + structs SHOULD be preferred over class hierarchies.
 - State transitions SHOULD default to immutable values.
+- A partial update SHOULD be `Option` fields whose present values are already parsed domain types.
 
 ### Newtypes
 
@@ -188,13 +189,6 @@ impl Port {
 ### Illegal states
 
 ```rust
-enum Shipment {
-    Pending { order_id: OrderId },
-    Shipped { order_id: OrderId, tracking: TrackingNumber },
-    Delivered { order_id: OrderId, tracking: TrackingNumber, delivered_at: DateTime<Utc> },
-    Cancelled { order_id: OrderId, reason: CancellationReason },
-}
-
 // A cross-field invariant lives in a private-field struct, never in variant fields,
 // or `Price::Cut { sale: high, regular: low }` could be built by a struct literal.
 pub enum Price {
@@ -214,29 +208,6 @@ impl PriceCut {
         } else {
             Err(PriceError::NotACut { sale, regular })
         }
-    }
-}
-```
-
-### Partial updates
-
-Partial updates SHOULD be modeled as `Option` fields whose present values are already parsed domain types.
-
-```rust
-pub struct OrderUpdate {
-    pub new_status: Option<OrderStatus>,
-    pub shipping: Option<ShippingAddress>,
-}
-
-impl Order {
-    pub fn apply(self, update: OrderUpdate) -> Result<Self, OrderError> {
-        let status = match update.new_status {
-            Some(next) => self.status.transition_to(next)?,
-            None => self.status,
-        };
-        let shipping = update.shipping.unwrap_or(self.shipping);
-
-        Ok(Self { status, shipping, ..self })
     }
 }
 ```
@@ -310,7 +281,6 @@ Rules:
 - Functions SHOULD be total. Code MUST NOT panic on valid input.
 - Code MUST match exhaustively on its own enums: no wildcard `_ =>` arm, so adding a variant
   breaks the build everywhere it matters.
-- `Result` / `Option` combinators SHOULD be used when they clarify the flow; pipelines SHOULD NOT be forced where straight-line code is clearer.
 - Functions SHOULD borrow inputs when ownership is not required.
 - A constructor that keeps its input SHOULD accept it owned-friendly (`impl Into<String>`, and
   `TryFrom<String>` beside `FromStr`), so a caller holding a `String` hands it over without a copy;
@@ -451,45 +421,7 @@ across `.await`; an owned parameter where a borrow would do; a redundant clone; 
 exclusive states; `anyhow` or `eyre` in library code; interior mutability in domain types; ambient
 time or randomness in domain code; formatting.
 
-Review checks the rest:
-
-**Types and parsing**
-
-- [ ] Any raw `String`, `&str`, integer or `Uuid` naming a domain concept in a domain signature? Take the newtype.
-- [ ] Any public field on a refinement, or variant fields sharing an invariant? Make them private behind a constructor.
-- [ ] Any refinement built without its constructor: a plain `derive(Deserialize)`, `serde(transparent)`, `sqlx(transparent)`, or a `Default` that is not valid? Route it through `try_from`, or remove the derive.
-- [ ] Any `is_valid_*` or `validate` returning `bool` or `Result<()>`, or validation after parsing? Replace it with a constructor that returns the type.
-- [ ] Any `FromStr`, `TryFrom`, serde or database decode that checks on its own instead of delegating to the one validating function? Delegate.
-- [ ] Any sole fallible constructor not named `new`, or a `try_new` without an infallible `new`? Rename it.
-- [ ] Any constructor returning `Option` for more than one reason, or checking before it normalizes? Return a `Result` with an error enum; normalize first.
-- [ ] Any `Deref`, `DerefMut`, `AsMut`, or `&mut` to the inner value on a refinement, or a mutating method that can break its invariant? Offer `as_str()`, `get()`, `AsRef` or `into_inner()`; keep the invariant or drop the method.
-- [ ] Any newtype without `Clone`, `PartialEq`, `Eq` and `Hash`, or a hand-written `Borrow<str>` that disagrees with them? Derive them; remove the `Borrow`.
-- [ ] Any `const fn literal` called outside a `const` item? Bind it to a `const`.
-- [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
-
-**Errors**
-
-- [ ] Any stringly typed error (`Err("…".into())`, `Result<_, String>`), or an error type that is not `std::error::Error + Send + Sync`? Use a `thiserror` enum.
-- [ ] Any domain error without `Clone` and `PartialEq`, though it holds no cause? Derive them.
-- [ ] Any error message that is capitalized, ends in a period, or echoes secret input? Rewrite it.
-- [ ] Any infrastructure error held without `#[source]`, or crossing a boundary untranslated? Keep the cause; translate it into the caller's error type.
-- [ ] Any secret with a derived `Debug`, a `Display` or a `Serialize`? Redact it.
-
-**Tests**
-
-- [ ] Any rejection reason in domain code that no test reaches, or a test that reaches one without asserting on its error? Add the test; pin the error.
-- [ ] Any `Display` and `FromStr` pair without a round-trip property test? Add one.
-- [ ] Any test beyond the budget (a second example of a rule already pinned, a getter, a derive)? Remove it.
-
-**Design**
-
-- [ ] Any generic role name (`Service`, `Manager`, `Helper`, `Utils`, `Misc`)? Name the capability.
-- [ ] Any trait with a single implementor and no test double? Remove it.
-- [ ] Any dependency the standard library covers, or one no code uses? Remove it.
-- [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
-- [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
-- [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
-- [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
+Review checks every other MUST and SHOULD above; nothing else.
 
 ---
 

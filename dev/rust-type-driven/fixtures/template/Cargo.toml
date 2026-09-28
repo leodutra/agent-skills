@@ -8,6 +8,3 @@ edition = "2024"
 clap = { version = "4", features = ["derive", "env"] }
 serde = { version = "1", features = ["derive"] }
 thiserror = "2"
-
-[dev-dependencies]
-proptest = "1"

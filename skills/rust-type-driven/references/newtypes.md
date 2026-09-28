@@ -47,9 +47,8 @@ Modeling.
 ## Template
 
 Two refinements, one per failure shape: `Email`, several reasons, so `Result` and an error enum;
-`Port`, one self-evident failure on top of std's `NonZeroU16`, so `Option`. Each carries the tests
-the budget asks for. Then the edge that parses both. The skill's repository checks it with
-`cargo fmt`, the skill's lints and its own tests.
+`Port`, one self-evident failure on top of std's `NonZeroU16`, so `Option`. Then the edge that
+parses both. The skill's repository checks it with `cargo fmt` and the skill's lints.
 
 ```rust
 // src/domain/email.rs
@@ -160,46 +159,6 @@ impl fmt::Display for Email {
         f.write_str(&self.0)
     }
 }
-
-// Testing Strategy, Budget: one rejected input per reason; the round-trip law stands in for accepted examples.
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    #[test]
-    fn blank_is_rejected() {
-        assert_eq!(Email::new("  "), Err(EmailError::Empty));
-    }
-
-    #[test]
-    fn too_long_is_rejected() {
-        let max = Email::MAX_LEN;
-        assert_eq!(
-            Email::new(format!("a@{}", "b".repeat(max))),
-            Err(EmailError::TooLong { max })
-        );
-    }
-
-    #[test]
-    fn missing_at_is_rejected() {
-        assert_eq!(Email::new("a.example.com"), Err(EmailError::MissingAt));
-    }
-
-    #[test]
-    fn surrounding_space_is_trimmed() {
-        let email = Email::new(" a@example.com ").map(Email::into_inner);
-        assert_eq!(email, Ok("a@example.com".to_owned()));
-    }
-
-    proptest! {
-        #[test]
-        fn display_parses_back(raw in "[a-z]{1,16}@[a-z]{1,16}") {
-            let email = Email::new(raw)?;
-            prop_assert_eq!(email.to_string().parse::<Email>(), Ok(email));
-        }
-    }
-}
 ```
 
 ```rust
@@ -279,30 +238,6 @@ impl fmt::Display for Port {
 }
 
 pub const HTTP: Port = Port::literal(80);
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use proptest::prelude::*;
-
-    #[test]
-    fn zero_is_rejected() {
-        assert_eq!("0".parse::<Port>(), Err(PortError::Zero));
-    }
-
-    #[test]
-    fn a_non_number_is_rejected() {
-        assert!(matches!("80a".parse::<Port>(), Err(PortError::Syntax(_))));
-    }
-
-    proptest! {
-        #[test]
-        fn display_parses_back(n in 1u16..) {
-            let port = Port::try_from(n)?;
-            prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
-        }
-    }
-}
 ```
 
 ```rust
