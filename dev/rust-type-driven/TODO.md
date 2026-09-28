@@ -1,15 +1,26 @@
-# rust-type-driven: deterministic checks over review
+# rust-type-driven: machine checks through existing lints
 
-Written 2026-09-26. The skill's rules are enforced by tools wherever a tool can decide them. A tool is repeatable and cannot be talked out of a verdict; review covers only what no tool can decide (the user's rule, memory `deterministic-checks-over-ai`).
+Written 2026-09-26, narrowed 2026-09-28. The skill points to existing lints (rustc and clippy) configured so they hold every rule they can decide; the model and review check only the rest. A lint is repeatable and cannot be talked out of a verdict, and existing lints cost a project nothing to install (the user's rule, memory `deterministic-checks-over-ai`).
 
 Rules for every item:
-- Name the rule, and the section of `skills/rust-type-driven/SKILL.md` it comes from.
-- Verify the tool and every rule on a scratch crate before it enters the skill. A clean crate passes; one violation per rule fails; a near miss that is fine passes.
-- Every rule or config entry in the skill carries a comment: what it catches, and the rule it holds.
-- A rule a tool now holds leaves the review checklist.
-- Development files stay here, out of `skills/`. Scratch crates live in `$TMPDIR` and are never committed.
-- One commit per tier. Nothing is pushed until the user says so.
-- `verify.py` re-checks every part the skill prints, from the skill's own text, and the template in `references/newtypes.md`: `python3 dev/rust-type-driven/verify.py` (a missing tool binary: `AST_GREP=/path/to/ast-grep`). Each part gets fixtures under `fixtures/<part>/`, where a flagged line ends with `expect: <rule>`.
+- Only lints that already exist in rustc or clippy, configured in `skills/rust-type-driven/assets/lints.toml` and `assets/clippy.toml`. No custom-built tools, no extra installs.
+- Every entry carries a comment: what it catches, and the rule and SKILL.md section it holds.
+- Verify each lint name on the installed toolchain, with a violation and a near miss in `fixtures/clippy/`, before it enters the skill.
+- A rule a lint holds leaves the review checklist.
+- Development files stay here, out of `skills/`.
+- `python3 dev/rust-type-driven/verify.py` checks both assets on `fixtures/clippy/` (a flagged line ends with `expect: <lint>`), and the template in `references/newtypes.md` (fmt, clippy, test). It needs only cargo.
+
+## Stock lints only, 2026-09-28
+
+The user wanted machine enforcement through simple rules in clippy or an existing lint, not custom tooling, and said dylint was "a lot of hassle for 6 rules". Their original idea was that the skill points to clippy and other tools with enough configuration to hold its rules, which takes the work off the model and makes results deterministic.
+
+- [x] **Removed:** dylint (the `lints/` crate and its six lints), the 13 ast-grep rules, rejection coverage (cargo-llvm-cov plus a jq join), and dependency approval (jq plus cargo-machete). Every rule they held stays in the skill and returns to the review checklist, which is now grouped (types and parsing, errors, tests, design).
+- [x] **Added three existing clippy lints** that held rules the custom tools had: `infallible_try_from` (a `TryFrom` that cannot fail), `result_unit_err` (`()` as a public fn's error), and `partial_pub_fields` (a struct mixing `pub` and private fields: a newtype is a tag or a refinement).
+- [x] **Configs moved out of SKILL.md** into `assets/lints.toml` and `assets/clippy.toml`. SKILL.md points to them and says what they hold, so the model does not carry the config. SKILL.md went from 1045 to 588 lines.
+- [x] `verify.py`: clippy 29 findings of 29 expected, near misses clean; template passes fmt, clippy and test.
+- Considered, not added: rustc's `unused_crate_dependencies` reports every dependency a test target does not use, so it is too noisy; cargo-machete needs an install.
+
+Everything below is history: the tiers and the newtype guide's tooling were built, verified, pushed (up to `049b2e7`), and then removed by this decision.
 
 ## Done
 
@@ -94,12 +105,13 @@ The user supplied a newtype guide ("Rust newtypes: parse, don't validate") and s
   - the consistency-pass section did not say it was superseded.
 - [x] **Docs aligned.** `docs/RUST_BACKEND_STACK.md`'s `newtypes/` folder became `domain/`, as the blueprint requires. The blueprint got Rust-specific edits here too (`Port(NonZeroU16)`, a `pub` field, a rust-type-driven sentence); the user ruled the blueprint language-neutral, so those came out again and only the guide's language-neutral rules went in (every way in is the parse, normalize at construction, no invalid default, immutable all the way down).
 
-## Stays with review (no tool can decide these)
+## Stays with review (no existing lint can decide these)
 
+Everything in the Code Review Checklist's review part. Before the tooling was removed, this list was:
 A sentinel or a pair of `Option`s standing for exclusive states; validation after parsing; a `clone()` in a hot path that is needed but undocumented; an `assert!` guarding what should be a type; cancellation safety of async workflows. From the guide: validation duplicated instead of delegated; `Option` for more than one failure; checking before normalizing; a mutator that can break the invariant; a `Display`/`FromStr` pair without its round-trip test; secrets in `Debug`, `Display`, `Serialize` or messages; a hand-written `Borrow` that disagrees with `Eq`/`Hash`; a rejection through `?` or `ok_or`, and a test that reaches a rejection without asserting on it.
 
 ## Left to the user
 
-- Push `main`: the newtype guide's six commits, from abc6c72 on, are local. Projects get the new dylint lints only after the push.
-- `llvm-tools-preview` is now installed on stable (26 MB); `rustup component remove llvm-tools-preview --toolchain stable` undoes it.
+- Push the stock-lints commit when ready.
+- Toolchain parts installed for the removed tools, now unused: `rustup component remove llvm-tools-preview --toolchain stable` (26 MB), and `rustup toolchain uninstall nightly-2026-08-20` (1,451 MB, dylint's nightly).
 - `~/Work/ed-galnet-scraper/skills/rust-type-driven` is a separate copy of the skill; it is not updated by this work.

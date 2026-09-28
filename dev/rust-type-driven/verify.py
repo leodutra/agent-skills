@@ -1,14 +1,17 @@
 #!/usr/bin/env python3
-"""Verify the checks skills/rust-type-driven/SKILL.md tells projects to run, exactly as the skill prints them.
+"""Verify the lint configuration skills/rust-type-driven ships, and its template, with the stock toolchain.
 
-Each part copies the config blocks out of SKILL.md into a scratch project built from fixtures/<part>/, runs
-the tool, and compares what it reports with the fixtures' markers: a line that must be flagged ends with a
-comment `expect: <rule>[, <rule>...]` (a rule repeated once per finding on that line). Every other line is
-clean or a near miss, and must not be flagged. Exit 0 when every part matches, 1 otherwise.
+    verify.py [part ...]        parts: clippy, template (default: both)
 
-    verify.py [part ...]        parts: clippy, ast-grep, dependencies, coverage, dylint, template (default: all)
+clippy: copies assets/lints.toml and assets/clippy.toml into a crate built from fixtures/clippy/ and runs
+clippy. A line that must be flagged ends with `expect: <lint>[, <lint>...]` (a lint repeated once per
+finding on that line); every other line is clean or a near miss and must not be flagged.
 
-Tools come from PATH: put release binaries that are not installed first on it, e.g. PATH=/tmp/tools:$PATH.
+template: builds a crate from references/newtypes.md's template (the `// src/...` blocks) around
+fixtures/template/, with the skill's lints, and requires cargo fmt --check, clippy and cargo test to pass.
+
+Exit 0 when every part passes, 1 otherwise. Needs only cargo, rustfmt and clippy (and the network the
+first time, for the template's crates).
 """
 import collections
 import json
@@ -20,40 +23,11 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SKILL = os.path.join(HERE, "..", "..", "skills", "rust-type-driven", "SKILL.md")
-REFERENCE = os.path.join(HERE, "..", "..", "skills", "rust-type-driven", "references", "newtypes.md")
-EXPECT = re.compile(r"(?://|#)\s*expect:\s*(.+?)\s*$")
-
-
-def blocks(lang):
-    """Fenced blocks of one language from the skill, as (first line, body)."""
-    text = open(SKILL).read()
-    return [(b.split("\n", 1)[0], b) for b in re.findall(rf"```{lang}\n(.*?)```", text, re.S)]
-
-
-def expected(root):
-    """The expect markers under root, as a multiset of (relative file, 1-based line, rule)."""
-    out = collections.Counter()
-    for folder, _, files in os.walk(root):
-        for name in (n for n in files if n.endswith((".rs", ".toml"))):
-            path = os.path.join(folder, name)
-            for n, line in enumerate(open(path, encoding="utf-8"), 1):
-                m = EXPECT.search(line)
-                if m:
-                    for rule in m.group(1).split(","):
-                        out[(os.path.relpath(path, root), n, rule.strip())] += 1
-    return out
-
-
-def report(part, want, got):
-    missing, extra = want - got, got - want
-    for (f, n, rule), k in sorted(missing.items()):
-        print(f"  {part}: MISSED  {f}:{n} {rule}" + (f" x{k}" if k > 1 else ""))
-    for (f, n, rule), k in sorted(extra.items()):
-        print(f"  {part}: EXTRA   {f}:{n} {rule}" + (f" x{k}" if k > 1 else ""))
-    ok = not missing and not extra
-    print(f"{part}: {'ok' if ok else 'FAIL'} ({sum(got.values())} findings, {sum(want.values())} expected)")
-    return ok
+SKILL_DIR = os.path.join(HERE, "..", "..", "skills", "rust-type-driven")
+LINTS = os.path.join(SKILL_DIR, "assets", "lints.toml")
+CLIPPY = os.path.join(SKILL_DIR, "assets", "clippy.toml")
+REFERENCE = os.path.join(SKILL_DIR, "references", "newtypes.md")
+EXPECT = re.compile(r"//\s*expect:\s*(.+?)\s*$")
 
 
 def scratch(part):
@@ -62,40 +36,34 @@ def scratch(part):
     return root
 
 
-def write_clippy_config(root, manifest):
-    """Cargo.toml as manifest plus the skill's [lints] block, and the skill's clippy.toml."""
-    toml = [body for first, body in blocks("toml")]
-    lints = next(b for b in toml if b.startswith("# Cargo.toml"))
-    config = next(b for b in toml if b.startswith("# clippy.toml"))
+def adopt(root, manifest):
+    """Cargo.toml as manifest plus the skill's lints, and the skill's clippy.toml, as a project adopts them."""
     with open(os.path.join(root, "Cargo.toml"), "w") as f:
-        f.write(manifest + "\n" + lints.split("\n", 1)[1])
-    with open(os.path.join(root, "clippy.toml"), "w") as f:
-        f.write(config.split("\n", 1)[1])
+        f.write(manifest + "\n" + open(LINTS).read())
+    shutil.copy(CLIPPY, os.path.join(root, "clippy.toml"))
 
 
-def write_ast_grep_config(root):
-    """sgconfig.yml and every .ast-grep/ file the skill prints."""
-    for first, body in blocks("yaml"):
-        m = re.match(r"# (sgconfig\.yml|\.ast-grep/[\w-]+/[\w-]+\.yml)", first)
-        if m:
-            path = os.path.join(root, m.group(1))
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as f:
-                f.write(body)
-
-
-def coverage_commands():
-    section = open(SKILL).read().split("### Rejection coverage", 1)[1].split("\n### ", 1)[0]
-    return re.search(r"```bash\n(.*?)```", section, re.S).group(1)
+def expected(root):
+    """The expect markers under root, as a multiset of (relative file, 1-based line, lint)."""
+    out = collections.Counter()
+    for folder, _, files in os.walk(root):
+        for name in (n for n in files if n.endswith(".rs")):
+            path = os.path.join(folder, name)
+            for n, line in enumerate(open(path, encoding="utf-8"), 1):
+                m = EXPECT.search(line)
+                if m:
+                    for lint in m.group(1).split(","):
+                        out[(os.path.relpath(path, root), n, lint.strip())] += 1
+    return out
 
 
 def check_clippy():
-    """The Cargo.toml lints and clippy.toml of Enforce with Tools, on a crate with one violation per lint."""
+    """assets/lints.toml and assets/clippy.toml, on a crate with one violation per lint and near misses."""
     root = scratch("clippy")
-    write_clippy_config(root, '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n')
+    adopt(root, '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n')
     want = expected(root)  # before the build, which fills target/
     run = subprocess.run(["cargo", "clippy", "--quiet", "--all-targets", "--message-format=json", "--", "-D", "warnings"],
-                         cwd=root, capture_output=True, text=True, env={**os.environ, "CARGO_TARGET_DIR": os.path.join(root, "target")})
+                         cwd=root, capture_output=True, text=True)
     got, seen = collections.Counter(), set()
     for line in run.stdout.splitlines():
         msg = json.loads(line)
@@ -108,138 +76,34 @@ def check_clippy():
         if (key, span["column_start"]) not in seen:  # the lib and lib-test targets report the same finding twice
             seen.add((key, span["column_start"]))
             got[key] += 1
-    return report("clippy", want, got)
-
-
-def check_ast_grep():
-    """sgconfig.yml and the .ast-grep/rules files of Enforce with Tools, on a tree with every rule's cases."""
-    root = scratch("ast-grep")
-    write_ast_grep_config(root)
-    tool = os.environ.get("AST_GREP", "ast-grep")
-    run = subprocess.run([tool, "scan", "--json=compact"], cwd=root, capture_output=True, text=True)
-    got = collections.Counter((d["file"], d["range"]["start"]["line"] + 1, d["ruleId"]) for d in json.loads(run.stdout or "[]"))
-    ok = report("ast-grep", expected(root), got)
-    if run.returncode not in (0, 1):  # 8: a rule it could not load
-        print("ast-grep: FAIL (ast-grep did not run the rules):\n" + run.stderr[-1500:])
-        ok = False
-    if got and run.returncode == 0:
-        print("ast-grep: FAIL (findings, but `ast-grep scan` exited 0, so it would not gate CI)")
-        ok = False
-    return ok
-
-
-def check_dependencies():
-    """The two commands under Dependencies, run as the skill prints them, on a crate with each case."""
-    root = scratch("dependencies")
-    section = open(SKILL).read().split("### Dependencies", 1)[1]
-    commands = re.search(r"```bash\n(.*?)```", section, re.S).group(1)
-    approved = next(l for l in commands.splitlines() if l.startswith("cargo metadata"))
-    machete = next(l for l in commands.splitlines() if l.startswith("cargo machete"))
-    manifest = open(os.path.join(root, "Cargo.toml")).read().splitlines()
-    line_of, table = {}, ""
-    for n, l in enumerate(manifest, 1):  # a dependency's own line, in a dependency table only
-        if l.startswith("["):
-            table = l
-        elif table.endswith("dependencies]") and "metadata" not in table and re.match(r"\S+\s*=", l):
-            line_of[re.match(r"(\S+)\s*=", l).group(1)] = n
-    got = collections.Counter()
-    a = subprocess.run(["bash", "-c", approved], cwd=root, capture_output=True, text=True)
-    for dep in re.findall(r"^\S+: (\S+) \(", a.stdout, re.M):
-        got[("Cargo.toml", line_of[dep], "unapproved-dependency")] += 1
-    m = subprocess.run(["bash", "-c", machete], cwd=root, capture_output=True, text=True)
-    for dep in re.findall(r"^\t(\S+)$", m.stdout, re.M):
-        got[("Cargo.toml", line_of[dep], "unused-dependency")] += 1
-    ok = report("dependencies", expected(root), got)
-    for name, run in (("approval check", a), ("cargo machete", m)):
-        if run.returncode == 0:
-            print(f"dependencies: FAIL ({name} exited 0 on findings, so it would not gate CI)")
-            ok = False
-    return ok
-
-
-def check_coverage():
-    """The rule file and the commands under Rejection coverage, on rejections tested and not."""
-    root = scratch("coverage")
-    write_ast_grep_config(root)  # the listing rule; no other rule runs here
-    want = expected(root)
-    run = subprocess.run(["bash", "-c", "set -e\n" + coverage_commands()], cwd=root, capture_output=True, text=True)
-    got = collections.Counter((f, int(n), "untested-rejection")
-                              for f, n in re.findall(r"^(\S+?):(\d+): no test reaches", run.stdout, re.M))
-    ok = report("coverage", want, got)
-    if got and run.returncode == 0:
-        print("coverage: FAIL (untested rejections, but the commands exited 0, so they would not gate CI)")
-        ok = False
-    if not got and run.returncode != 0:
-        print("coverage: FAIL (no findings parsed; a command failed):\n" + run.stderr[-2000:])
-        ok = False
-    return ok
-
-
-LINTS = ("pub_field_on_invariant_type", "refinement_escape", "error_not_std_error", "blocking_in_async", "primitive_domain_param",
-         "single_impl_trait")
-
-
-def check_dylint():
-    """The library under lints/, adopted as the skill says, with its command, on one case per lint."""
-    root = scratch("dylint")
-    section = open(SKILL).read().split("### Type-aware lints", 1)[1]
-    adoption = re.search(r"```toml\n# Cargo\.toml, at the workspace root.*?\n(.*?)```", section, re.S).group(1)
-    libraries = re.search(r"^libraries = .*$", adoption, re.M).group(0)
-    local = 'libraries = [{ path = "%s" }]' % os.path.join(HERE, "lints")  # this checkout's copy, not the published one
-    metadata = adoption.replace(libraries, local).split("[lints.rust]")[0]
-    with open(os.path.join(root, "Cargo.toml"), "a") as f:
-        f.write("\n" + metadata)
-    command = next(l for l in re.search(r"```bash\n(.*?)```", section, re.S).group(1).splitlines() if "cargo dylint" in l)
-    want = expected(root)
-    run = subprocess.run(["bash", "-c", command + " --message-format=json"], cwd=root, capture_output=True, text=True)
-    got, seen = collections.Counter(), set()
-    for line in run.stdout.splitlines():
-        try:
-            msg = json.loads(line)
-        except ValueError:
-            continue
-        code = ((msg.get("message") or {}).get("code") or {}).get("code") if msg.get("reason") == "compiler-message" else None
-        if code not in LINTS:
-            continue
-        span = next((s for s in msg["message"]["spans"] if s["is_primary"]), None)
-        key = (span["file_name"], span["line_start"], code)
-        if (key, span["column_start"]) not in seen:  # the lib and lib-test targets report the same finding twice
-            seen.add((key, span["column_start"]))
-            got[key] += 1
-    ok = report("dylint", want, got)
-    if got and run.returncode == 0:
-        print("dylint: FAIL (findings, but the command exited 0, so it would not gate CI)")
-        ok = False
-    if not got and run.returncode != 0:
-        print("dylint: FAIL (no findings parsed; the command failed):\n" + run.stderr[-2000:])
-        ok = False
+    missing, extra = want - got, got - want
+    for (f, n, lint), k in sorted(missing.items()):
+        print(f"  clippy: MISSED  {f}:{n} {lint}" + (f" x{k}" if k > 1 else ""))
+    for (f, n, lint), k in sorted(extra.items()):
+        print(f"  clippy: EXTRA   {f}:{n} {lint}" + (f" x{k}" if k > 1 else ""))
+    ok = not missing and not extra
+    print(f"clippy: {'ok' if ok else 'FAIL'} ({sum(got.values())} findings, {sum(want.values())} expected)")
     return ok
 
 
 def check_template():
-    """The template in references/newtypes.md, under every check the skill prints for it: each must pass clean."""
+    """The template in references/newtypes.md, with the skill's lints: fmt, clippy and its tests must all pass."""
     root = scratch("template")
     for path, body in re.findall(r"```rust\n// (src/\S+)\n(.*?)```", open(REFERENCE).read(), re.S):
         with open(os.path.join(root, path), "w") as f:
             f.write(body)
-    write_clippy_config(root, open(os.path.join(root, "Cargo.toml")).read())
-    write_ast_grep_config(root)
-    env = {**os.environ, "CARGO_TARGET_DIR": os.path.join(root, "target")}
+    adopt(root, open(os.path.join(root, "Cargo.toml")).read())
     ok = True
-    for name, command in (("cargo fmt --check", "cargo fmt --check"),
-                          ("clippy", "cargo clippy --quiet --all-targets -- -D warnings"),
-                          ("ast-grep scan", "ast-grep scan"),
-                          ("rejection coverage", "set -e\n" + coverage_commands())):
-        run = subprocess.run(["bash", "-c", command], cwd=root, capture_output=True, text=True, env=env)
+    for command in ("cargo fmt --check", "cargo clippy --quiet --all-targets -- -D warnings", "cargo test --quiet"):
+        run = subprocess.run(command.split(), cwd=root, capture_output=True, text=True)
         if run.returncode != 0:
-            print(f"template: FAIL ({name}):\n" + (run.stdout + run.stderr)[-2000:])
+            print(f"template: FAIL ({command}):\n" + (run.stdout + run.stderr)[-2000:])
             ok = False
-    print(f"template: {'ok' if ok else 'FAIL'} (fmt, clippy, ast-grep, rejection coverage)")
+    print(f"template: {'ok' if ok else 'FAIL'} (fmt, clippy, test)")
     return ok
 
 
-PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep, "dependencies": check_dependencies, "coverage": check_coverage,
-         "dylint": check_dylint, "template": check_template}
+PARTS = {"clippy": check_clippy, "template": check_template}
 
 if __name__ == "__main__":
     wanted = sys.argv[1:] or list(PARTS)

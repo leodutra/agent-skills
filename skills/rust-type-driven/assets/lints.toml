@@ -1,0 +1,60 @@
+# The rust-type-driven lints: paste into Cargo.toml (in a workspace, as [workspace.lints.rust] and
+# [workspace.lints.clippy], with `lints.workspace = true` in each member). Each lint names what it
+# catches, then the rule it holds and the SKILL.md section that rule lives in.
+[lints.rust]
+# Any `unsafe` at all. Philosophy: unsafe minimized. `forbid` cannot be lifted in code: a crate that
+# truly needs unsafe sets this to "deny" and puts #[expect(unsafe_code, reason = "…")] on each item.
+unsafe_code = "forbid"
+# A public type without Debug. references/newtypes.md, std traits: every newtype and every error provides Debug.
+missing_debug_implementations = "deny"
+
+[lints.clippy]
+# A `TryFrom` whose error is `Infallible`. Newtypes: every input is valid, so implement `From`.
+infallible_try_from = "deny"
+# A public fn returning `Result<_, ()>`. Error Modeling: `()` MUST NOT be an error type.
+result_unit_err = "deny"
+# A struct with some `pub` and some private fields. Type-Driven Design: a newtype's field says what it is,
+# `pub` for a tag and private for a refinement; a mix leaks the refinement's invariant.
+partial_pub_fields = "deny"
+# A type deriving PartialEq that could derive Eq. references/newtypes.md, std traits, and Error Modeling: Eq wherever it holds.
+derive_partial_eq_without_eq = "deny"
+# `.unwrap()` outside tests. Panic policy: no unwrap in production paths; Behavior Rules: functions are total.
+unwrap_used = "deny"
+# `.expect()` outside tests. Panic policy: no expect in production paths.
+expect_used = "deny"
+# `panic!` outside tests. Panic policy: no panic in production paths; Behavior Rules: no panic on valid input.
+panic = "deny"
+# `todo!()`, a placeholder that panics. Behavior Rules: functions are total.
+todo = "deny"
+# `unimplemented!()`, a placeholder that panics. Behavior Rules: functions are total.
+unimplemented = "deny"
+# `unreachable!()`. Invariants and Assertions: prefer an exhaustive match, which the compiler checks.
+unreachable = "deny"
+# `_ =>` over several variants of your own enum. Behavior Rules: match exhaustively, so a new variant breaks the build.
+wildcard_enum_match_arm = "deny"
+# `_ =>` standing for a single variant, which the lint above skips. Same rule.
+match_wildcard_for_single_variants = "deny"
+# A std `MutexGuard` held across `.await`. Async, task boundaries: never hold one across an await.
+await_holding_lock = "deny"
+# A `RefCell` borrow held across `.await`. Async, task boundaries: the same hazard, and Mutation discipline.
+await_holding_refcell_ref = "deny"
+# A future that is not `Send`. Dependency Injection and task boundaries: a future spawned multithreaded must be Send.
+future_not_send = "deny"
+# A parameter taken by value but never consumed. Behavior Rules: borrow inputs when ownership is not required.
+needless_pass_by_value = "deny"
+# A clone whose original is never used again. Allocation discipline: borrow rather than clone when ownership stays.
+redundant_clone = "deny"
+# A struct with more than three bools. Type-Driven Design: exclusive states are one enum, not bool flags.
+struct_excessive_bools = "deny"
+# A function with more than three bool parameters. Same rule, at the call site.
+fn_params_excessive_bools = "deny"
+# The types clippy.toml bans. Error Modeling (no anyhow or eyre in libraries); Mutation discipline (no interior mutability).
+disallowed_types = "deny"
+# The functions clippy.toml bans. Behavior Rules: time and randomness are parameters in domain logic.
+disallowed_methods = "deny"
+# An `unsafe` block without a `// SAFETY:` comment. Philosophy: every unsafe block documents its invariants.
+undocumented_unsafe_blocks = "deny"
+# A bare `#[allow]`. Enforce with Tools: silence with `#[expect]`, which fails once the lint no longer fires.
+allow_attributes = "deny"
+# A silencing attribute with no `reason`. Enforce with Tools: a tool's verdict is never waved away without saying why.
+allow_attributes_without_reason = "deny"

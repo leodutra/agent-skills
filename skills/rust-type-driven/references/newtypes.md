@@ -2,22 +2,20 @@
 
 Read with the Newtypes section of SKILL.md, which says which constructor to write, what to name it,
 and what a refinement may expose. This file says how a refinement meets the rest of the ecosystem,
-and ends with a template checked against the skill's own tools. The tool named after a rule holds
+and ends with a template that passes the skill's lints. A lint named after a rule holds
 it (Enforce with Tools); the rest is review's.
 
 ## Errors
 
 - A refinement's error is a `thiserror` enum, so it implements
   `std::error::Error + Send + Sync + 'static`: clap, anyhow and `Box<dyn Error>` require it.
-  (dylint: `error_not_std_error`)
+  (clippy: `result_unit_err`, for `()`)
 - Its messages are lowercase, with no trailing period, and state what is wrong:
-  `"port must be non-zero"`. (ast-grep: `error-message-style`)
-- It derives `Debug, Clone, PartialEq, Eq`, so tests assert on variants. (ast-grep:
-  `domain-error-derives`; clippy: `derive_partial_eq_without_eq`)
+  `"port must be non-zero"`.
+- It derives `Debug, Clone, PartialEq, Eq`, so tests assert on variants. (clippy:
+  `derive_partial_eq_without_eq`)
 - In a public library it is `#[non_exhaustive]`. A cause is wrapped with `#[from]` or `#[source]`.
-  (ast-grep: `infra-error-without-source`, for the infrastructure errors it lists)
-- `String` is never the error type (ast-grep: `stringly-typed-error`). A message never echoes
-  secret input.
+- `String` is never the error type. A message never echoes secret input.
 
 ## serde
 
@@ -26,7 +24,7 @@ it (Enforce with Tools); the rest is review's.
   `TryFrom<Inner>` and `From<Self> for Inner`. A bad value then fails deserialization with the
   constructor's own message.
 - A refinement never has a plain `#[derive(Deserialize)]` or `#[serde(transparent)]`: both build
-  it without the constructor. (ast-grep: `refinement-bypass`)
+  it without the constructor.
 - A tag MAY use `#[serde(transparent)]`: it has no invariant to skip.
 - A closed set is an enum with `#[serde(rename_all = "kebab-case")]`, not a refinement over a
   string.
@@ -44,14 +42,13 @@ it (Enforce with Tools); the rest is review's.
 ## Databases (sqlx, diesel)
 
 - A refinement never has `#[sqlx(transparent)]`: decoding builds it without the constructor.
-  (ast-grep: `refinement-bypass`)
 - `Decode` (sqlx) or `FromSql` (diesel) decodes the inner type, then calls `T::try_from(inner)`
   and maps the error. `Encode` or `ToSql` may delegate to the inner type.
 
 ## std traits
 
-- Every newtype provides `Debug, Clone, PartialEq, Eq, Hash` (ast-grep: `newtype-derives`;
-  clippy: `missing_debug_implementations`, `derive_partial_eq_without_eq`); `Copy` when the inner
+- Every newtype provides `Debug, Clone, PartialEq, Eq, Hash` (clippy:
+  `missing_debug_implementations`, `derive_partial_eq_without_eq`); `Copy` when the inner
   type is `Copy`; `PartialOrd` and `Ord` when an order means something.
 - `Display` when there is a canonical text form: `FromStr` and clap's defaults invert it.
 - `AsRef<str>`, and `Borrow<str>` only when `Eq`, `Hash` and `Ord` agree with the inner type's,
@@ -60,15 +57,14 @@ it (Enforce with Tools); the rest is review's.
 - A secret hand-writes a redacted `Debug`, has no `Display`, and no `Serialize` unless it is
   required.
 - A refinement never implements `Deref`, `DerefMut` or `AsMut` to its inner value, nor returns
-  `&mut` to it. (dylint: `refinement_escape`)
+  `&mut` to it.
 
 ## Template
 
 Two refinements, one per failure shape: `Email`, several reasons, so `Result` and an error enum;
 `Port`, one self-evident failure on top of std's `NonZeroU16`, so `Option`. Each carries the tests
-the budget asks for. Then the edge that parses both. The code is formatted by `cargo fmt`, and the
-skill's repository checks it against the skill's clippy lints, ast-grep rules and rejection
-coverage.
+the budget asks for. Then the edge that parses both. The skill's repository checks it with
+`cargo fmt`, the skill's lints and its own tests.
 
 ```rust
 // src/domain/email.rs

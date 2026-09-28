@@ -51,6 +51,16 @@ pub struct NoDebug(pub u8); // expect: missing_debug_implementations
 #[derive(Debug, Clone, PartialEq)] // expect: derive_partial_eq_without_eq
 pub struct NoEq(u8);
 
+#[derive(Debug)]
+pub struct Level(u8);
+impl TryFrom<u8> for Level { // expect: infallible_try_from
+    type Error = std::convert::Infallible;
+    fn try_from(n: u8) -> Result<Self, Self::Error> { Ok(Self(n)) }
+}
+pub fn unit_error(n: u8) -> Result<u8, ()> { if n > 0 { Ok(n) } else { Err(()) } } // expect: result_unit_err
+#[derive(Debug)]
+pub struct Mixed { pub shown: u8, hidden: u8 } // expect: partial_pub_fields
+
 #[allow(dead_code)] // expect: allow_attributes, allow_attributes_without_reason
 fn quiet() {}
 
@@ -66,6 +76,14 @@ pub fn exhaustive(t: &Two) -> u8 {
 }
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Ratio(f64);
+#[derive(Debug)]
+pub struct Tag(pub u64);
+#[derive(Debug)]
+pub struct Refinement { value: u8 }
+impl Refinement {
+    #[must_use]
+    pub fn value(&self) -> u8 { self.value + u8::from(Mixed { shown: 0, hidden: 0 }.hidden == 0) + Level(0).0 }
+}
 pub struct Secret(String);
 impl Secret {
     #[must_use]

@@ -1,0 +1,25 @@
+# The rust-type-driven clippy configuration: copy to each crate's root as clippy.toml (a crate without
+# one inherits the workspace's). Each entry names the rule it holds and its SKILL.md section.
+# Panic policy: unwrap, expect and panic MAY appear in tests.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+# `allow-invalid` keeps an entry quiet in a crate that does not depend on that library.
+disallowed-types = [
+  # Error Modeling: libraries return typed errors; anyhow and eyre stay at process boundaries.
+  # Library and domain crates only; a binary crate's own clippy.toml leaves these two out.
+  { path = "anyhow::Error", reason = "library code returns typed errors", allow-invalid = true },
+  { path = "eyre::Report", reason = "library code returns typed errors", allow-invalid = true },
+  # Mutation discipline: domain types hold no interior mutability. Domain crates only.
+  { path = "std::cell::Cell", reason = "domain types hold no interior mutability" },
+  { path = "std::cell::RefCell", reason = "domain types hold no interior mutability" },
+  { path = "std::sync::Mutex", reason = "domain types hold no interior mutability" },
+]
+disallowed-methods = [
+  # Behavior Rules: time and randomness are parameters, which keeps domain tests deterministic. Domain crates only.
+  { path = "std::time::SystemTime::now", reason = "pass the time in" },
+  { path = "std::time::Instant::now", reason = "pass the time in" },
+  { path = "chrono::Utc::now", reason = "pass the time in", allow-invalid = true },
+  { path = "rand::random", reason = "pass the source of randomness in", allow-invalid = true },
+  { path = "rand::thread_rng", reason = "pass the source of randomness in", allow-invalid = true },
+]
