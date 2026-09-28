@@ -6,7 +6,7 @@ the tool, and compares what it reports with the fixtures' markers: a line that m
 comment `expect: <rule>[, <rule>...]` (a rule repeated once per finding on that line). Every other line is
 clean or a near miss, and must not be flagged. Exit 0 when every part matches, 1 otherwise.
 
-    verify.py [part ...]        parts: clippy, ast-grep, dependencies, coverage, dylint (default: all)
+    verify.py [part ...]        parts: clippy, ast-grep, dependencies, coverage, dylint, template (default: all)
 
 Tools come from PATH: put release binaries that are not installed first on it, e.g. PATH=/tmp/tools:$PATH.
 """
@@ -21,6 +21,7 @@ import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SKILL = os.path.join(HERE, "..", "..", "skills", "rust-type-driven", "SKILL.md")
+REFERENCE = os.path.join(HERE, "..", "..", "skills", "rust-type-driven", "references", "newtypes.md")
 EXPECT = re.compile(r"(?://|#)\s*expect:\s*(.+?)\s*$")
 
 
@@ -61,16 +62,37 @@ def scratch(part):
     return root
 
 
-def check_clippy():
-    """The Cargo.toml lints and clippy.toml of Enforce with Tools, on a crate with one violation per lint."""
-    root = scratch("clippy")
+def write_clippy_config(root, manifest):
+    """Cargo.toml as manifest plus the skill's [lints] block, and the skill's clippy.toml."""
     toml = [body for first, body in blocks("toml")]
     lints = next(b for b in toml if b.startswith("# Cargo.toml"))
     config = next(b for b in toml if b.startswith("# clippy.toml"))
     with open(os.path.join(root, "Cargo.toml"), "w") as f:
-        f.write('[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n\n' + lints.split("\n", 1)[1])
+        f.write(manifest + "\n" + lints.split("\n", 1)[1])
     with open(os.path.join(root, "clippy.toml"), "w") as f:
         f.write(config.split("\n", 1)[1])
+
+
+def write_ast_grep_config(root):
+    """sgconfig.yml and every .ast-grep/ file the skill prints."""
+    for first, body in blocks("yaml"):
+        m = re.match(r"# (sgconfig\.yml|\.ast-grep/[\w-]+/[\w-]+\.yml)", first)
+        if m:
+            path = os.path.join(root, m.group(1))
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            with open(path, "w") as f:
+                f.write(body)
+
+
+def coverage_commands():
+    section = open(SKILL).read().split("### Rejection coverage", 1)[1].split("\n### ", 1)[0]
+    return re.search(r"```bash\n(.*?)```", section, re.S).group(1)
+
+
+def check_clippy():
+    """The Cargo.toml lints and clippy.toml of Enforce with Tools, on a crate with one violation per lint."""
+    root = scratch("clippy")
+    write_clippy_config(root, '[package]\nname = "fixture"\nversion = "0.1.0"\nedition = "2024"\n')
     want = expected(root)  # before the build, which fills target/
     run = subprocess.run(["cargo", "clippy", "--quiet", "--all-targets", "--message-format=json", "--", "-D", "warnings"],
                          cwd=root, capture_output=True, text=True, env={**os.environ, "CARGO_TARGET_DIR": os.path.join(root, "target")})
@@ -92,13 +114,7 @@ def check_clippy():
 def check_ast_grep():
     """sgconfig.yml and the .ast-grep/rules files of Enforce with Tools, on a tree with every rule's cases."""
     root = scratch("ast-grep")
-    for first, body in blocks("yaml"):
-        m = re.match(r"# (sgconfig\.yml|\.ast-grep/[\w-]+/[\w-]+\.yml)", first)
-        if m:
-            path = os.path.join(root, m.group(1))
-            os.makedirs(os.path.dirname(path), exist_ok=True)
-            with open(path, "w") as f:
-                f.write(body)
+    write_ast_grep_config(root)
     tool = os.environ.get("AST_GREP", "ast-grep")
     run = subprocess.run([tool, "scan", "--json=compact"], cwd=root, capture_output=True, text=True)
     got = collections.Counter((d["file"], d["range"]["start"]["line"] + 1, d["ruleId"]) for d in json.loads(run.stdout or "[]"))
@@ -144,15 +160,9 @@ def check_dependencies():
 def check_coverage():
     """The rule file and the commands under Rejection coverage, on rejections tested and not."""
     root = scratch("coverage")
-    section = open(SKILL).read().split("### Rejection coverage", 1)[1].split("\n### ", 1)[0]
-    rule = re.search(r"```yaml\n(# (\S+?),.*?)```", section, re.S)
-    path = os.path.join(root, rule.group(2))
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w") as f:
-        f.write(rule.group(1))
-    commands = re.search(r"```bash\n(.*?)```", section, re.S).group(1)
+    write_ast_grep_config(root)  # the listing rule; no other rule runs here
     want = expected(root)
-    run = subprocess.run(["bash", "-c", "set -e\n" + commands], cwd=root, capture_output=True, text=True)
+    run = subprocess.run(["bash", "-c", "set -e\n" + coverage_commands()], cwd=root, capture_output=True, text=True)
     got = collections.Counter((f, int(n), "untested-rejection")
                               for f, n in re.findall(r"^(\S+?):(\d+): no test reaches", run.stdout, re.M))
     ok = report("coverage", want, got)
@@ -206,8 +216,30 @@ def check_dylint():
     return ok
 
 
+def check_template():
+    """The template in references/newtypes.md, under every check the skill prints for it: each must pass clean."""
+    root = scratch("template")
+    for path, body in re.findall(r"```rust\n// (src/\S+)\n(.*?)```", open(REFERENCE).read(), re.S):
+        with open(os.path.join(root, path), "w") as f:
+            f.write(body)
+    write_clippy_config(root, open(os.path.join(root, "Cargo.toml")).read())
+    write_ast_grep_config(root)
+    env = {**os.environ, "CARGO_TARGET_DIR": os.path.join(root, "target")}
+    ok = True
+    for name, command in (("cargo fmt --check", "cargo fmt --check"),
+                          ("clippy", "cargo clippy --quiet --all-targets -- -D warnings"),
+                          ("ast-grep scan", "ast-grep scan"),
+                          ("rejection coverage", "set -e\n" + coverage_commands())):
+        run = subprocess.run(["bash", "-c", command], cwd=root, capture_output=True, text=True, env=env)
+        if run.returncode != 0:
+            print(f"template: FAIL ({name}):\n" + (run.stdout + run.stderr)[-2000:])
+            ok = False
+    print(f"template: {'ok' if ok else 'FAIL'} (fmt, clippy, ast-grep, rejection coverage)")
+    return ok
+
+
 PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep, "dependencies": check_dependencies, "coverage": check_coverage,
-         "dylint": check_dylint}
+         "dylint": check_dylint, "template": check_template}
 
 if __name__ == "__main__":
     wanted = sys.argv[1:] or list(PARTS)

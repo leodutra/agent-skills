@@ -32,9 +32,11 @@ type OrderId    = Brand<string, "OrderId">
 ```
 
 ```rust
-struct CustomerId(String);
-struct OrderId(String);
+pub struct CustomerId(pub String);
+pub struct OrderId(pub String);
 ```
+
+In Rust, rust-type-driven calls an identity newtype a *tag*: it has no invariant, so its field is `pub`. It calls a single-value value object a *refinement*: private fields, and one validating constructor that every way in goes through.
 
 ```python
 CustomerId = NewType("CustomerId", str)
@@ -70,7 +72,7 @@ class Money:
 
 **Structural reconstruction is not semantic proof** (2; ledger: DTO → domain translation). Deserializing a wire form proves syntax only. The domain's propositions are a second frame, entered by its own parse: transport DTO → domain type is a step, never an identity.
 
-**Configuration is boundary input too** (7, 8, 1; ledger: configuration as parsed input, fail-fast startup). Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port(u16)`, `DatabaseUrl`, `Timeout(Duration)`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it — viability is resolved at the threshold, not in the interior.
+**Configuration is boundary input too** (7, 8, 1; ledger: configuration as parsed input, fail-fast startup). Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port(NonZeroU16)`, `DatabaseUrl`, `Timeout(Duration)`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it — viability is resolved at the threshold, not in the interior.
 
 **Boundary parsing SHOULD be packaged as reusable components** (8, 14; ledger: middleware pipeline) where the framework supports it (Axum extractors, FastAPI dependencies, middleware). The handler MUST receive already-typed values — `AuthenticatedUser`, `Tenant`, `Pagination`, `CreateOrderRequest` — never the raw transport object. Naming note: such a framework "extractor" is a `parser` in `role-vocabulary.md`; `extractor` there means pulling information out of a larger structure.
 

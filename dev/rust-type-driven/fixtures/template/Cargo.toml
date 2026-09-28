@@ -1,0 +1,13 @@
+# The crate around references/newtypes.md's template; verify.py adds the template's files and the skill's lints.
+[package]
+name = "template"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4", features = ["derive", "env"] }
+serde = { version = "1", features = ["derive"] }
+thiserror = "2"
+
+[dev-dependencies]
+proptest = "1"

@@ -979,7 +979,7 @@ orders/
 ├── cancel-order/
 ├── refund-order/
 ├── policies/
-├── newtypes/
+├── domain/
 ├── errors.rs
 └── mod.rs
 ```

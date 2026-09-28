@@ -985,29 +985,34 @@ A finding that is wrong, most likely the heuristic's, is silenced where it is wr
 ## Code Review Checklist
 
 The tools above hold these rules, and review never re-checks them: `_ =>` on your own enums;
-`unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests;
-`unsafe`, and an unsafe block without a `// SAFETY:` comment; a public type without `Debug`; a
-`PartialEq` without the `Eq` it could have; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
-a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
-library code; interior mutability in domain types; ambient time or randomness in domain code;
-a refinement that serde or sqlx builds without its constructor, or that derives `Default`; a
-newtype without `Clone`, `PartialEq`, `Eq` and `Hash`; a yes-or-no validation; a `TryFrom` that
-cannot fail; a `try_new` without an infallible `new`; a `const fn literal` called outside a
-`const` item; a stringly typed error; an error message that is capitalized or ends in a period; a
-domain error without `Clone` and `PartialEq`; an infrastructure error held without `#[source]`;
-generic role names; a
-dependency without an approval reason; an unused dependency; a rejection in domain code that no
-test reaches; formatting.
+`unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests; `unsafe`,
+and an unsafe block without a `// SAFETY:` comment; a public type without `Debug`; a `PartialEq`
+without the `Eq` it could have; a spawned future without `Send`; a lock held across `.await`; an
+owned parameter where a borrow would do; a redundant clone; bool flags for exclusive states;
+`anyhow` or `eyre` in library code; interior mutability in domain types; ambient time or randomness
+in domain code; a refinement that serde or sqlx builds without its constructor, or that derives
+`Default`; a newtype without `Clone`, `PartialEq`, `Eq` and `Hash`; a yes-or-no validation; a
+`TryFrom` that cannot fail; a `try_new` without an infallible `new`; a `const fn literal` called
+outside a `const` item; a stringly typed error; an error message that is capitalized or ends in a
+period; a domain error without `Clone` and `PartialEq`; an infrastructure error held without
+`#[source]`; generic role names; a dependency without an approval reason; an unused dependency; a
+rejection in domain code that no test reaches; formatting.
 
 Review checks only what no tool can decide. Where the dylint library is adopted, it holds the items
 marked (dylint), and review looks only at what it cannot see:
 
-- [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype. (dylint, for the parameter names it knows)
+- [ ] Any raw `String`, `&str`, integer or `Uuid` naming a domain concept in a domain signature? Take the newtype. (dylint, for the parameter names it knows)
 - [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor. (dylint, for struct fields)
 - [ ] Any `Deref`, `DerefMut`, or `&mut` to the inner value on a refinement? Offer `as_str()`, `get()`, `AsRef` or `into_inner()`. (dylint)
 - [ ] Any error type that is not `std::error::Error + Send + Sync`? Derive `thiserror::Error`. (dylint)
 - [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
+- [ ] Any `FromStr`, `TryFrom`, serde or database decode that checks on its own instead of delegating to the one validating function? Delegate.
+- [ ] Any constructor returning `Option` for more than one reason, or checking before it normalizes (trim, case)? Return a `Result` with an error enum; normalize first.
+- [ ] Any mutating method on a refinement that can break its invariant? Make it keep the invariant, or remove it.
+- [ ] Any `Display` and `FromStr` pair without a round-trip property test? Add one.
+- [ ] Any secret with a derived `Debug`, a `Display` or a `Serialize`, or an error message echoing it? Redact it.
+- [ ] Any hand-written `Borrow<str>` whose `Eq`, `Hash` or `Ord` differ from the inner type's? Remove it.
 - [ ] Any approval reason in `[package.metadata.approved-dependencies]` that the standard library answers? Remove the crate.
 - [ ] Any trait with a single implementor and no test double? Remove it. (dylint)
 - [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.

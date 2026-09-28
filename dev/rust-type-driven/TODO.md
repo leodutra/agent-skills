@@ -9,7 +9,7 @@ Rules for every item:
 - A rule a tool now holds leaves the review checklist.
 - Development files stay here, out of `skills/`. Scratch crates live in `$TMPDIR` and are never committed.
 - One commit per tier. Nothing is pushed until the user says so.
-- `verify.py` re-checks every part the skill prints, from the skill's own text: `python3 dev/rust-type-driven/verify.py` (a missing tool binary: `AST_GREP=/path/to/ast-grep`). Each part gets fixtures under `fixtures/<part>/`, where a flagged line ends with `expect: <rule>`.
+- `verify.py` re-checks every part the skill prints, from the skill's own text, and the template in `references/newtypes.md`: `python3 dev/rust-type-driven/verify.py` (a missing tool binary: `AST_GREP=/path/to/ast-grep`). Each part gets fixtures under `fixtures/<part>/`, where a flagged line ends with `expect: <rule>`.
 
 ## Done
 
@@ -35,7 +35,9 @@ Done 2026-09-26: two commands in the skill's new Dependencies section, both requ
 - [x] **T2.2 Unused dependencies.** `cargo machete` (verified on 0.9.2; `cargo install cargo-machete`). It reads source, so a crate used only inside a macro's expansion looks unused: the skill says to list it under `[package.metadata.cargo-machete] ignored` with a comment saying why.
 - [x] **T2.3 Wire it in.** Both are required commands (seven in all). The checklist keeps only the judgement the tools cannot make: "an approval reason the standard library answers? Remove the crate."
 
-## Tier 3: mutation testing for the test budget
+## Tier 3: mutation testing for the test budget (superseded 2026-09-28)
+
+Replaced by rejection coverage (Newtype guide, below): the guide names the sole fallible constructor `new`, which cargo-mutants never examines. The record below is kept as history.
 
 Done 2026-09-26 on cargo-mutants 27.1.0: a Mutation testing section in the skill with `.cargo/mutants.toml` and `cargo mutants`; `verify.py mutants`: 16 mutants in about 2 s, the untested rejection guard found (1 line, 2 surviving mutants), the fully tested `try_new` and `try_from` constructors all caught, the untested getter out of scope; exit 2 gates CI.
 
@@ -67,11 +69,26 @@ Prompted by the user: `Email` parses, yet under "parse, don't validate" it is co
 - [x] **"Every unsafe block documents its invariants" had no tool.** clippy's `undocumented_unsafe_blocks` is on, and the `forbid` comment says how a crate that needs unsafe lifts it (`forbid` cannot be lifted in code).
 - [x] **The verifier hid an unloadable ast-grep rule** as zero findings; it now prints ast-grep's error.
 
+## Newtype guide, 2026-09-28
+
+The user supplied a newtype guide ("Rust newtypes: parse, don't validate") and said it overrides past definitions. It is adopted in SKILL.md and `references/newtypes.md`, adapted to the skill's other rules and to architecture-blueprint, and every rule a tool can decide got a tool. `verify.py`: all six parts pass (clippy 26, ast-grep 31, dependencies 5, coverage 4, dylint 20, template clean).
+
+- [x] **Naming reverts to std's** (`abc6c72`). The sole fallible constructor is `new`, returning `Result` or `Option`; `try_new` only beside an infallible `new`; `parse` may exist and delegates to `FromStr`; named constructors for several formats (`from_hex`). This undoes the 2026-09-26 rule and the consistency pass's `try_*` naming: the ast-grep rules `fallible-new` and `domain-constructor-name` are removed.
+- [x] **Tag and refinement.** A tag (`UserId(u64)`) has no invariant and a `pub` field; a refinement (`Email`, `Port`) has private fields and every rule. The guide allows a tag either; the skill picks the `pub` field so tools can tell the two apart. architecture-blueprint's identity newtype is a tag; its single-value value object is a refinement (one sentence in `domain-modeling.md`).
+- [x] **The rest of the guide.** Parse, Don't Validate covers the edges (HTTP, CLI, config, DB decode, queues), domain signatures and yes/no validators. Type-Driven Design gets structure first (enums, `NonEmpty`, `NonZero*`, per-variant data, typestate), the constructor table, naming and invariant integrity. Error Modeling covers std errors with Send and Sync, derives, message style, `#[non_exhaustive]` and secrets. The panic policy admits `const fn literal`. Testing Strategy requires a `Display`/`FromStr` round-trip property test. `references/newtypes.md` holds serde, clap, database and std trait rules, plus the template.
+- [x] **The template obeys the skill.** Formatted by rustfmt; `literal` carries `#[expect(clippy::panic, reason)]`; the budget's tests are included. `verify.py template` runs fmt, clippy, ast-grep and rejection coverage on it, and a broken copy fails (checked once).
+- [x] **ast-grep** (`77be2d5`). `refinement-bypass` replaces `domain-structural-deserialize` (a private-field struct with Deserialize not via `try_from`, or with serde or sqlx `transparent`). New rules: `refinement-default`, `newtype-derives`, `validation-predicate`, `infallible-try-from`, `try-new-without-new`, `literal-outside-const`, `error-message-style` and `domain-error-derives`. Shared patterns are global utils (`utilDirs`). Verified: a suppression is `// ast-grep-ignore: <rule> -- <reason>` on the line directly above the matched node, after the attributes; one placed above the attributes does not apply.
+- [x] **clippy** (`9357a4c`): `missing_debug_implementations` (rustc) and `derive_partial_eq_without_eq`.
+- [x] **Rejection coverage replaces cargo-mutants** (`c12afdf`). ast-grep lists each `Err(..)` in domain code and each `None` in a function returning `Option`. `cargo llvm-cov --json` records region counts, and a jq join fails on a rejection whose region never ran. Region, not line: a one-line `if n == 0 { None } else { .. }` is judged on its own. It also sees one-call guards (`is_empty()`) and forbidden transitions, which mutation testing missed. It cannot see `?` or `ok_or`, nor whether a test asserted; review keeps both. Setup: `rustup component add llvm-tools-preview` added 26 MB to stable here; cargo-llvm-cov 0.9.1 release binary is in `/tmp/claude-1000/tools`.
+- [x] **dylint** (`292fc14`). `pub_field_on_invariant_type` counts `new` returning `Option<Self>`, and no longer counts methods taking `self` (transitions). New lints: `refinement_escape` (`Deref`, `DerefMut`, `AsMut`, `BorrowMut`, or a pub `&mut` method on a type with a fallible constructor) and `error_not_std_error` (`()` or a local type without `Error + Send + Sync` as a public fn's error or a `FromStr`/`TryFrom` impl's). `sym::Error` comes from `clippy_utils::sym`, not rustc's.
+- [x] **Docs aligned.** blueprint `Port(u16)` became `Port(NonZeroU16)`, and its identity newtype example has a `pub` field. `docs/RUST_BACKEND_STACK.md`'s `newtypes/` folder became `domain/`, as the blueprint requires.
+
 ## Stays with review (no tool can decide these)
 
-A sentinel or a pair of `Option`s standing for exclusive states; validation after parsing; a `clone()` in a hot path that is needed but undocumented; an `assert!` guarding what should be a type; cancellation safety of async workflows.
+A sentinel or a pair of `Option`s standing for exclusive states; validation after parsing; a `clone()` in a hot path that is needed but undocumented; an `assert!` guarding what should be a type; cancellation safety of async workflows. From the guide: validation duplicated instead of delegated; `Option` for more than one failure; checking before normalizing; a mutator that can break the invariant; a `Display`/`FromStr` pair without its round-trip test; secrets in `Debug`, `Display`, `Serialize` or messages; a hand-written `Borrow` that disagrees with `Eq`/`Hash`; a rejection through `?` or `ok_or`, and a test that reaches a rejection without asserting on it.
 
 ## Left to the user
 
-- Push `main` (T0 to T4 are local commits). Projects can adopt the dylint library only after the push.
+- Push `main`: the newtype guide's six commits, from abc6c72 on, are local. Projects get the new dylint lints only after the push.
+- `llvm-tools-preview` is now installed on stable (26 MB); `rustup component remove llvm-tools-preview --toolchain stable` undoes it.
 - `~/Work/ed-galnet-scraper/skills/rust-type-driven` is a separate copy of the skill; it is not updated by this work.
