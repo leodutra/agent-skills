@@ -27,7 +27,7 @@ A cross-module business flow (e.g., create → approve → invoice) is an **acce
 orders/
 ├── approve-order/
 │   ├── handler
-│   ├── policy            # can_approve_order
+│   ├── authorization     # impl Can for ApproveOrder
 │   └── tests             # colocated, owns this slice
 └── domain/
     ├── order
@@ -70,7 +70,7 @@ Candidates — each a rule of this skill the type system cannot hold — and the
 
 (13 — design decisions are themselves framed facts; 2 — rules are part of the frame; rung 3) Significant decisions MUST be recorded as ADRs. A decision that lives only in the deciders' memory sits at rung 4 and reverts to *unknown* for every later maintainer (1, A2).
 
-**Agent directive:** when you conclude a considerable architectural decision or definition, you MUST record it as an ADR or explicitly propose one. When a later decision changes an earlier one, you MUST mark the old ADR **Superseded** and link the replacement — the earlier decision's frame has expired, and the record MUST say so. Stale or missing ADRs are a defect.
+When a later decision changes an earlier one, you MUST mark the old ADR **Superseded** and link the replacement — the earlier decision's frame has expired, and the record MUST say so. Stale or missing ADRs are a defect.
 
 ```text
 specs/adr/

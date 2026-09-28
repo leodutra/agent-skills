@@ -2,7 +2,7 @@
 
 The type-driven toolkit, and where behavior lives. (Keywords and the `(n)` / `(frame)` / `(ledger)` tags: see SKILL.md.)
 
-Apply in Evolution-Path order. **Vertical slices are prioritized over rich domain objects.** Type-driven modeling (newtypes, value objects, illegal-states-unrepresentable) is on from Stage 1 and MUST NOT be deferred: it pays obligations in the cheapest currency there is — by the machine, at construction, once (frame, rung 1). Newtypes and value objects live under `domain/`, not in separate technical-kind folders (*convention* on the folder name; the derived part is "never by technical kind", 13).
+Type-driven modeling is on from Stage 1 because it pays obligations in the cheapest currency there is — by the machine, at construction, once (frame, rung 1).
 
 Examples are TypeScript/Rust/Python. Python equivalents: `typing.NewType`, frozen `@dataclass`, `Union`, `match`, and boundary parsing.
 
@@ -12,15 +12,7 @@ Examples are TypeScript/Rust/Python. Python equivalents: `typing.NewType`, froze
 
 Default: behavior SHOULD live in the vertical slice, calling a functional core (pure functions on typed data) (13, 14). A `refund-order` slice computes via `calculateRefund(...)`; it needs no `Order` class with methods.
 
-You SHOULD escalate to behavior-on-objects (`order.cancel()` instead of mutating state) ONLY on a trigger:
-
-- (a) Many related rules cluster on one entity (13 — couple by shared reason for change).
-- (b) An invariant spans multiple operations (order total = sum of lines + tax) (11 — the object is the invariant's consistency scope; ledger: aggregate).
-- (c) Real lifecycle/state machine with illegal transitions to forbid (4, 12 — typestate).
-- (d) Same invariant enforced from 2+ slices (6 — one authoritative home, so copies cannot drift; decisions live with the authority over their subject).
-- (e) High cost of violation (money, inventory, compliance) (frame — the chosen currency must *reliably* discharge the obligation; where a miss is costly, only structure is reliable enough).
-
-Absent a trigger, a rich object is over-engineering. When trigger (b) fires, the object MUST be drawn no larger than its invariants demand (11 — every fact added taxes every change within); an object that swallows a whole module to guard one invariant is the scope drawn wrong. Authorization is NOT one of these invariants. "Who may act" MUST stay in the action's `can` at use-case entry (see `authorization.md`); the entity guards ONLY business invariants.
+Behavior moves onto an object (`order.cancel()`) ONLY on one of SKILL.md's triggers (a)–(e). Under (b), an object that swallows a whole module to guard one invariant is the scope drawn wrong (11 — every fact added taxes every change within).
 
 ## Newtypes — identity distinction
 
@@ -47,21 +39,6 @@ An identity newtype carries no invariant, so it needs no parse and MAY expose it
 
 (1, 4; ledger: value object; 6 — immutable by default) Value objects MUST be immutable, self-validating, and equal by value, and they carry the concept's own operations where it has any (`Money.add`). Use one when a concept carries validation, invariants, or behavior: jointly-meaningful facts travel in one receipt, so their relationship is never reconstructed at use sites. Examples: `Money`, `Email`, `Percentage`, `Quantity`, `Distance`, `Duration`.
 
-```ts
-class Money {
-  add(other: Money): Money
-  subtract(other: Money): Money
-}
-```
-
-```python
-@dataclass(frozen=True)
-class Money:
-    amount: int
-    currency: Currency
-    def add(self, other: "Money") -> "Money": ...
-```
-
 - **Normalize at construction** (4, 1). The parse normalizes to the canonical form the domain defines (trimmed, canonical case, one unit), so equality by value compares canonical values. It MUST NOT collapse a distinction the domain keeps: an email's local part keeps its case. Normalization is idempotent, so the re-parse at a crossing is stable; `parse(format(x)) = x` is the round-trip law in `testing-and-governance.md`.
 - **No default that skips the parse** (1, 4). A default, empty, or zero instance MUST NOT exist unless it is a valid value; otherwise it is a way in without the proof.
 - **Immutable all the way down** (6; ledger: immutability by default). Immutability covers what the value holds: a frozen record holding a mutable list is not immutable.
@@ -70,9 +47,7 @@ class Money:
 
 (1; ledger: parse don't validate, smart constructor) Validation MUST happen ONCE, at the boundary, converting raw input into already-valid domain types — establishing a fact MUST change the representation, or the obligation regenerates at every use site. Downstream code MUST NOT re-validate: a `Money`/`Email`/`CustomerId` is guaranteed valid by its type. You SHOULD prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
 
-**Construction is the only path to possession** (1). The parsing function MUST be the only way to obtain the type (private constructor, smart constructor, sealed module); a receipt obtainable without the proof is forged. A check that returns a boolean and passes the raw value on has established nothing for anyone downstream — it is the canonical wrong-currency payment (frame).
-
-**Every way in is the parse** (1, 6; ledger: smart constructor). For a type with an invariant, deserializers, config binders, CLI parsers, and framework extractors reach it ONLY through its one parsing function; every other entry point delegates to that function, so the rule has one home. A deserializer that fills fields directly, a cast, or a default builds the value without the proof — a forged receipt: `JSON.parse(body) as Email` (TypeScript), `Email.model_construct(...)` (pydantic), a derived deserializer. An ORM-mapped class is a record, not the domain type (see Persistence). An identity newtype has no invariant, and forcing a parse onto it is ceremony (3).
+**Every way in is the parse** (1, 6; ledger: smart constructor). For a type with an invariant, the parsing function MUST be the only way to obtain it (private constructor, smart constructor, sealed module); deserializers, config binders, CLI parsers, and framework extractors delegate to it, so the rule has one home. A deserializer that fills fields directly, a cast, or a default builds the value without the proof — a forged receipt: `JSON.parse(body) as Email` (TypeScript), `Email.model_construct(...)` (pydantic), a derived deserializer. A check that returns a boolean and passes the raw value on has established nothing downstream — the canonical wrong-currency payment (frame).
 
 **Do not decay a strong representation casually** (1). Unwrapping a newtype to pass the primitive inward re-creates every obligation the parse discharged. Unwrap at a frame boundary — serialization, the store, the wire — never for convenience.
 
@@ -127,7 +102,7 @@ The same technique applies to **component lifecycle** (`Created → Initialized 
 
 ## Policies vs. specifications
 
-(6 — one authoritative home per piece of knowledge; 1 — a stored decision beats a repeated decision) **Policy = the default for business decisions.** Answers "what is the rule/decision?" Bundles related decisions and calculations for one area; owns no infrastructure; pure and testable. `can` is reserved for the authorization protocol (`authorization.md`); business eligibility reads `isRefundable`, `isEligible`.
+(6 — one authoritative home per piece of knowledge; 1 — a stored decision beats a repeated decision) **Policy = the default for business decisions.** Answers "what is the rule/decision?" Bundles related decisions and calculations for one area; owns no infrastructure; pure and testable.
 
 ```ts
 class RefundPolicy {
@@ -140,11 +115,7 @@ A blueprint policy is a *stored decision* with one home. The ledger's "strategy 
 
 **Specification = a specialized tool, NOT a building block** (5 — indirection is an edge, not a virtue). Answers "does this satisfy criteria?" One composable predicate (`isSatisfiedBy(x): boolean`). You SHOULD introduce a specification object ONLY when actually composing predicates (`.and()/.or()/.not()`) or driving dynamic queries (`repository.find(spec)`). Heuristic: ~10–20 policies per specification in business systems (predicate-heavy domains may run higher). Otherwise write a method/function (`customer.isEligible()`).
 
-The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in the slice. The folder SHOULD emerge ONLY when decision logic is shared by 2+ slices (6 — one home the moment a second copy would exist). Authorization is NOT an exception: an action's `can` belongs to its slice, and only a decision genuinely evaluated by 2+ slices graduates here (see `authorization.md`).
-
 **Naming:** use intent-revealing names (`RefundPolicy`, `PricingPolicy`). Reactive when-then logic is named **process/handler/reaction**, never policy (*convention*, motivated by 3 — different meanings, different names).
-
-**Toolkit summary:** newtypes = identity; value objects = concept with rules, behavior, or structure; domain objects = state + invariants (escalation only); policies = reusable decisions (default); specifications = composition/querying/qualification only.
 
 ## Functional core, imperative shell
 
@@ -162,4 +133,4 @@ The `policies/` folder is NOT mandatory. Single-slice decisions SHOULD stay in t
 
 ## Persistence
 
-(6 — localized persistence authority; 7, 8 — the world stays at the rim; 2 — trust follows custody; ledger: repository, conditional) Persistence is infrastructure and lives in the imperative shell; the functional core never touches it. The shell reaches persistence through the narrowest capability it names — `loadOrder`, `saveOrder` — which at Stage 1 is a plain function calling the ORM/query builder directly (`orm.orders.create(...)`), built where the ORM handle lives (the module's wiring) and handed in (see Capability-oriented dependencies in `structure-and-boundaries.md`; the file holding those functions is the `store` role). No repository object stands between that function and the ORM. A repository is one implementation of localized persistence authority; introduce one ONLY when it models a domain persistence boundary — aggregate-shaped load/save with rules of its own, query reuse across slices, a real planned storage swap — never one per table, and never as a grander name for the plain function. Data returning from the store has crossed a frame (2): rows are parsed into domain types at the persistence edge, not trusted because "we wrote them".
+(6 — localized persistence authority; 7, 8 — the world stays at the rim; 2 — trust follows custody; ledger: repository, conditional) Persistence lives in the imperative shell; the functional core never touches it. The `store` functions (SKILL.md, Repository vs. ORM) are built where the ORM handle lives, the module's wiring, and handed in. An ORM-mapped class is a record, not the domain type: data returning from the store has crossed a frame (2), so rows are parsed into domain types at the persistence edge, not trusted because "we wrote them".

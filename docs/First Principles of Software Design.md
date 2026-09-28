@@ -383,6 +383,7 @@ Patterns are level-five statements, and this document admits them on one conditi
 - **Composition over inheritance** — (5) assembled parts couple by narrow contract; inheritance couples implicitly to the whole base behavior.
 - **Facade** — (5) a subsystem's observable surface shrunk to its intended promises.
 - **Capability interface** — (5, 6) the dependency is the ability needed, not the machinery that has it; authority arrives explicit and minimal.
+- **Typed authorization decision (permit)** — (1, 3, 6) the decision established once and carried as a receipt that may hold the artifact it authorizes — scope, filter, grant; a bool discards both the reason for denial and everything the decision established.
 - **Ownership / single writer** — (6) one authority per mutable fact; interleavings collapse to a sequence.
 - **Immutability by default** — (6) what cannot change cannot be interfered with; mutability becomes a deliberate grant.
 - **Actor / message passing** — (6) mutation serialized through the owner; others hold a channel, not the state.

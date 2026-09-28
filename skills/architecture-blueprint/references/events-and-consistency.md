@@ -4,16 +4,13 @@ Cross-module communication, direct call vs. event, consistency scopes, copies of
 
 ## Domain events
 
-(1 — execution leaves receipts) Events MUST be past-tense business **facts** — `OrderApproved`, `OrderCancelled`, `OrderRefunded`, `InventoryReserved` — consumed by modules that merely react (Inventory, Shipping, Notifications, Analytics). You MUST NOT emit vague mutations (`OrderUpdated`, `EntityChanged`): a receipt that does not say what happened is not a receipt. (*Convention* on the tense; the derived part is that a receipt says what happened.)
+(1 — execution leaves receipts) Events are past-tense business facts (naming: SKILL.md), consumed by modules that merely react (Inventory, Shipping, Notifications, Analytics).
 
 **Published events and `api/` are contracts** (13 — compatibility is a promise about sensitivity; ledger: stable versioned contract). Payload changes SHOULD be additive; a breaking change gets a new event version rather than a mutated old one; consumers SHOULD tolerate unknown fields. A consumer's proof that it handles `OrderApproved` MUST survive the producer's evolution, or the producer has changed the contract.
 
 ## Direct call vs. event
 
-(11, 5) You SHOULD use a **direct call** when: same transaction, same invariant, or immediate (strong) consistency — the facts belong to one consistency scope, and an event would split it.
-You SHOULD use an **event** when: another module merely reacts, eventual consistency is acceptable, and coupling should drop.
-
-You SHOULD decide the consistency scope first (11), then coupling (5). Choosing an event for decoupling's sake where one invariant spans both sides breaks the invariant quietly; the violation merely has not been observed yet.
+(11, 5) The rule is SKILL.md's: consistency scope first, then coupling. Choosing an event for decoupling's sake where one invariant spans both sides breaks the invariant quietly; the violation merely has not been observed yet.
 
 ## Consistency model
 
@@ -40,7 +37,7 @@ Any handler crossing an eventual boundary (events, queues, retries) MUST be idem
 
 ## Copies of facts
 
-(6 — a redundant representation is a standing coherence obligation; 2) A cache, read model, denormalized column, or replicated lookup is a second copy of a fact, and it reintroduces the divergence single ownership designed away. It MAY exist ONLY with: a named authoritative home; a stated staleness bound or invalidation rule; and a measured need — latency, locality, or availability the home cannot provide. A copy with no stated staleness is a cache that lies. The home stays the only writer; the copy is read-only and subordinate.
+(6 — a redundant representation is a standing coherence obligation; 2) A cache, read model, denormalized column, or replicated lookup reintroduces the divergence single ownership designed away, so it carries SKILL.md's three conditions (named home, staleness bound or invalidation rule, measured need). A copy with no stated staleness is a cache that lies. The home stays the only writer; the copy is read-only and subordinate.
 
 ## Concurrency & cancellation
 

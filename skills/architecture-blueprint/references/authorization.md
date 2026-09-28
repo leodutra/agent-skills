@@ -53,8 +53,6 @@ pub trait Can<A> {
 CancelAppointment { appointment_id }.can(&actor)   // not can_cancel_appointment(&actor, id)
 ```
 
-`can` is reserved for this protocol. Business eligibility reads `is_refundable`, `is_eligible` (see `domain-modeling.md`).
-
 ## `Permit` and `Denial`
 
 ```rust
