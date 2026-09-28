@@ -165,7 +165,8 @@ def check_coverage():
     return ok
 
 
-LINTS = ("pub_field_on_invariant_type", "blocking_in_async", "primitive_domain_param", "single_impl_trait")
+LINTS = ("pub_field_on_invariant_type", "refinement_escape", "error_not_std_error", "blocking_in_async", "primitive_domain_param",
+         "single_impl_trait")
 
 
 def check_dylint():

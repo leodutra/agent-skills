@@ -1,30 +1,47 @@
 //! One case per lint of rust_type_driven_lints. A flagged line ends with `expect: <lint>`.
 
 pub mod domain {
+    use std::fmt;
+    use std::str::FromStr;
+
+    /// A std error: the constructors below fail with it.
+    #[derive(Debug)]
+    pub struct Invalid;
+    impl fmt::Display for Invalid {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("invalid") }
+    }
+    impl std::error::Error for Invalid {}
+
     /// A public field on a type with a fallible constructor.
     pub struct Email {
         pub value: String, // expect: pub_field_on_invariant_type
     }
     impl Email {
-        pub fn parse(raw: &str) -> Result<Self, ()> {
-            if raw.contains('@') { Ok(Self { value: raw.to_owned() }) } else { Err(()) }
+        pub fn new(raw: &str) -> Result<Self, Invalid> {
+            if raw.contains('@') { Ok(Self { value: raw.to_owned() }) } else { Err(Invalid) }
         }
+    }
+
+    /// A new returning Option is a fallible constructor too.
+    pub struct Port(pub u16); // expect: pub_field_on_invariant_type
+    impl Port {
+        pub fn new(n: u16) -> Option<Self> { if n == 0 { None } else { Some(Self(n)) } }
     }
 
     /// TryFrom is a fallible constructor too.
     pub struct Age(pub u8); // expect: pub_field_on_invariant_type
     impl TryFrom<i64> for Age {
-        type Error = ();
-        fn try_from(years: i64) -> Result<Self, ()> { u8::try_from(years).map(Age).map_err(|_| ()) }
+        type Error = Invalid;
+        fn try_from(years: i64) -> Result<Self, Invalid> { u8::try_from(years).map(Age).map_err(|_| Invalid) }
     }
 
     /// FromStr is a fallible constructor too.
     pub struct Level {
         pub value: u8, // expect: pub_field_on_invariant_type
     }
-    impl std::str::FromStr for Level {
-        type Err = ();
-        fn from_str(raw: &str) -> Result<Self, ()> { raw.parse().map(|value| Level { value }).map_err(|_| ()) }
+    impl FromStr for Level {
+        type Err = Invalid;
+        fn from_str(raw: &str) -> Result<Self, Invalid> { raw.parse().map(|value| Level { value }).map_err(|_| Invalid) }
     }
 
     /// Private fields behind the constructor: fine.
@@ -32,8 +49,16 @@ pub mod domain {
         value: String,
     }
     impl Name {
-        pub fn try_new(raw: &str) -> Result<Self, ()> { if raw.is_empty() { Err(()) } else { Ok(Self { value: raw.to_owned() }) } }
+        pub fn new(raw: &str) -> Result<Self, Invalid> { if raw.is_empty() { Err(Invalid) } else { Ok(Self { value: raw.to_owned() }) } }
         pub fn as_str(&self) -> &str { &self.value }
+    }
+
+    /// A method returning Option<Self> is a transition, not a constructor: a record may keep public fields.
+    pub struct Counter {
+        pub count: u8,
+    }
+    impl Counter {
+        pub fn increment(self) -> Option<Self> { self.count.checked_add(1).map(|count| Self { count }) }
     }
 
     /// No fallible constructor: a plain record may keep public fields.
@@ -41,6 +66,45 @@ pub mod domain {
         pub x: i32,
         pub y: i32,
     }
+
+    /// A refinement handing out its inner value.
+    pub struct Token(String);
+    impl Token {
+        pub fn new(raw: &str) -> Option<Self> { if raw.is_empty() { None } else { Some(Self(raw.to_owned())) } }
+        pub fn value_mut(&mut self) -> &mut String { &mut self.0 } // expect: refinement_escape
+        pub fn as_str(&self) -> &str { &self.0 }
+        fn trimmed(&mut self) -> &mut String { self.0.truncate(8); &mut self.0 }
+        pub fn shorten(&mut self) { let _ = self.trimmed(); }
+    }
+    impl std::ops::Deref for Token { type Target = str; fn deref(&self) -> &str { &self.0 } } // expect: refinement_escape
+    impl std::ops::DerefMut for Token { fn deref_mut(&mut self) -> &mut str { self.0.as_mut_str() } } // expect: refinement_escape
+    impl AsMut<str> for Token { fn as_mut(&mut self) -> &mut str { self.0.as_mut_str() } } // expect: refinement_escape
+    impl AsRef<str> for Token { fn as_ref(&self) -> &str { &self.0 } }
+
+    /// A tag has no invariant to escape: it may deref.
+    pub struct Label(pub String);
+    impl std::ops::Deref for Label { type Target = str; fn deref(&self) -> &str { &self.0 } }
+
+    /// Error types that are not std errors.
+    pub struct NotAnError;
+    #[derive(Debug)]
+    pub struct NotSend(pub std::rc::Rc<u8>);
+    impl fmt::Display for NotSend {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("not send") }
+    }
+    impl std::error::Error for NotSend {}
+    pub fn bare(raw: &str) -> Result<u8, ()> { raw.parse().map_err(|_| ()) } // expect: error_not_std_error
+    pub fn untyped(raw: &str) -> Result<u8, NotAnError> { raw.parse().map_err(|_| NotAnError) } // expect: error_not_std_error
+    pub fn not_send(raw: &str) -> Result<u8, NotSend> { raw.parse().map_err(|_| NotSend(std::rc::Rc::new(0))) } // expect: error_not_std_error
+    pub struct Mode;
+    impl FromStr for Mode {
+        type Err = NotAnError; // expect: error_not_std_error
+        fn from_str(raw: &str) -> Result<Self, NotAnError> { if raw == "on" { Ok(Mode) } else { Err(NotAnError) } }
+    }
+    pub fn typed(raw: &str) -> Result<u8, Invalid> { raw.parse().map_err(|_| Invalid) }
+    pub fn foreign(raw: &str) -> Result<u8, std::num::ParseIntError> { raw.parse() }
+    fn private_unit(raw: &str) -> Result<u8, ()> { raw.parse().map_err(|_| ()) }
+    pub fn uses_private_unit() -> u8 { private_unit("1").unwrap_or(0) }
 
     pub struct OrderId(i64);
 

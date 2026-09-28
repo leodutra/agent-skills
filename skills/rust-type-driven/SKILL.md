@@ -949,7 +949,7 @@ whether the test that reached a rejection asserted on it. Review keeps both.
 
 Some rules need to know what a type is, who implements a trait, or which function a call reaches.
 [dylint](https://github.com/trailofbits/dylint) runs custom lints built against the compiler, and the
-library `rust_type_driven_lints` (`dev/rust-type-driven/lints` in this skill's repository) holds four.
+library `rust_type_driven_lints` (`dev/rust-type-driven/lints` in this skill's repository) holds six.
 Its cost is a pinned nightly toolchain, about 1.5 GB fetched on the first run, and a rebuild whenever
 that nightly moves: adopt it in a codebase meant to live for years, not in every project.
 
@@ -970,7 +970,9 @@ DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets
 
 | Lint | Catches | Holds |
 | --- | --- | --- |
-| `pub_field_on_invariant_type` | a `pub` field on a type with a fallible constructor (an associated fn returning `Result<Self, _>`, or a `TryFrom` or `FromStr` impl) | Type-Driven Design: fields of a type with an invariant are private |
+| `pub_field_on_invariant_type` | a `pub` field on a type with a fallible constructor (an associated fn without `self` returning `Result<Self, _>` or `Option<Self>`, or a `TryFrom` or `FromStr` impl) | Type-Driven Design: a refinement's fields are private |
+| `refinement_escape` | on a type with a fallible constructor: an impl of `Deref`, `DerefMut`, `AsMut` or `BorrowMut`, or a public method returning `&mut` | Newtypes, Invariant integrity: no `&mut` to the inner value, no `Deref` |
+| `error_not_std_error` | `()`, or a type of this crate that is not `std::error::Error + Send + Sync`, as a public fn's error or a `FromStr` or `TryFrom` impl's | Error Modeling: an error type implements `std::error::Error + Send + Sync + 'static` |
 | `blocking_in_async` | a call into `std::fs`, `std::net`, `std::thread::sleep`, a `std::process` wait or stdin inside an `async fn` or block, outside a closure such as `spawn_blocking`'s | Async, Blocking work: async code never blocks the runtime |
 | `primitive_domain_param` | a heuristic: a `pub fn` in a `domain` module taking `String`, `&str`, an integer or `uuid::Uuid` for a parameter named `id`, `*_id`, `email`, `name` or `amount` | Type-Driven Design: a value with an invariant, or one swappable with another of its primitive, gets a newtype |
 | `single_impl_trait` | a trait not exported from the crate with exactly one implementation, test doubles included | Dependency Injection: no trait for a single implementation without a second one or a test double |
@@ -1002,6 +1004,8 @@ marked (dylint), and review looks only at what it cannot see:
 
 - [ ] Any raw `String`, `i64`, or `Uuid` naming a domain concept in a signature? Wrap in a newtype. (dylint, for the parameter names it knows)
 - [ ] Any public field, or variant field, on a type with an invariant? Make it private behind a constructor. (dylint, for struct fields)
+- [ ] Any `Deref`, `DerefMut`, or `&mut` to the inner value on a refinement? Offer `as_str()`, `get()`, `AsRef` or `into_inner()`. (dylint)
+- [ ] Any error type that is not `std::error::Error + Send + Sync`? Derive `thiserror::Error`. (dylint)
 - [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
 - [ ] Any validation after parsing? Remove it.
 - [ ] Any approval reason in `[package.metadata.approved-dependencies]` that the standard library answers? Remove the crate.
