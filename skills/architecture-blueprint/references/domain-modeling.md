@@ -32,16 +32,16 @@ type OrderId    = Brand<string, "OrderId">
 ```
 
 ```rust
-pub struct CustomerId(pub String);
-pub struct OrderId(pub String);
+struct CustomerId(String);
+struct OrderId(String);
 ```
-
-In Rust, rust-type-driven calls an identity newtype a *tag*: it has no invariant, so its field is `pub`. It calls a single-value value object a *refinement*: private fields, and one validating constructor that every way in goes through.
 
 ```python
 CustomerId = NewType("CustomerId", str)
 OrderId    = NewType("OrderId", str)
 ```
+
+An identity newtype carries no invariant, so it needs no parse and MAY expose its value (1, 3). A value object carries one, so it keeps its representation private and every way in goes through its parse (see Parse, don't validate).
 
 ## Value objects — concepts with rules
 
@@ -62,17 +62,23 @@ class Money:
     def add(self, other: "Money") -> "Money": ...
 ```
 
+- **Normalize at construction** (4, 1). The parse normalizes to the canonical form the domain defines (trimmed, canonical case, one unit), so equality by value compares canonical values. It MUST NOT collapse a distinction the domain keeps: an email's local part keeps its case. Normalization is idempotent, so the re-parse at a crossing is stable; `parse(format(x)) = x` is the round-trip law in `testing-and-governance.md`.
+- **No default that skips the parse** (1, 4). A default, empty, or zero instance MUST NOT exist unless it is a valid value; otherwise it is a way in without the proof.
+- **Immutable all the way down** (6; ledger: immutability by default). Immutability covers what the value holds: a frozen record holding a mutable list is not immutable.
+
 ## Parse, don't validate
 
 (1; ledger: parse don't validate, smart constructor) Validation MUST happen ONCE, at the boundary, converting raw input into already-valid domain types — establishing a fact MUST change the representation, or the obligation regenerates at every use site. Downstream code MUST NOT re-validate: a `Money`/`Email`/`CustomerId` is guaranteed valid by its type. You SHOULD prefer typed APIs (`refund(customerId: CustomerId, amount: Money)`) over primitives (`refund(string, number)`).
 
 **Construction is the only path to possession** (1). The parsing function MUST be the only way to obtain the type (private constructor, smart constructor, sealed module); a receipt obtainable without the proof is forged. A check that returns a boolean and passes the raw value on has established nothing for anyone downstream — it is the canonical wrong-currency payment (frame).
 
+**Every way in is the parse** (1, 6; ledger: smart constructor). For a type with an invariant, deserializers, config binders, CLI parsers, and framework extractors reach it ONLY through its one parsing function; every other entry point delegates to that function, so the rule has one home. A deserializer that fills fields directly, a cast, or a default builds the value without the proof — a forged receipt: `JSON.parse(body) as Email` (TypeScript), `Email.model_construct(...)` (pydantic), a derived deserializer. An ORM-mapped class is a record, not the domain type (see Persistence). An identity newtype has no invariant, and forcing a parse onto it is ceremony (3).
+
 **Do not decay a strong representation casually** (1). Unwrapping a newtype to pass the primitive inward re-creates every obligation the parse discharged. Unwrap at a frame boundary — serialization, the store, the wire — never for convenience.
 
 **Structural reconstruction is not semantic proof** (2; ledger: DTO → domain translation). Deserializing a wire form proves syntax only. The domain's propositions are a second frame, entered by its own parse: transport DTO → domain type is a step, never an identity.
 
-**Configuration is boundary input too** (7, 8, 1; ledger: configuration as parsed input, fail-fast startup). Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port(NonZeroU16)`, `DatabaseUrl`, `Timeout(Duration)`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it — viability is resolved at the threshold, not in the interior.
+**Configuration is boundary input too** (7, 8, 1; ledger: configuration as parsed input, fail-fast startup). Environment variables, files, and flags MUST be parsed ONCE at startup into a typed `Config` carrying domain types (`Port`, `DatabaseUrl`, `Timeout`). Code MUST NOT reach for raw lookups at point of use (`env::var("PORT")`, `process.env.PORT`, `os.environ[...]`). A missing or malformed value MUST fail at startup, NOT on the first request that needs it — viability is resolved at the threshold, not in the interior.
 
 **Boundary parsing SHOULD be packaged as reusable components** (8, 14; ledger: middleware pipeline) where the framework supports it (Axum extractors, FastAPI dependencies, middleware). The handler MUST receive already-typed values — `AuthenticatedUser`, `Tenant`, `Pagination`, `CreateOrderRequest` — never the raw transport object. Naming note: such a framework "extractor" is a `parser` in `role-vocabulary.md`; `extractor` there means pulling information out of a larger structure.
 
