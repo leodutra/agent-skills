@@ -103,6 +103,9 @@ def check_ast_grep():
     run = subprocess.run([tool, "scan", "--json=compact"], cwd=root, capture_output=True, text=True)
     got = collections.Counter((d["file"], d["range"]["start"]["line"] + 1, d["ruleId"]) for d in json.loads(run.stdout or "[]"))
     ok = report("ast-grep", expected(root), got)
+    if run.returncode not in (0, 1):  # 8: a rule it could not load
+        print("ast-grep: FAIL (ast-grep did not run the rules):\n" + run.stderr[-1500:])
+        ok = False
     if got and run.returncode == 0:
         print("ast-grep: FAIL (findings, but `ast-grep scan` exited 0, so it would not gate CI)")
         ok = False

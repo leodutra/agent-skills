@@ -33,7 +33,7 @@ pub fn register_lints(sess: &rustc_session::Session, lint_store: &mut rustc_lint
 
 rustc_session::declare_lint! {
     /// A `pub` field on a type that has a fallible constructor (an associated fn returning `Result<Self, _>`,
-    /// or a `TryFrom` impl): the constructor guards an invariant a struct literal can skip.
+    /// or a `TryFrom` or `FromStr` impl): the constructor guards an invariant a struct literal can skip.
     /// Holds Type-Driven Design: "Fields of a type with an invariant MUST be private".
     pub PUB_FIELD_ON_INVARIANT_TYPE,
     Warn,
@@ -91,12 +91,24 @@ fn names_a_domain_concept(name: &str) -> bool {
 impl<'tcx> LateLintPass<'tcx> for RustTypeDriven {
     fn check_crate_post(&mut self, cx: &LateContext<'tcx>) {
         let tcx = cx.tcx;
-        // Types with a TryFrom impl: TryFrom is a fallible constructor.
+        // Types with a TryFrom or FromStr impl: both are fallible constructors.
         let mut fallible: FxHashSet<DefId> = FxHashSet::default();
         if let Some(try_from) = tcx.get_diagnostic_item(sym::TryFrom) {
             for impl_id in tcx.all_impls(try_from) {
                 let self_ty = tcx.impl_trait_ref(impl_id).instantiate_identity().skip_norm_wip().self_ty();
                 if let Some(adt) = self_ty.ty_adt_def() {
+                    fallible.insert(adt.did());
+                }
+            }
+        }
+        for item_id in tcx.hir_free_items() {
+            // FromStr has no diagnostic item to look up, so the crate's own trait impls are matched by path
+            let impl_id = item_id.owner_id.to_def_id();
+            if matches!(tcx.def_kind(impl_id), DefKind::Impl { of_trait: true }) {
+                let trait_ref = tcx.impl_trait_ref(impl_id).instantiate_identity().skip_norm_wip();
+                if matches!(tcx.def_path_str(trait_ref.def_id).as_str(), "std::str::FromStr" | "core::str::FromStr")
+                    && let Some(adt) = trait_ref.self_ty().ty_adt_def()
+                {
                     fallible.insert(adt.did());
                 }
             }

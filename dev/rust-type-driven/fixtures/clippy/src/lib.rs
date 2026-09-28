@@ -1,6 +1,6 @@
 //! One violation per lint of Enforce with Tools. A flagged line ends with `expect: <lint>`.
 
-pub fn unsafe_block() -> u8 { unsafe { std::mem::zeroed() } } // expect: unsafe_code
+pub fn unsafe_block() -> u8 { unsafe { std::mem::zeroed() } } // expect: unsafe_code, undocumented_unsafe_blocks
 pub fn unwraps(x: Option<u8>) -> u8 { x.unwrap() } // expect: unwrap_used
 pub fn expects(x: Option<u8>) -> u8 { x.expect("present") } // expect: expect_used
 pub fn panics() { panic!("no") } // expect: panic

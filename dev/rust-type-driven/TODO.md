@@ -56,6 +56,17 @@ Done 2026-09-26 on cargo-dylint and dylint-link 6.1.0, nightly-2026-08-20: the l
 
 Open: the library pins a nightly; when that nightly is updated, rebuild, run `verify.py dylint`, and move `rust-toolchain.toml` and the `clippy_utils` rev together. Projects point `[workspace.metadata.dylint]` at this repository's `dev/rust-type-driven/lints`, so it must be pushed before anyone can adopt it.
 
+## Consistency pass, 2026-09-28
+
+Prompted by the user: `Email` parses, yet under "parse, don't validate" it is constructed, so it is `try_new`; `parse` is for an API that exposes a parser. Read the whole skill for the same kind of slip and fixed each, test-first where a tool is involved; `verify.py` all five parts pass (clippy 24, ast-grep 18, dependencies 5, mutants 2, dylint 11).
+
+- [x] **Names.** `Email::parse` and `CustomerId::parse` became `try_new`; the `parse` example is a real parser now (`Schedule::parse` for a cron expression, or `FromStr`); Parse, Don't Validate says that "parse" names the design, not the function. The Email comment said "No pub constructor" while `try_new` is one: it now says the field is private.
+- [x] **A fallible constructor with any other name escaped mutation testing** (`Money::from_cents` in the proptest example). The rule now says a domain constructor's name says it can fail (`try_*`, `parse`, `FromStr`); a new ast-grep rule, `domain-constructor-name`, enforces it in domain paths only, since std's action names (`File::open`, `TcpStream::connect`) stay idiomatic in adapters; `fallible-new` still applies everywhere. The example became `try_from_cents`, and `examine_re` covers `try_*`, `parse` and `from_str`.
+- [x] **`FromStr` was not a constructor to the tools.** Mutation testing now examines `from_str` (fixture: an untested guard in a `FromStr` impl is found); `pub_field_on_invariant_type` counts a `FromStr` impl, matched by path since this nightly has no diagnostic item for it.
+- [x] **"Constructors accept `impl Into<String>`" contradicted `try_new(input: &str)`.** Now: owned-friendly when the constructor keeps its input, `&str` when it only reads it.
+- [x] **"Every unsafe block documents its invariants" had no tool.** clippy's `undocumented_unsafe_blocks` is on, and the `forbid` comment says how a crate that needs unsafe lifts it (`forbid` cannot be lifted in code).
+- [x] **The verifier hid an unloadable ast-grep rule** as zero findings; it now prints ast-grep's error.
+
 ## Stays with review (no tool can decide these)
 
 A sentinel or a pair of `Option`s standing for exclusive states; validation after parsing; a `clone()` in a hot path that is needed but undocumented; an `assert!` guarding what should be a type; cancellation safety of async workflows.

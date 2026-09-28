@@ -53,6 +53,8 @@ Rules:
   value without calling its constructor, so it skips the parse. Deserialize a record/DTO and
   convert it with `TryFrom`, or route the derive through the constructor with
   `#[serde(try_from = "…")]`. A fieldless enum MAY derive it: every value it can hold is valid.
+- "Parse" names the design, not the function: a newtype's constructor parses its input and is
+  still named as a constructor, `try_new` (Type-Driven Design).
 - Domain code SHOULD live under a `domain` path (a `domain/` module, or a crate whose path
   contains `domain`), and records and DTOs elsewhere, so a tool can tell them apart.
 
@@ -68,7 +70,7 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 
     fn try_from(req: CreateOrderRequest) -> Result<Self, Self::Error> {
         Ok(CreateOrder {
-            customer: CustomerId::parse(req.customer_id)?,
+            customer: CustomerId::try_new(req.customer_id)?,
             items: req.items
                 .into_iter()
                 .map(OrderItem::try_from)
@@ -89,11 +91,15 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
   another value of the same primitive (`StoreName` / `StoreAddress`). A value with neither
   SHOULD NOT be wrapped.
 - Fields of a type with an invariant MUST be private; a fallible constructor is the only way in.
-- A fallible constructor MUST NOT be named `new`: `new` reads as infallible, and mutation testing
-  (Enforce with Tools) skips any function named `new`, so its rejection tests would go unchecked.
-  Name it `try_new` when parsing is an implementation detail of construction, whatever the input
-  is. Name it `parse` when the API conceptually exposes a parser, when reading that format is what
-  the type offers (`Email::parse(raw)`).
+- A fallible constructor MUST NOT be named `new`: `new` reads as infallible. In domain code its
+  name MUST also say it can fail, because mutation testing (Enforce with Tools) skips any function
+  named `new` and examines only the names below. Name it `try_new` (or `try_` plus what it builds
+  from, `try_from_cents`) when parsing is an implementation detail of construction, whatever the
+  input is: a newtype such as `Email` is constructed, even though its constructor parses. Name it
+  `parse`, or implement `FromStr`, when the API conceptually exposes a parser, when reading a text
+  format is what the type offers (`Schedule::parse("0 9 * * MON")` for a cron expression). Outside
+  domain code, std's action names stay idiomatic for fallible constructors (`File::open`,
+  `TcpStream::connect`).
 
   ```rust
   impl Foo {
@@ -119,10 +125,10 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Email(String);
 
-// No pub constructor. The only way to get an Email is through parse().
-// After parse() succeeds, the Email is trusted everywhere — no re-validation.
+// The field is private, so try_new() is the only way in. It parses; it is still a constructor.
+// After try_new() succeeds, the Email is trusted everywhere — no re-validation.
 impl Email {
-    pub fn parse(raw: impl Into<String>) -> Result<Self, ValidationError> {
+    pub fn try_new(raw: impl Into<String>) -> Result<Self, ValidationError> {
         let value = raw.into();
         if value.contains('@') && value.len() <= 254 {
             Ok(Self(value))
@@ -274,7 +280,9 @@ impl Order {
   breaks the build everywhere it matters.
 - `Result` / `Option` combinators SHOULD be used when they clarify the flow; pipelines SHOULD NOT be forced where straight-line code is clearer.
 - Functions SHOULD borrow inputs when ownership is not required.
-- Constructors SHOULD accept owned-friendly inputs such as `impl Into<String>` and return owned values.
+- A constructor that keeps its input SHOULD accept it owned-friendly (`impl Into<String>`), so a
+  caller holding a `String` hands it over without a copy; one that only reads its input, parsing it
+  into other fields, SHOULD take `&str`. Either returns an owned value.
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
 - Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
   domain logic. That is what keeps domain tests deterministic.
@@ -384,7 +392,7 @@ use proptest::prelude::*;
 proptest! {
     #[test]
     fn money_cents_roundtrip(cents in 1i64..=i64::MAX) {
-        let money = Money::from_cents(cents).unwrap();
+        let money = Money::try_from_cents(cents).unwrap();
         prop_assert_eq!(money.cents(), cents);
     }
 }
@@ -407,7 +415,8 @@ A tool is repeatable and cannot be talked out of a verdict; a reading is neither
 ```toml
 # Cargo.toml — each lint names what it catches, then the rule it holds and where that rule lives above.
 [lints.rust]
-# Any `unsafe` at all. Philosophy: unsafe minimized; a crate that truly needs it lifts this with a stated reason.
+# Any `unsafe` at all. Philosophy: unsafe minimized. `forbid` cannot be lifted in code: a crate that
+# truly needs unsafe sets this to "deny" and puts #[expect(unsafe_code, reason = "…")] on each item.
 unsafe_code = "forbid"
 
 [lints.clippy]
@@ -445,6 +454,8 @@ fn_params_excessive_bools = "deny"
 disallowed_types = "deny"
 # The functions clippy.toml bans. Behavior Rules: time and randomness are parameters in domain logic.
 disallowed_methods = "deny"
+# An `unsafe` block without a `// SAFETY:` comment. Philosophy: every unsafe block documents its invariants.
+undocumented_unsafe_blocks = "deny"
 # A bare `#[allow]`. Enforce with Tools: silence with `#[expect]`, which fails once the lint no longer fires.
 allow_attributes = "deny"
 # A silencing attribute with no `reason`. Enforce with Tools: a tool's verdict is never waved away without saying why.
@@ -596,17 +607,36 @@ rule:
 ```yaml
 # .ast-grep/rules/fallible-new.yml
 # A constructor named `new` that can fail.
-# Holds Type-Driven Design: "A fallible constructor MUST NOT be named new" (mutation testing skips `new`).
+# Holds Type-Driven Design: "A fallible constructor MUST NOT be named new".
 id: fallible-new
 language: rust
 severity: error
 message: A fallible constructor is named `new`.
-note: "Type-Driven Design: try_new when parsing is part of construction, parse when the API exposes a parser; cargo-mutants never mutates a function named new."
+note: "Type-Driven Design: try_new when parsing is part of construction, parse or FromStr when the API exposes a parser; outside domain code an action name (open, connect) also reads as fallible."
 rule:
   kind: function_item
   all:
     - has: { field: name, regex: '^new$' }
     - has: { field: return_type, regex: '^(\w+::)*Result\b' }  # Result or io::Result; an Option-returning new stays legal
+```
+
+```yaml
+# .ast-grep/rules/domain-constructor-name.yml
+# A domain type's inherent constructor returning Result<Self, _> whose name is neither try_* nor parse.
+# Holds Type-Driven Design: in domain code a fallible constructor's name says it can fail, and mutation testing examines only these names.
+id: domain-constructor-name
+language: rust
+severity: error
+message: A domain constructor that can fail is named neither try_* nor parse, so mutation testing never examines it.
+note: "Type-Driven Design: try_new or try_from_x when parsing is part of construction; parse or FromStr when the API exposes a parser."
+files: ["**/domain/**"]
+rule:
+  kind: function_item
+  all:
+    - has: { field: return_type, regex: '^(\w+::)*Result<\s*Self\b' }  # Result<Self, _> or io::Result<Self>
+    - not: { has: { field: name, regex: '^(try_\w+|parse|new)$' } }  # a fallible new is fallible-new's finding
+    - not: { has: { field: parameters, has: { kind: self_parameter } } }  # a method such as apply(self) is a transition
+    - inside: { kind: impl_item, stopBy: end, not: { has: { field: trait, regex: '.' } } }  # a trait fixes its own names
 ```
 
 The infrastructure list names types as they are written; an error imported as a bare `Error`
@@ -647,10 +677,11 @@ runs the tests. A broken guard that no test notices is a rejection reason nobody
 ```toml
 # .cargo/mutants.toml
 # Mutate domain constructors only, so a surviving mutant is exactly a missing rejection test; mutating
-# getters would demand the tests Testing Strategy rules out. cargo-mutants skips any fn named `new`,
-# which is why a fallible constructor is named try_new (parsing is part of construction) or parse (the API is a parser).
+# getters would demand the tests Testing Strategy rules out. cargo-mutants skips any fn named `new`, so
+# the naming rule gives every fallible constructor one of these names: try_* (try_new, try_from_cents,
+# TryFrom's try_from), parse, or FromStr's from_str.
 examine_globs = ["src/domain/**/*.rs"]
-examine_re = ["::(parse|try_new|try_from)\\b"]
+examine_re = ["::(try_\\w+|parse|from_str)\\b"]
 ```
 
 ```bash
@@ -688,7 +719,7 @@ DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets
 
 | Lint | Catches | Holds |
 | --- | --- | --- |
-| `pub_field_on_invariant_type` | a `pub` field on a type with a fallible constructor (an associated fn returning `Result<Self, _>`, or a `TryFrom` impl) | Type-Driven Design: fields of a type with an invariant are private |
+| `pub_field_on_invariant_type` | a `pub` field on a type with a fallible constructor (an associated fn returning `Result<Self, _>`, or a `TryFrom` or `FromStr` impl) | Type-Driven Design: fields of a type with an invariant are private |
 | `blocking_in_async` | a call into `std::fs`, `std::net`, `std::thread::sleep`, a `std::process` wait or stdin inside an `async fn` or block, outside a closure such as `spawn_blocking`'s | Async, Blocking work: async code never blocks the runtime |
 | `primitive_domain_param` | a heuristic: a `pub fn` in a `domain` module taking `String`, `&str`, an integer or `uuid::Uuid` for a parameter named `id`, `*_id`, `email`, `name` or `amount` | Type-Driven Design: a value with an invariant, or one swappable with another of its primitive, gets a newtype |
 | `single_impl_trait` | a trait not exported from the crate with exactly one implementation, test doubles included | Dependency Injection: no trait for a single implementation without a second one or a test double |
@@ -702,11 +733,12 @@ A finding that is wrong, most likely the heuristic's, is silenced where it is wr
 
 The tools above hold these rules, and review never re-checks them: `_ =>` on your own enums;
 `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests;
-`unsafe`; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
+`unsafe`, and an unsafe block without a `// SAFETY:` comment; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
 a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
-error held without `#[source]`; a fallible constructor named `new`; generic role names; a
+error held without `#[source]`; a fallible constructor named `new`, or in domain code named neither
+`try_*` nor `parse`; generic role names; a
 dependency without an approval reason; an unused dependency; a constructor's rejection reason with
 no test; formatting.
 

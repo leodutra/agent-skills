@@ -18,6 +18,15 @@ pub mod domain {
         fn try_from(years: i64) -> Result<Self, ()> { u8::try_from(years).map(Age).map_err(|_| ()) }
     }
 
+    /// FromStr is a fallible constructor too.
+    pub struct Level {
+        pub value: u8, // expect: pub_field_on_invariant_type
+    }
+    impl std::str::FromStr for Level {
+        type Err = ();
+        fn from_str(raw: &str) -> Result<Self, ()> { raw.parse().map(|value| Level { value }).map_err(|_| ()) }
+    }
+
     /// Private fields behind the constructor: fine.
     pub struct Name {
         value: String,
