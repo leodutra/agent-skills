@@ -513,8 +513,12 @@ A tool is repeatable and cannot be talked out of a verdict; a reading is neither
 # Any `unsafe` at all. Philosophy: unsafe minimized. `forbid` cannot be lifted in code: a crate that
 # truly needs unsafe sets this to "deny" and puts #[expect(unsafe_code, reason = "…")] on each item.
 unsafe_code = "forbid"
+# A public type without Debug. references/newtypes.md, std traits: every newtype and every error provides Debug.
+missing_debug_implementations = "deny"
 
 [lints.clippy]
+# A type deriving PartialEq that could derive Eq. references/newtypes.md, std traits, and Error Modeling: Eq wherever it holds.
+derive_partial_eq_without_eq = "deny"
 # `.unwrap()` outside tests. Panic policy: no unwrap in production paths; Behavior Rules: functions are total.
 unwrap_used = "deny"
 # `.expect()` outside tests. Panic policy: no expect in production paths.
@@ -968,7 +972,8 @@ A finding that is wrong, most likely the heuristic's, is silenced where it is wr
 
 The tools above hold these rules, and review never re-checks them: `_ =>` on your own enums;
 `unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests;
-`unsafe`, and an unsafe block without a `// SAFETY:` comment; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
+`unsafe`, and an unsafe block without a `// SAFETY:` comment; a public type without `Debug`; a
+`PartialEq` without the `Eq` it could have; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
 a refinement that serde or sqlx builds without its constructor, or that derives `Default`; a

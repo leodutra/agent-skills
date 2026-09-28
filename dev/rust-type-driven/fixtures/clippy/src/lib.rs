@@ -8,6 +8,7 @@ pub fn todos() -> u8 { todo!() } // expect: todo
 pub fn unimplementeds() -> u8 { unimplemented!() } // expect: unimplemented
 pub fn unreachables() -> u8 { unreachable!() } // expect: unreachable
 
+#[derive(Debug)]
 pub enum Three { A, B, C }
 pub fn wildcard(t: &Three) -> u8 {
     match t {
@@ -15,6 +16,7 @@ pub fn wildcard(t: &Three) -> u8 {
         _ => 2, // expect: wildcard_enum_match_arm
     }
 }
+#[derive(Debug)]
 pub enum Two { A, B }
 pub fn single_wildcard(t: &Two) -> u8 {
     match t {
@@ -37,11 +39,17 @@ pub async fn borrow_across_await(c: &std::cell::RefCell<u8>) -> u8 { // expect: 
 pub fn by_value(v: Vec<u8>) -> usize { v.len() } // expect: needless_pass_by_value
 pub fn clones(s: &str) -> String { let t = s.to_string(); t.clone() } // expect: redundant_clone
 
+#[derive(Debug)]
 pub struct Flags { pub a: bool, pub b: bool, pub c: bool, pub d: bool } // expect: struct_excessive_bools
 pub fn flags(a: bool, b: bool, c: bool, d: bool) -> bool { a && b && c && d } // expect: fn_params_excessive_bools
 
+#[derive(Debug)]
 pub struct Holder(pub std::sync::Mutex<u8>); // expect: disallowed_types
 pub fn stamp() -> std::time::Instant { std::time::Instant::now() } // expect: disallowed_methods
+
+pub struct NoDebug(pub u8); // expect: missing_debug_implementations
+#[derive(Debug, Clone, PartialEq)] // expect: derive_partial_eq_without_eq
+pub struct NoEq(u8);
 
 #[allow(dead_code)] // expect: allow_attributes, allow_attributes_without_reason
 fn quiet() {}
@@ -55,6 +63,16 @@ pub fn exhaustive(t: &Two) -> u8 {
         Two::A => 1,
         Two::B => 2,
     }
+}
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Ratio(f64);
+pub struct Secret(String);
+impl Secret {
+    #[must_use]
+    pub fn expose(&self) -> &str { &self.0 }
+}
+impl std::fmt::Debug for Secret {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Secret(..)") }
 }
 #[must_use]
 pub fn add(a: u32, b: u32) -> Option<u32> { a.checked_add(b) }
