@@ -124,7 +124,7 @@ The `gateway` owns the call; the `translator` owns the vocabulary. Their field n
 main
  ↓  config (already parsed into typed values)
  ↓  database pool, clients, bus
- ↓  module wiring (each module's store functions and handlers built over the pool)
+ ↓  module wiring (each module builds its store functions and handlers over the pool, behind its api)
  ↓  HTTP server / workers
 ```
 

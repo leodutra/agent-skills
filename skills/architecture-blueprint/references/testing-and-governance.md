@@ -39,7 +39,7 @@ orders/
 ```text
 tests/
 ├── acceptance/           # cross-module business flows (e.g., create -> approve -> invoice)
-├── architecture/         # fitness functions (Rust: repo-level xtask/ MAY invoke these)
+├── architecture/         # fitness functions no linter configuration can express
 ├── e2e/                  # API -> DB -> bus -> worker
 └── performance/          # load / latency / throughput
 ```
@@ -53,15 +53,18 @@ Orders must not depend on Shipping
 Domain must not depend on infrastructure
 ```
 
-Enforce via static analysis, dependency-constraint checks, or import-graph assertions; place them in `tests/architecture/`. In Rust repositories, a repo-level `xtask/` MAY orchestrate or invoke those checks, but it does not replace the canonical `tests/architecture/` bucket. Documentation alone CANNOT enforce boundaries (3 — a README is testimony).
+**Existing linters, configured — never a custom checker** (frame; 13). A fitness function SHOULD be a rule in a linter the project already runs, or in one established tool per concern, whose configuration states the architectural rule. You MUST NOT build a custom checker (a home-grown script, AST walker, or bespoke build task) for a rule an existing tool can express: the checker is a second codebase with obligations of its own, paid at every change. Where structure can hold a rule, it comes first (rung 1): internals the language makes private cannot be reached around `api/`. Only an assertion no linter configuration can express is written as a test in `tests/architecture/`. Documentation alone CANNOT enforce boundaries (3 — a README is testimony).
 
-Candidates beyond dependency direction — each a rule of this skill that the type system cannot hold and that a mechanized check can:
+Candidates — each a rule of this skill the type system cannot hold — and the existing tool that holds it:
 
-- no import of another module's internals — only its `api/` (5);
-- no `domain/` import of infrastructure or frameworks (7, 8);
-- no primitive `string`/`number` in slice entry signatures where a newtype exists, and no newtype unwrapped outside boundary files — parse-don't-validate and no-decay proxies (1);
-- no validation-library import, and no `env`/`process.env`/`os.environ` access, outside boundary files and the composition root (7, 8);
-- no `Date.now()`/`new Date()`/`SystemTime::now()`/`random` outside the imperative shell and `platform/` (7).
+| Rule | TypeScript | Python | Rust |
+| --- | --- | --- | --- |
+| Other modules import only a module's `api/` (5) | `import/no-restricted-paths` (eslint-plugin-import), or dependency-cruiser | import-linter `forbidden` contract | the compiler: internals private, only `api` public |
+| Dependencies one-way and acyclic (5) | `import/no-cycle`, or dependency-cruiser | import-linter `layers` contract | the compiler, with a crate per module |
+| `domain/` imports no infrastructure or framework (7, 8) | `no-restricted-imports`, scoped to `domain/` | import-linter `forbidden` contract | the domain crate does not depend on them |
+| Validation libraries and `env` read only in boundary files and the composition root (7, 8) | `no-restricted-imports` and `no-restricted-properties` (`process.env`), off for those files | ruff `TID251` (banned-api), with `per-file-ignores` for those files | clippy `disallowed-methods` (`std::env::var`), expected in those files |
+| No clock or randomness outside the imperative shell and `platform/` (7) | `no-restricted-properties` (`Date.now`, `Math.random`) and `no-restricted-syntax` (`new Date()`) | ruff `TID251` in the core folders' own `ruff.toml` | clippy `disallowed-methods` in the core crate's `clippy.toml` |
+| No primitive where a newtype exists, no newtype unwrapped outside boundary files (1) | review | review | review |
 
 ## ADRs
 
