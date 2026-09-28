@@ -6,11 +6,12 @@ description: >
   with thiserror, capability traits, async/cancellation discipline, and invariant testing.
   Use this skill whenever writing, reviewing, refactoring, or designing Rust that models a
   domain — HTTP/RPC handlers, database or queue boundaries, state machines, value objects,
-  error types. Trigger on mentions of: parse don't validate, newtype,
-  illegal states, typestate, thiserror, anyhow, TryFrom, domain model, validation, Result
-  or Option design, trait/DI decisions, tokio tasks, cancellation safety, spawn_blocking,
-  proptest. Also trigger when Rust code under review uses raw String/i64/Uuid in signatures,
-  stringly typed errors, `_ =>` arms on its own enums, or unwrap()/expect() outside tests.
+  error types. Trigger on mentions of: parse don't validate, newtype, refinement type,
+  illegal states, typestate, thiserror, anyhow, TryFrom, FromStr, NonZero, serde try_from or
+  transparent, clap value types, sqlx decode, domain model, validation, Result or Option design,
+  trait/DI decisions, tokio tasks, cancellation safety, spawn_blocking, proptest. Also trigger
+  when Rust code under review uses raw String/i64/Uuid in signatures, `is_valid_*` or `validate`
+  checks, stringly typed errors, `_ =>` arms on its own enums, or unwrap()/expect() outside tests.
   For GPU/render/performance-critical Rust use rust-wgpu-functional; for Bevy ECS layout
   use rust-bevy-architecture.
 ---
@@ -40,21 +41,26 @@ Two axioms drive the type-level decisions:
 
 ## Parse, Don't Validate
 
-All external data is untrusted. Every trust boundary reparses raw input into validated domain
-types: HTTP/RPC, database reads, queues, files, and environment (vars/others).
+All external data is untrusted. It is parsed once, at the edge where it enters, into a domain
+type, and from then on the type is the proof: HTTP and RPC handlers, the CLI, config load,
+database decode, queue consumers, files, and environment variables.
 
 Rules:
 
-- External data MUST be parsed at the boundary and trusted afterward.
-- Inbound conversions SHOULD use `TryFrom` / `TryInto`.
-- Outbound conversions SHOULD use `From` / `Into`.
-- Code MUST NOT re-check an invariant after successful parsing.
-- Domain types MUST NOT derive `Deserialize` structurally: a derived `Deserialize` builds the
-  value without calling its constructor, so it skips the parse. Deserialize a record/DTO and
-  convert it with `TryFrom`, or route the derive through the constructor with
-  `#[serde(try_from = "…")]`. A fieldless enum MAY derive it: every value it can hold is valid.
-- "Parse" names the design, not the function: a newtype's constructor parses its input and is
-  still named as a constructor, `try_new` (Type-Driven Design).
+- External data MUST be parsed at the edge and trusted afterward. Code MUST NOT re-check an
+  invariant after successful parsing.
+- Domain functions MUST take the domain type (`Email`), never the primitive it was parsed from
+  (`&str`).
+- A check that answers yes or no, such as `is_valid_x(&str) -> bool` or `validate(&self)` over
+  public fields, MUST be replaced by a constructor that returns the type.
+- Inbound conversions SHOULD use `TryFrom` / `TryInto`, or `FromStr` for text. Outbound
+  conversions SHOULD use `From` / `Into`.
+- Every way in (serde, clap, a database decode, `FromStr`, `TryFrom`) MUST reach a refinement
+  through its one validating constructor (Newtypes). A derive that builds the value field by
+  field skips it: a derived `Deserialize`, `#[serde(transparent)]`, `#[sqlx(transparent)]`, or a
+  `Default` whose value breaks the invariant. Deserialize a record or DTO and convert it with
+  `TryFrom`, or route the derive through the constructor with `#[serde(try_from = "…")]`. A
+  fieldless enum MAY derive `Deserialize`: every value it can hold is valid.
 - Domain code SHOULD live under a `domain` path (a `domain/` module, or a crate whose path
   contains `domain`), and records and DTOs elsewhere, so a tool can tell them apart.
 
@@ -70,7 +76,7 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 
     fn try_from(req: CreateOrderRequest) -> Result<Self, Self::Error> {
         Ok(CreateOrder {
-            customer: CustomerId::try_new(req.customer_id)?,
+            customer: req.customer_id.parse()?, // CustomerId: FromStr, its one canonical text form
             items: req.items
                 .into_iter()
                 .map(OrderItem::try_from)
@@ -86,59 +92,130 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 
 ### Core rules
 
-- Illegal states MUST be unrepresentable.
+- Illegal states MUST be unrepresentable. Structure comes before a runtime check, and before
+  a newtype:
+  - States that exclude each other MUST be one enum, not several `bool` flags, `Option`s, or a
+    string.
+  - Fields that exist only together MUST be one variant's data, not co-dependent `Option`s.
+  - A collection that cannot be empty SHOULD be `NonEmpty<T>` (or a head plus a `Vec`), not a
+    `Vec` plus a length check; a number that cannot be zero SHOULD be `NonZero*`.
+  - Typestate SHOULD be used when the risk is calling operations in the wrong order, and only
+    when the state is known statically at every call site and invalid transitions are costly.
+    State read from storage or the wire MUST be an enum, since its value is known only at
+    runtime.
 - A value SHOULD get a newtype when it carries an invariant, or when it could be swapped with
   another value of the same primitive (`StoreName` / `StoreAddress`). A value with neither
   SHOULD NOT be wrapped.
-- Fields of a type with an invariant MUST be private; a fallible constructor is the only way in.
-- A fallible constructor MUST NOT be named `new`: `new` reads as infallible. In domain code its
-  name MUST also say it can fail, because mutation testing (Enforce with Tools) skips any function
-  named `new` and examines only the names below. Name it `try_new` (or `try_` plus what it builds
-  from, `try_from_cents`) when parsing is an implementation detail of construction, whatever the
-  input is: a newtype such as `Email` is constructed, even though its constructor parses. Name it
-  `parse`, or implement `FromStr`, when the API conceptually exposes a parser, when reading a text
-  format is what the type offers (`Schedule::parse("0 9 * * MON")` for a cron expression). Outside
-  domain code, std's action names stay idiomatic for fallible constructors (`File::open`,
-  `TcpStream::connect`).
+- Every newtype is one of two kinds, and its field says which:
+  - A **tag** (`UserId(u64)`) has no invariant; it exists only to prevent mix-ups. Its field is
+    `pub`, and `From` and `#[serde(transparent)]` are fine. architecture-blueprint calls it an
+    identity newtype.
+  - A **refinement** (`Email`, `Port`) has an invariant. Its fields MUST be private, and every
+    rule under Newtypes applies. architecture-blueprint calls a single-value refinement a value
+    object.
 
-  ```rust
-  impl Foo {
-      pub fn try_new(input: &str) -> Result<Self, Error> {
-          // parse + validate + construct
-      }
-  }
-  ```
+  A private field declares a refinement: that is how the tools below tell the two apart.
 - Enum variant fields are always public. A variant whose fields share an invariant
   (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
 - Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
   `-1`) MUST NOT stand for absence. When `None` would mean two things, use an enum.
-- States that exclude each other MUST be one enum, not several `bool` flags or `Option`s.
-- Typestate SHOULD be used only when the state is known statically at every call site and
-  invalid transitions are costly. State read from storage or the wire MUST be an enum, since
-  its value is known only at runtime.
 - Enums + structs SHOULD be preferred over class hierarchies.
 - State transitions SHOULD default to immutable values.
 
 ### Newtypes
 
+A refinement's rules. Read [references/newtypes.md](references/newtypes.md) when adding or
+reviewing one: it holds the error, serde, clap, database and std trait rules, and a complete
+template, checked against this skill's own tools.
+
+Pick the constructor by its input:
+
+| Input | Provide |
+| --- | --- |
+| One canonical text form | `FromStr`, plus `Display` as its exact inverse |
+| An owned `String` the value keeps | `TryFrom<String>` as well as `FromStr`, so it is not copied |
+| One non-string source with an obvious mapping | `TryFrom<u16>` (and so on) |
+| Several arguments, or a name adds meaning | an inherent `fn new(a, b) -> Result<Self, E>` |
+| Several formats | named constructors: `from_hex`, `from_rgb`, `from_secs` |
+| Needs context, or consumes part of the input | `fn parse(input, &ctx)`, or a parser returning `(T, &rest)` |
+| A DTO, row or payload | `impl TryFrom<Dto> for Domain` |
+| Every input is valid | `From`, never `TryFrom` |
+| A compile-time literal | `const fn literal(..) -> Self` that panics, called only in `const` items |
+| Zero-copy, borrowed | `TryFrom<&'a str> for Name<'a>` (`FromStr` cannot borrow) |
+| A trusted internal source | `pub(crate) fn from_trusted`; `unsafe fn new_unchecked` only if soundness depends on the invariant |
+
+Naming:
+
+- The sole fallible constructor MUST be named `new` and return `Result` or `Option`, as std does
+  (`NonZero::new`, `CString::new`).
+- `try_new` MUST exist only beside an infallible or panicking `new` (`Box::new` / `Box::try_new`).
+- A constructor MUST return `Option` only for one self-evident failure (zero, empty); any other
+  returns `Result` with a dedicated error enum.
+- An inherent `parse(&str)` MAY exist for discoverability; it MUST delegate to the same path as
+  `FromStr`.
+
+Invariant integrity:
+
+- A refinement MUST have one validating function. `FromStr`, `TryFrom`, serde, clap and database
+  decoding all delegate to it.
+- Its fields MUST stay private: the module is the trust boundary. It MUST NOT hand out `&mut` to
+  its inner value, nor implement `Deref` or `DerefMut`; it offers `as_str()`, `get()`, `AsRef` or
+  `into_inner()` instead.
+- The constructor MUST normalize (trim, canonical case), so `Eq`, `Hash` and `Ord` compare
+  canonical values.
+- A mutating method MUST preserve the invariant, or not exist (`NonEmptyVec::pop` returns `None`
+  at length 1).
+- A refinement SHOULD build on std's (`Port(NonZeroU16)`, not `Port(u16)` plus a check), which
+  also gives a niche: `Option<Port>` is 2 bytes.
+- It MUST NOT derive `Default` unless the default value is valid.
+
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Email(String);
 
-// The field is private, so try_new() is the only way in. It parses; it is still a constructor.
-// After try_new() succeeds, the Email is trusted everywhere — no re-validation.
+// The field is private, so new() is the only way in; FromStr, TryFrom<String> and serde delegate
+// to it. After new() succeeds, the Email is trusted everywhere: no re-validation.
 impl Email {
-    pub fn try_new(raw: impl Into<String>) -> Result<Self, ValidationError> {
-        let value = raw.into();
-        if value.contains('@') && value.len() <= 254 {
-            Ok(Self(value))
+    pub fn new(raw: impl Into<String>) -> Result<Self, EmailError> {
+        let raw = raw.into();
+        // Normalized first; an already trimmed String is kept, not copied.
+        let value = if raw.trim().len() == raw.len() {
+            raw
         } else {
-            Err(ValidationError::InvalidEmail(value))
+            raw.trim().to_owned()
+        };
+        if value.is_empty() {
+            return Err(EmailError::Empty);
         }
+        if !value.contains('@') {
+            return Err(EmailError::MissingAt);
+        }
+        Ok(Self(value))
     }
 
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+}
+
+impl FromStr for Email {
+    type Err = EmailError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+// One self-evident failure, so Option; std's NonZeroU16 holds the invariant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Port(NonZeroU16);
+
+impl Port {
+    pub const fn new(n: u16) -> Option<Self> {
+        match NonZeroU16::new(n) {
+            Some(n) => Some(Self(n)),
+            None => None,
+        }
     }
 }
 ```
@@ -166,7 +243,7 @@ pub struct PriceCut {
 }
 
 impl PriceCut {
-    pub fn try_new(sale: Money, regular: Money) -> Result<Self, PriceError> {
+    pub fn new(sale: Money, regular: Money) -> Result<Self, PriceError> {
         if sale < regular {
             Ok(Self { sale, regular })
         } else {
@@ -206,7 +283,7 @@ impl Order {
 Errors are typed and structured, never stringly typed.
 
 ```rust
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OrderError {
     #[error("cannot transition from {from} to {to}")]
     InvalidTransition { from: OrderStatus, to: OrderStatus },
@@ -217,6 +294,7 @@ pub enum OrderError {
 }
 
 // The adapter translates its infrastructure error at the boundary and keeps it as the cause.
+// io::Error is neither Clone nor PartialEq, so this error derives neither; tests use matches!.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     #[error("order {id} not found")]
@@ -229,7 +307,15 @@ pub enum LoadError {
 Rules:
 
 - Error variants MUST carry typed context, not ad-hoc strings.
-- Library code MUST return typed errors.
+- Library code MUST return typed errors: an error type implements
+  `std::error::Error + Send + Sync + 'static`, which clap, anyhow and `Box<dyn Error>` require.
+  `String` and `()` MUST NOT be error types.
+- An error SHOULD derive `Debug, Clone, PartialEq, Eq`, so tests assert on variants, unless it
+  holds a cause that cannot (`io::Error`).
+- A message MUST be lowercase, with no trailing period, and state what is wrong
+  (`"port must be non-zero"`): it is read inside a longer chain. An acronym or a name keeps its
+  case. A message MUST NOT echo secret input.
+- A public library's error enums SHOULD be `#[non_exhaustive]`.
 - Errors SHOULD compose through explicit `From` impls so `?` stays honest.
 - An infrastructure error MUST NOT cross a domain or capability boundary raw: translate it into
   the caller's error type there, and keep the original as `#[source]` so the chain survives.
@@ -280,9 +366,10 @@ impl Order {
   breaks the build everywhere it matters.
 - `Result` / `Option` combinators SHOULD be used when they clarify the flow; pipelines SHOULD NOT be forced where straight-line code is clearer.
 - Functions SHOULD borrow inputs when ownership is not required.
-- A constructor that keeps its input SHOULD accept it owned-friendly (`impl Into<String>`), so a
-  caller holding a `String` hands it over without a copy; one that only reads its input, parsing it
-  into other fields, SHOULD take `&str`. Either returns an owned value.
+- A constructor that keeps its input SHOULD accept it owned-friendly (`impl Into<String>`, and
+  `TryFrom<String>` beside `FromStr`), so a caller holding a `String` hands it over without a copy;
+  one that only reads its input, parsing it into other fields, SHOULD take `&str`. Either returns
+  an owned value.
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
 - Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
   domain logic. That is what keeps domain tests deterministic.
@@ -355,6 +442,9 @@ pub trait LoadOrders {
 
 - `panic!`, `unwrap()`, and `expect()` MUST NOT appear in production paths.
 - They MAY be used in tests and unrecoverable bootstrap code in `main.rs` with a clear message.
+- A `const fn literal` (Newtypes) MAY panic, and is called only in a `const` item, where an
+  invalid value fails compilation instead of a run. It carries
+  `#[expect(clippy::panic, reason = "a compile-time literal: an invalid value fails compilation")]`.
 
 ---
 
@@ -370,7 +460,11 @@ pub trait LoadOrders {
   distinct *reason* for rejection. More examples of a rule already pinned SHOULD NOT be added.
 - Where a law exists (round-trip, idempotence, a charset), a property test SHOULD replace the
   examples.
+- A type with both `Display` and `FromStr` MUST have a property test that its `Display` parses
+  back: `Display` is `FromStr`'s exact inverse, and clap's `default_value_t` relies on it.
 - State transitions SHOULD be tested for each forbidden transition the type cannot rule out.
+- Every rejection in domain code is reached by a test; constructor coverage (Enforce with Tools)
+  checks it.
 
 ```rust
 #[cfg(test)]
@@ -391,9 +485,9 @@ use proptest::prelude::*;
 
 proptest! {
     #[test]
-    fn money_cents_roundtrip(cents in 1i64..=i64::MAX) {
-        let money = Money::try_from_cents(cents).unwrap();
-        prop_assert_eq!(money.cents(), cents);
+    fn port_display_parses_back(n in 1u16..) {
+        let port = Port::try_from(n)?;
+        prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
     }
 }
 ```
@@ -402,7 +496,8 @@ proptest! {
 
 - Private helpers SHOULD be tested through the public API.
 - Framework glue SHOULD NOT be tested unless custom logic is involved.
-- Tests SHOULD NOT target what the compiler already guarantees, nor derives, getters or `Display`.
+- Tests SHOULD NOT target what the compiler already guarantees, nor derives, getters, or a
+  `Display` with no `FromStr` to invert.
 
 ---
 
@@ -604,41 +699,6 @@ rule:
     field: name
 ```
 
-```yaml
-# .ast-grep/rules/fallible-new.yml
-# A constructor named `new` that can fail.
-# Holds Type-Driven Design: "A fallible constructor MUST NOT be named new".
-id: fallible-new
-language: rust
-severity: error
-message: A fallible constructor is named `new`.
-note: "Type-Driven Design: try_new when parsing is part of construction, parse or FromStr when the API exposes a parser; outside domain code an action name (open, connect) also reads as fallible."
-rule:
-  kind: function_item
-  all:
-    - has: { field: name, regex: '^new$' }
-    - has: { field: return_type, regex: '^(\w+::)*Result\b' }  # Result or io::Result; an Option-returning new stays legal
-```
-
-```yaml
-# .ast-grep/rules/domain-constructor-name.yml
-# A domain type's inherent constructor returning Result<Self, _> whose name is neither try_* nor parse.
-# Holds Type-Driven Design: in domain code a fallible constructor's name says it can fail, and mutation testing examines only these names.
-id: domain-constructor-name
-language: rust
-severity: error
-message: A domain constructor that can fail is named neither try_* nor parse, so mutation testing never examines it.
-note: "Type-Driven Design: try_new or try_from_x when parsing is part of construction; parse or FromStr when the API exposes a parser."
-files: ["**/domain/**"]
-rule:
-  kind: function_item
-  all:
-    - has: { field: return_type, regex: '^(\w+::)*Result<\s*Self\b' }  # Result<Self, _> or io::Result<Self>
-    - not: { has: { field: name, regex: '^(try_\w+|parse|new)$' } }  # a fallible new is fallible-new's finding
-    - not: { has: { field: parameters, has: { kind: self_parameter } } }  # a method such as apply(self) is a transition
-    - inside: { kind: impl_item, stopBy: end, not: { has: { field: trait, regex: '.' } } }  # a trait fixes its own names
-```
-
 The infrastructure list names types as they are written; an error imported as a bare `Error`
 is not seen, so write adapter errors with their path.
 
@@ -737,8 +797,7 @@ The tools above hold these rules, and review never re-checks them: `_ =>` on you
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
 a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
-error held without `#[source]`; a fallible constructor named `new`, or in domain code named neither
-`try_*` nor `parse`; generic role names; a
+error held without `#[source]`; generic role names; a
 dependency without an approval reason; an unused dependency; a constructor's rejection reason with
 no test; formatting.
 

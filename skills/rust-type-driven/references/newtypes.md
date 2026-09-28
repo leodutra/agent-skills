@@ -1,0 +1,343 @@
+# Newtypes: errors, serde, clap, databases, std traits, and a template
+
+Read with the Newtypes section of SKILL.md, which says which constructor to write, what to name it,
+and what a refinement may expose. This file says how a refinement meets the rest of the ecosystem,
+and ends with a template that passes every check the skill runs. The tool named after a rule holds
+it (Enforce with Tools); the rest is review's.
+
+## Errors
+
+- A refinement's error is a `thiserror` enum, so it implements
+  `std::error::Error + Send + Sync + 'static`: clap, anyhow and `Box<dyn Error>` require it.
+  (dylint: `error_not_std_error`)
+- Its messages are lowercase, with no trailing period, and state what is wrong:
+  `"port must be non-zero"`. (ast-grep: `error-message-style`)
+- It derives `Debug, Clone, PartialEq, Eq`, so tests assert on variants. (ast-grep:
+  `domain-error-derives`; clippy: `derive_partial_eq_without_eq`)
+- In a public library it is `#[non_exhaustive]`. A cause is wrapped with `#[from]` or `#[source]`.
+  (ast-grep: `infra-error-without-source`, for the infrastructure errors it lists)
+- `String` is never the error type (ast-grep: `stringly-typed-error`). A message never echoes
+  secret input.
+
+## serde
+
+- A refinement deserializes through its constructor:
+  `#[serde(try_from = "String", into = "String")]` (or `"u16"`, and so on), backed by
+  `TryFrom<Inner>` and `From<Self> for Inner`. A bad value then fails deserialization with the
+  constructor's own message.
+- A refinement never has a plain `#[derive(Deserialize)]` or `#[serde(transparent)]`: both build
+  it without the constructor. (ast-grep: `refinement-bypass`)
+- A tag MAY use `#[serde(transparent)]`: it has no invariant to skip.
+- A closed set is an enum with `#[serde(rename_all = "kebab-case")]`, not a refinement over a
+  string.
+
+## clap (derive)
+
+- A field of a type with `FromStr + Clone + Send + Sync + 'static` is parsed through `FromStr` with
+  no further glue: `#[arg(long)] email: Email`. A custom `value_parser` is not written.
+- `default_value_t = CONST` prints the constant with `Display` and parses it back through
+  `FromStr`, so `Display` must round-trip (Testing Strategy: a property test holds it).
+- `env = "VAR"`, `Vec<T>` with `value_delimiter = ','`, and `Option<T>` work unchanged.
+- A closed set is a `#[derive(ValueEnum)]` enum, not `FromStr`: it gets the choices in the help
+  text and in completions.
+
+## Databases (sqlx, diesel)
+
+- A refinement never has `#[sqlx(transparent)]`: decoding builds it without the constructor.
+  (ast-grep: `refinement-bypass`)
+- `Decode` (sqlx) or `FromSql` (diesel) decodes the inner type, then calls `T::try_from(inner)`
+  and maps the error. `Encode` or `ToSql` may delegate to the inner type.
+
+## std traits
+
+- Every newtype provides `Debug, Clone, PartialEq, Eq, Hash` (ast-grep: `newtype-derives`;
+  clippy: `missing_debug_implementations`, `derive_partial_eq_without_eq`); `Copy` when the inner
+  type is `Copy`; `PartialOrd` and `Ord` when an order means something.
+- `Display` when there is a canonical text form: `FromStr` and clap's defaults invert it.
+- `AsRef<str>`, and `Borrow<str>` only when `Eq`, `Hash` and `Ord` agree with the inner type's,
+  which a derive over the single field guarantees; it lets `set.contains("x")` work.
+- `PartialEq<str>` and `PartialEq<&str>`, for plain comparisons in tests.
+- A secret hand-writes a redacted `Debug`, has no `Display`, and no `Serialize` unless it is
+  required.
+- A refinement never implements `Deref`, `DerefMut` or `AsMut` to its inner value, nor returns
+  `&mut` to it. (dylint: `refinement_escape`)
+
+## Template
+
+Two refinements, one per failure shape: `Email`, several reasons, so `Result` and an error enum;
+`Port`, one self-evident failure on top of std's `NonZeroU16`, so `Option`. Each carries the tests
+the budget asks for. Then the edge that parses both. The code is formatted by `cargo fmt`, and the
+skill's repository checks it against the skill's clippy lints, ast-grep rules and constructor
+coverage.
+
+```rust
+// src/domain/email.rs
+use std::{borrow::Borrow, fmt, str::FromStr};
+
+// A refinement: the field is private, and serde goes through TryFrom<String>, so through new().
+#[derive(
+    Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "String", into = "String")]
+pub struct Email(String);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[non_exhaustive]
+pub enum EmailError {
+    #[error("email is empty")]
+    Empty,
+    #[error("email is missing '@'")]
+    MissingAt,
+    #[error("email exceeds {max} bytes")]
+    TooLong { max: usize },
+}
+
+impl Email {
+    pub const MAX_LEN: usize = 254;
+
+    /// The one validating path: FromStr, TryFrom<String>, serde and clap all come here.
+    pub fn new(raw: impl Into<String>) -> Result<Self, EmailError> {
+        let raw = raw.into();
+        // Normalized first, so Eq, Hash and Ord compare canonical values; an already trimmed String is kept.
+        let value = if raw.trim().len() == raw.len() {
+            raw
+        } else {
+            raw.trim().to_owned()
+        };
+        if value.is_empty() {
+            return Err(EmailError::Empty);
+        }
+        if value.len() > Self::MAX_LEN {
+            return Err(EmailError::TooLong { max: Self::MAX_LEN });
+        }
+        if !value.contains('@') {
+            return Err(EmailError::MissingAt);
+        }
+        Ok(Self(value))
+    }
+
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    #[must_use]
+    pub fn into_inner(self) -> String {
+        self.0
+    }
+}
+
+impl FromStr for Email {
+    type Err = EmailError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Self::new(s)
+    }
+}
+
+impl TryFrom<String> for Email {
+    type Error = EmailError;
+
+    fn try_from(s: String) -> Result<Self, Self::Error> {
+        Self::new(s)
+    }
+}
+
+impl From<Email> for String {
+    fn from(email: Email) -> Self {
+        email.0
+    }
+}
+
+impl AsRef<str> for Email {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+// Eq, Hash and Ord are derived on the one field, so they agree with str's, as Borrow requires.
+impl Borrow<str> for Email {
+    fn borrow(&self) -> &str {
+        &self.0
+    }
+}
+
+impl PartialEq<str> for Email {
+    fn eq(&self, other: &str) -> bool {
+        self.0 == other
+    }
+}
+
+impl PartialEq<&str> for Email {
+    fn eq(&self, other: &&str) -> bool {
+        self.0 == *other
+    }
+}
+
+impl fmt::Display for Email {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+// Testing Strategy, Budget: one rejected input per reason; the round-trip law stands in for accepted examples.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn blank_is_rejected() {
+        assert_eq!(Email::new("  "), Err(EmailError::Empty));
+    }
+
+    #[test]
+    fn too_long_is_rejected() {
+        let max = Email::MAX_LEN;
+        assert_eq!(
+            Email::new(format!("a@{}", "b".repeat(max))),
+            Err(EmailError::TooLong { max })
+        );
+    }
+
+    #[test]
+    fn missing_at_is_rejected() {
+        assert_eq!(Email::new("a.example.com"), Err(EmailError::MissingAt));
+    }
+
+    #[test]
+    fn surrounding_space_is_trimmed() {
+        let email = Email::new(" a@example.com ").map(Email::into_inner);
+        assert_eq!(email, Ok("a@example.com".to_owned()));
+    }
+
+    proptest! {
+        #[test]
+        fn display_parses_back(raw in "[a-z]{1,16}@[a-z]{1,16}") {
+            let email = Email::new(raw)?;
+            prop_assert_eq!(email.to_string().parse::<Email>(), Ok(email));
+        }
+    }
+}
+```
+
+```rust
+// src/domain/port.rs
+use std::{fmt, num::NonZeroU16, num::ParseIntError, str::FromStr};
+
+// A refinement on std's NonZeroU16: the invariant is the inner type's, and Option<Port> is 2 bytes.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
+)]
+#[serde(try_from = "u16", into = "u16")]
+pub struct Port(NonZeroU16);
+
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum PortError {
+    #[error("port must be non-zero")]
+    Zero,
+    #[error("invalid port number: {0}")]
+    Syntax(#[from] ParseIntError),
+}
+
+impl Port {
+    /// The one validating path. One self-evident failure, zero, so it returns Option.
+    #[must_use]
+    pub const fn new(n: u16) -> Option<Self> {
+        match NonZeroU16::new(n) {
+            Some(n) => Some(Self(n)),
+            None => None,
+        }
+    }
+
+    /// Literals only: called in a const item, an invalid value fails compilation.
+    #[must_use]
+    #[expect(
+        clippy::panic,
+        reason = "a compile-time literal: an invalid value fails compilation"
+    )]
+    pub const fn literal(n: u16) -> Self {
+        match Self::new(n) {
+            Some(port) => port,
+            None => panic!("port must be non-zero"),
+        }
+    }
+
+    #[must_use]
+    pub const fn get(self) -> u16 {
+        self.0.get()
+    }
+}
+
+impl TryFrom<u16> for Port {
+    type Error = PortError;
+
+    fn try_from(n: u16) -> Result<Self, Self::Error> {
+        Self::new(n).ok_or(PortError::Zero)
+    }
+}
+
+impl From<Port> for u16 {
+    fn from(port: Port) -> Self {
+        port.get()
+    }
+}
+
+impl FromStr for Port {
+    type Err = PortError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        s.parse::<u16>()?.try_into()
+    }
+}
+
+impl fmt::Display for Port {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
+pub const HTTP: Port = Port::literal(80);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    #[test]
+    fn zero_is_rejected() {
+        assert_eq!("0".parse::<Port>(), Err(PortError::Zero));
+    }
+
+    #[test]
+    fn a_non_number_is_rejected() {
+        assert!(matches!("80a".parse::<Port>(), Err(PortError::Syntax(_))));
+    }
+
+    proptest! {
+        #[test]
+        fn display_parses_back(n in 1u16..) {
+            let port = Port::try_from(n)?;
+            prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
+        }
+    }
+}
+```
+
+```rust
+// src/cli.rs
+// The edge. clap parses each field through FromStr, so no value_parser is written.
+use crate::domain::email::Email;
+use crate::domain::port::{self, Port};
+
+#[derive(Debug, clap::Parser)]
+pub struct Cli {
+    #[arg(long, env = "APP_EMAIL")]
+    pub email: Email,
+    // default_value_t prints the default with Display and parses it back through FromStr.
+    #[arg(long, default_value_t = port::HTTP)]
+    pub port: Port,
+    #[arg(long, value_delimiter = ',')]
+    pub cc: Vec<Email>,
+}
+```
