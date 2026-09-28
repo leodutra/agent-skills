@@ -67,7 +67,7 @@ it (Enforce with Tools); the rest is review's.
 Two refinements, one per failure shape: `Email`, several reasons, so `Result` and an error enum;
 `Port`, one self-evident failure on top of std's `NonZeroU16`, so `Option`. Each carries the tests
 the budget asks for. Then the edge that parses both. The code is formatted by `cargo fmt`, and the
-skill's repository checks it against the skill's clippy lints, ast-grep rules and constructor
+skill's repository checks it against the skill's clippy lints, ast-grep rules and rejection
 coverage.
 
 ```rust

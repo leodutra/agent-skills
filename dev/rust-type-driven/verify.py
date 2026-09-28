@@ -6,7 +6,7 @@ the tool, and compares what it reports with the fixtures' markers: a line that m
 comment `expect: <rule>[, <rule>...]` (a rule repeated once per finding on that line). Every other line is
 clean or a near miss, and must not be flagged. Exit 0 when every part matches, 1 otherwise.
 
-    verify.py [part ...]        parts: clippy, ast-grep, dependencies, mutants, dylint (default: all)
+    verify.py [part ...]        parts: clippy, ast-grep, dependencies, coverage, dylint (default: all)
 
 Tools come from PATH: put release binaries that are not installed first on it, e.g. PATH=/tmp/tools:$PATH.
 """
@@ -141,24 +141,26 @@ def check_dependencies():
     return ok
 
 
-def check_mutants():
-    """.cargo/mutants.toml and the command under Mutation testing, on constructors tested fully and not."""
-    root = scratch("mutants")
-    section = open(SKILL).read().split("### Mutation testing", 1)[1]
-    config = re.search(r"```toml\n# \.cargo/mutants\.toml\n(.*?)```", section, re.S).group(1)
-    os.makedirs(os.path.join(root, ".cargo"), exist_ok=True)
-    with open(os.path.join(root, ".cargo", "mutants.toml"), "w") as f:
-        f.write(config)
-    command = next(l for l in re.search(r"```bash\n(.*?)```", section, re.S).group(1).splitlines() if l.startswith("cargo mutants"))
+def check_coverage():
+    """The rule file and the commands under Rejection coverage, on rejections tested and not."""
+    root = scratch("coverage")
+    section = open(SKILL).read().split("### Rejection coverage", 1)[1].split("\n### ", 1)[0]
+    rule = re.search(r"```yaml\n(# (\S+?),.*?)```", section, re.S)
+    path = os.path.join(root, rule.group(2))
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w") as f:
+        f.write(rule.group(1))
+    commands = re.search(r"```bash\n(.*?)```", section, re.S).group(1)
     want = expected(root)
-    run = subprocess.run(["bash", "-c", command], cwd=root, capture_output=True, text=True)
-    missed = os.path.join(root, "mutants.out", "missed.txt")
-    lines = open(missed).read().splitlines() if os.path.exists(missed) else []
-    got = collections.Counter({(f, int(n), "missed-mutant"): 1  # one finding per line, however many mutants survive on it
-                               for f, n in {tuple(l.split(":")[:2]) for l in lines}})
-    ok = report("mutants", want, got)
+    run = subprocess.run(["bash", "-c", "set -e\n" + commands], cwd=root, capture_output=True, text=True)
+    got = collections.Counter((f, int(n), "untested-rejection")
+                              for f, n in re.findall(r"^(\S+?):(\d+): no test reaches", run.stdout, re.M))
+    ok = report("coverage", want, got)
     if got and run.returncode == 0:
-        print("mutants: FAIL (missed mutants, but the command exited 0, so it would not gate CI)")
+        print("coverage: FAIL (untested rejections, but the commands exited 0, so they would not gate CI)")
+        ok = False
+    if not got and run.returncode != 0:
+        print("coverage: FAIL (no findings parsed; a command failed):\n" + run.stderr[-2000:])
         ok = False
     return ok
 
@@ -203,7 +205,7 @@ def check_dylint():
     return ok
 
 
-PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep, "dependencies": check_dependencies, "mutants": check_mutants,
+PARTS = {"clippy": check_clippy, "ast-grep": check_ast_grep, "dependencies": check_dependencies, "coverage": check_coverage,
          "dylint": check_dylint}
 
 if __name__ == "__main__":

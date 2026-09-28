@@ -463,8 +463,8 @@ pub trait LoadOrders {
 - A type with both `Display` and `FromStr` MUST have a property test that its `Display` parses
   back: `Display` is `FromStr`'s exact inverse, and clap's `default_value_t` relies on it.
 - State transitions SHOULD be tested for each forbidden transition the type cannot rule out.
-- Every rejection in domain code is reached by a test; constructor coverage (Enforce with Tools)
-  checks it.
+- Every rejection in domain code MUST be reached by a test; rejection coverage (Enforce with
+  Tools) checks it.
 
 ```rust
 #[cfg(test)]
@@ -906,32 +906,44 @@ cargo machete
 expansion looks unused. List it under `[package.metadata.cargo-machete] ignored`, with a comment
 saying why.
 
-### Mutation testing
+### Rejection coverage
 
-Testing Strategy, Budget: "one accepted input and one rejected input, plus one rejected input per
-distinct reason for rejection". A tool proves it: [cargo-mutants](https://mutants.rs)
-(`cargo install cargo-mutants`; verified on 27.1.0) breaks each guard of a constructor in turn and
-runs the tests. A broken guard that no test notices is a rejection reason nobody tests.
+Testing Strategy, Budget: "one rejected input per distinct reason for rejection", and a test for
+each forbidden transition. A tool proves every rejection in domain code is reached by a test.
+ast-grep lists each `Err(..)` under a `domain` path, and each `None` in a function returning
+`Option`. [cargo-llvm-cov](https://github.com/taiki-e/cargo-llvm-cov) runs the tests and records
+how often each region of code ran; install it with `cargo install cargo-llvm-cov --locked` and
+`rustup component add llvm-tools-preview` (verified on 0.9.1). A jq join then fails on any
+rejection that no test reached.
 
-```toml
-# .cargo/mutants.toml
-# Mutate domain constructors only, so a surviving mutant is exactly a missing rejection test; mutating
-# getters would demand the tests Testing Strategy rules out. cargo-mutants skips any fn named `new`, so
-# the naming rule gives every fallible constructor one of these names: try_* (try_new, try_from_cents,
-# TryFrom's try_from), parse, or FromStr's from_str.
-examine_globs = ["src/domain/**/*.rs"]
-examine_re = ["::(try_\\w+|parse|from_str)\\b"]
+```yaml
+# .ast-grep/coverage/domain-rejection.yml, outside ruleDirs: it lists rejections for the join below and judges nothing itself
+# A rejection in domain code: an Err(..), or a None where the function returns Option.
+# Holds Testing Strategy, Budget, through the join below.
+id: domain-rejection
+language: rust
+severity: hint
+message: A rejection in domain code.
+files: ["**/domain/**"]
+rule:
+  any:
+    - pattern: Err($$$)
+    - all:
+        - pattern: None
+        - not: { inside: { kind: match_pattern, stopBy: end } }  # a None pattern matches a value; it rejects nothing
+        - inside: { kind: function_item, stopBy: end, has: { field: return_type, regex: '^Option\b' } }
 ```
 
 ```bash
-# A constructor's rejection reason that no test covers. Holds Testing Strategy, Budget. Exits 2 on a missed mutant.
-cargo mutants
+# A rejection in domain code that no test reaches. Holds Testing Strategy, Budget. Needs jq; run at the workspace root.
+cargo llvm-cov --json --output-path target/coverage.json
+ast-grep scan --rule .ast-grep/coverage/domain-rejection.yml --json=compact | jq -r --slurpfile cov target/coverage.json '($cov[0].data[0].files | map({(.filename): .segments}) | add) as $segments | .[] | . as $r | (.range.start.line + 1) as $l | (.range.start.column + 1) as $c | [($segments[$ENV.PWD + "/" + .file] // [])[] | select(.[3] and (.[0] < $l or (.[0] == $l and .[1] <= $c)))] | select(last == null or last[2] == 0) | "\($r.file):\($l): no test reaches this rejection: \($r.text)"' | (! grep .)
 ```
 
-It builds and tests once per mutant, so it runs in CI and before a release, not on every save.
-It mutates operators (`>`, `==`, `!`, `&&`) and whole function bodies, not method calls: a guard
-that is one call, such as `if raw.is_empty()`, yields no mutant, so review still checks that its
-rejection has a test.
+The join reads the region each rejection starts in, not its line, so
+`if n == 0 { None } else { Some(Self(n)) }` on one line is judged on its own. It cannot see a
+rejection with no `Err` or `None` of its own (`?`, `ok_or(PortError::Zero)`, a combinator), nor
+whether the test that reached a rejection asserted on it. Review keeps both.
 
 ### Type-aware lints: dylint, for a long-lived codebase
 
@@ -982,8 +994,8 @@ cannot fail; a `try_new` without an infallible `new`; a `const fn literal` calle
 `const` item; a stringly typed error; an error message that is capitalized or ends in a period; a
 domain error without `Clone` and `PartialEq`; an infrastructure error held without `#[source]`;
 generic role names; a
-dependency without an approval reason; an unused dependency; a constructor's rejection reason with
-no test; formatting.
+dependency without an approval reason; an unused dependency; a rejection in domain code that no
+test reaches; formatting.
 
 Review checks only what no tool can decide. Where the dylint library is adopted, it holds the items
 marked (dylint), and review looks only at what it cannot see:
@@ -999,7 +1011,7 @@ marked (dylint), and review looks only at what it cannot see:
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
 - [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`. (dylint, for the calls it lists)
-- [ ] Any rejection guard that is a single method call (`is_empty()`), which mutation testing cannot break? Check it has a test.
+- [ ] Any rejection with no `Err` or `None` of its own (`?`, `ok_or`), or a test that reaches a rejection without asserting on its error? Pin the error in the test.
 - [ ] Any test beyond the budget (a second example of a rule already pinned, a getter, a derive)? Remove it.
 
 ---
@@ -1013,10 +1025,11 @@ cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
 cargo test
 ast-grep scan                                # the syntax rules
 cargo machete                                # no unused dependency
-cargo mutants                                # CI and before a release: every rejection reason tested
 cargo metadata --format-version 1 --no-deps | jq -r '…' | (! grep .)   # each dependency approved: the full line is under Dependencies
+cargo llvm-cov --json --output-path target/coverage.json                # the tests again, recording what ran
+ast-grep scan --rule .ast-grep/coverage/domain-rejection.yml --json=compact | jq … | (! grep .)   # every rejection tested: the full line is under Rejection coverage
 DYLINT_RUSTFLAGS="-D warnings" cargo dylint --all -- --all-targets   # where the dylint library is adopted
 ```
 
-All eight MUST pass before a task is considered complete, locally and in CI, and the ninth where
+All nine MUST pass before a task is considered complete, locally and in CI, and the tenth where
 the dylint library is adopted.
