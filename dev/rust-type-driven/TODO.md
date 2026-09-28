@@ -12,11 +12,7 @@ The skill points to existing lints (rustc and clippy), configured in `skills/rus
 
 ## Verify
 
-`python3 dev/rust-type-driven/verify.py` needs only cargo, plus the network the first time.
-- The `clippy` part runs both assets on `fixtures/clippy/`, where a flagged line ends with `expect: <lint>`.
-- The `template` part runs fmt, clippy and test on the template in `references/newtypes.md`.
-
-Run it after editing either asset or the template, and after a toolchain update: a renamed or removed lint fails it.
+`python3 dev/rust-type-driven/verify.py`: its docstring says what it checks. Run it after editing an asset or the template, and after a toolchain update.
 
 ## History
 

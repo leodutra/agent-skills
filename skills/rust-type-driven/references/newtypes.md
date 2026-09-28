@@ -1,21 +1,10 @@
-# Newtypes: errors, serde, clap, databases, std traits, and a template
+# Newtypes: serde, clap, databases, std traits, and a template
 
 Read with the Newtypes section of SKILL.md, which says which constructor to write, what to name it,
 and what a refinement may expose. This file says how a refinement meets the rest of the ecosystem,
 and ends with a template that passes the skill's lints. A lint named after a rule holds
-it (Enforce with Tools); the rest is review's.
-
-## Errors
-
-- A refinement's error is a `thiserror` enum, so it implements
-  `std::error::Error + Send + Sync + 'static`: clap, anyhow and `Box<dyn Error>` require it.
-  (clippy: `result_unit_err`, for `()`)
-- Its messages are lowercase, with no trailing period, and state what is wrong:
-  `"port must be non-zero"`.
-- It derives `Debug, Clone, PartialEq, Eq`, so tests assert on variants. (clippy:
-  `derive_partial_eq_without_eq`)
-- In a public library it is `#[non_exhaustive]`. A cause is wrapped with `#[from]` or `#[source]`.
-- `String` is never the error type. A message never echoes secret input.
+it (Enforce with Tools); the rest is review's. A refinement's error follows SKILL.md, Error
+Modeling.
 
 ## serde
 
@@ -23,8 +12,6 @@ it (Enforce with Tools); the rest is review's.
   `#[serde(try_from = "String", into = "String")]` (or `"u16"`, and so on), backed by
   `TryFrom<Inner>` and `From<Self> for Inner`. A bad value then fails deserialization with the
   constructor's own message.
-- A refinement never has a plain `#[derive(Deserialize)]` or `#[serde(transparent)]`: both build
-  it without the constructor.
 - A tag MAY use `#[serde(transparent)]`: it has no invariant to skip.
 - A closed set is an enum with `#[serde(rename_all = "kebab-case")]`, not a refinement over a
   string.
@@ -56,8 +43,6 @@ it (Enforce with Tools); the rest is review's.
 - `PartialEq<str>` and `PartialEq<&str>`, for plain comparisons in tests.
 - A secret hand-writes a redacted `Debug`, has no `Display`, and no `Serialize` unless it is
   required.
-- A refinement never implements `Deref`, `DerefMut` or `AsMut` to its inner value, nor returns
-  `&mut` to it.
 
 ## Template
 

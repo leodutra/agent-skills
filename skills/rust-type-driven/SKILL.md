@@ -125,7 +125,7 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 ### Newtypes
 
 A refinement's rules. Read [references/newtypes.md](references/newtypes.md) when adding or
-reviewing one: it holds the error, serde, clap, database and std trait rules, and a complete
+reviewing one: it holds the serde, clap, database and std trait rules, and a complete
 template that passes this skill's lints.
 
 Pick the constructor by its input:
@@ -171,42 +171,6 @@ Invariant integrity:
 - It MUST NOT derive `Default` unless the default value is valid.
 
 ```rust
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct Email(String);
-
-// The field is private, so new() is the only way in; FromStr (below), TryFrom<String> and serde
-// (references/newtypes.md) delegate to it. After new() succeeds, the Email is trusted everywhere.
-impl Email {
-    pub fn new(raw: impl Into<String>) -> Result<Self, EmailError> {
-        let raw = raw.into();
-        // Normalized first; an already trimmed String is kept, not copied.
-        let value = if raw.trim().len() == raw.len() {
-            raw
-        } else {
-            raw.trim().to_owned()
-        };
-        if value.is_empty() {
-            return Err(EmailError::Empty);
-        }
-        if !value.contains('@') {
-            return Err(EmailError::MissingAt);
-        }
-        Ok(Self(value))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl FromStr for Email {
-    type Err = EmailError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::new(s)
-    }
-}
-
 // One self-evident failure, so Option; std's NonZeroU16 holds the invariant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Port(NonZeroU16);
@@ -322,7 +286,6 @@ Rules:
   the caller's error type there, and keep the original as `#[source]` so the chain survives.
 - Libraries SHOULD use `thiserror`; `anyhow` / `eyre` SHOULD be limited to process boundaries.
 - Application code using `anyhow` SHOULD add `.context(...)` when propagating fallible operations.
-- Code MUST NOT use `Err("something went wrong".into())`.
 
 ---
 
@@ -339,24 +302,6 @@ Rules:
 
 - User input MUST NOT be validated with assertions.
 - Exhaustive `match` SHOULD be preferred over `unreachable!()`.
-- An invariant that can live in a type MUST be checked once, in its constructor, and never
-  re-checked downstream.
-
-```rust
-impl Order {
-    // Non-empty items are held by the type that built this Order; only the rule
-    // that depends on two values is checked here.
-    pub fn confirm(self) -> Result<ConfirmedOrder, OrderError> {
-        if self.total > self.credit_limit {
-            return Err(OrderError::CreditLimitExceeded {
-                total: self.total,
-                limit: self.credit_limit,
-            });
-        }
-        Ok(ConfirmedOrder { /* ... */ })
-    }
-}
-```
 
 ---
 
@@ -378,7 +323,6 @@ impl Order {
 
 ### Mutation discipline
 
-- APIs SHOULD default to immutable interfaces.
 - `&mut self` SHOULD be used when it is the natural model, improves performance, or avoids unnecessary allocation.
 - Domain types MUST NOT use interior mutability (`Cell`, `RefCell`, `Mutex`).
 
@@ -387,7 +331,6 @@ impl Order {
 - Owned types SHOULD be the default.
 - Borrowed types SHOULD be used for transient parsing and short-lived views.
 - Struct lifetimes SHOULD NOT be introduced unless profiling shows a measurable need.
-- Code SHOULD prefer borrowing over cloning when ownership does not need to change.
 - `clone()` SHOULD NOT appear inside per-item loops or other hot paths without a stated reason.
 
 ---
@@ -408,23 +351,12 @@ pub trait LoadOrders {
 }
 ```
 
-### When to introduce a trait
-
-| Situation                                          | Use a trait? |
-|----------------------------------------------------|--------------|
-| 2+ real implementations                            | Yes          |
-| 1 real impl but need test doubles for side effects | Yes          |
-| Pure function with no side effects                 | No           |
-| Single impl, easily testable directly              | No           |
-
 ---
 
 ## Async / Runtime Rules
 
 ### Task boundaries
 
-- Values moved into spawned tasks MUST satisfy runtime bounds such as `Send + 'static`.
-- Code MUST move owned data into tasks and MUST NOT borrow across task boundaries.
 - `Arc<T>` + immutable state SHOULD be preferred. Shared mutation MUST be explicitly justified.
 - `std::sync::MutexGuard` MUST NOT be held across `.await`.
 - `tokio::sync::Mutex` SHOULD be used only when a lock truly must span `.await`.
@@ -467,20 +399,6 @@ pub trait LoadOrders {
 - Every rejection reason in domain code MUST be reached by a test.
 
 ```rust
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn pending_order_can_transition_to_confirmed() {
-        let order = Order::pending(customer_id(), items());
-        let confirmed = order.confirm().unwrap();
-        assert!(matches!(confirmed.status(), OrderStatus::Confirmed));
-    }
-}
-```
-
-```rust
 use proptest::prelude::*;
 
 proptest! {
@@ -511,8 +429,7 @@ rule is held by review (Code Review Checklist).
 To adopt them, paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml`, and copy
 [assets/clippy.toml](assets/clippy.toml) to each crate's root. Each lint in those files names what
 it catches and the rule it holds. `cargo clippy --all-targets -- -D warnings` (Commands) then
-checks them on every change; the Code Review Checklist lists what they hold, so review never
-re-checks it.
+checks them on every change.
 
 The test allowances cover `#[cfg(test)]` code only. Each file under `tests/` is its own crate,
 so the denies apply there in full: integration tests SHOULD return `Result<(), Box<dyn Error>>`

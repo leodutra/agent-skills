@@ -1,4 +1,5 @@
 //! One violation per lint of Enforce with Tools. A flagged line ends with `expect: <lint>`.
+#![expect(dead_code, reason = "fixture types exist to be linted, not used")]
 
 pub fn unsafe_block() -> u8 { unsafe { std::mem::zeroed() } } // expect: unsafe_code, undocumented_unsafe_blocks
 pub fn unwraps(x: Option<u8>) -> u8 { x.unwrap() } // expect: unwrap_used
@@ -47,7 +48,7 @@ pub fn flags(a: bool, b: bool, c: bool, d: bool) -> bool { a && b && c && d } //
 pub struct Holder(pub std::sync::Mutex<u8>); // expect: disallowed_types
 pub fn stamp() -> std::time::Instant { std::time::Instant::now() } // expect: disallowed_methods
 
-pub struct NoDebug(pub u8); // expect: missing_debug_implementations
+pub struct NoDebug(u8); // expect: missing_debug_implementations
 #[derive(Debug, Clone, PartialEq)] // expect: derive_partial_eq_without_eq
 pub struct NoEq(u8);
 
@@ -80,15 +81,7 @@ pub struct Ratio(f64);
 pub struct Tag(pub u64);
 #[derive(Debug)]
 pub struct Refinement { value: u8 }
-impl Refinement {
-    #[must_use]
-    pub fn value(&self) -> u8 { self.value + u8::from(Mixed { shown: 0, hidden: 0 }.hidden == 0) + Level(0).0 }
-}
 pub struct Secret(String);
-impl Secret {
-    #[must_use]
-    pub fn expose(&self) -> &str { &self.0 }
-}
 impl std::fmt::Debug for Secret {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result { f.write_str("Secret(..)") }
 }

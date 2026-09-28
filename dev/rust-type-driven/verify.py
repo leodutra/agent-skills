@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Verify the lint configuration skills/rust-type-driven ships, and its template, with the stock toolchain.
 
-    verify.py [part ...]        parts: clippy, template (default: both)
+    python3 dev/rust-type-driven/verify.py
 
 clippy: copies assets/lints.toml and assets/clippy.toml into a crate built from fixtures/clippy/ and runs
 clippy. A line that must be flagged ends with `expect: <lint>[, <lint>...]` (a lint repeated once per
@@ -44,16 +44,11 @@ def adopt(root, manifest):
 
 
 def expected(root):
-    """The expect markers under root, as a multiset of (relative file, 1-based line, lint)."""
+    """The fixture's expect markers, as a multiset of (file, 1-based line, lint)."""
     out = collections.Counter()
-    for folder, _, files in os.walk(root):
-        for name in (n for n in files if n.endswith(".rs")):
-            path = os.path.join(folder, name)
-            for n, line in enumerate(open(path, encoding="utf-8"), 1):
-                m = EXPECT.search(line)
-                if m:
-                    for lint in m.group(1).split(","):
-                        out[(os.path.relpath(path, root), n, lint.strip())] += 1
+    for n, line in enumerate(open(os.path.join(root, "src", "lib.rs"), encoding="utf-8"), 1):
+        for lint in (m.group(1).split(",") if (m := EXPECT.search(line)) else []):
+            out[("src/lib.rs", n, lint.strip())] += 1
     return out
 
 
@@ -76,12 +71,10 @@ def check_clippy():
         if (key, span["column_start"]) not in seen:  # the lib and lib-test targets report the same finding twice
             seen.add((key, span["column_start"]))
             got[key] += 1
-    missing, extra = want - got, got - want
-    for (f, n, lint), k in sorted(missing.items()):
-        print(f"  clippy: MISSED  {f}:{n} {lint}" + (f" x{k}" if k > 1 else ""))
-    for (f, n, lint), k in sorted(extra.items()):
-        print(f"  clippy: EXTRA   {f}:{n} {lint}" + (f" x{k}" if k > 1 else ""))
-    ok = not missing and not extra
+    for tag, diff in (("MISSED", want - got), ("EXTRA ", got - want)):
+        for (f, n, lint), k in sorted(diff.items()):
+            print(f"  clippy: {tag} {f}:{n} {lint}" + (f" x{k}" if k > 1 else ""))
+    ok = want == got
     print(f"clippy: {'ok' if ok else 'FAIL'} ({sum(got.values())} findings, {sum(want.values())} expected)")
     return ok
 
@@ -103,9 +96,5 @@ def check_template():
     return ok
 
 
-PARTS = {"clippy": check_clippy, "template": check_template}
-
 if __name__ == "__main__":
-    wanted = sys.argv[1:] or list(PARTS)
-    results = [PARTS[p]() for p in wanted]
-    sys.exit(0 if all(results) else 1)
+    sys.exit(0 if all([check_clippy(), check_template()]) else 1)  # a list, so both always run
