@@ -80,6 +80,8 @@ pub mod domain {
     impl std::ops::DerefMut for Token { fn deref_mut(&mut self) -> &mut str { self.0.as_mut_str() } } // expect: refinement_escape
     impl AsMut<str> for Token { fn as_mut(&mut self) -> &mut str { self.0.as_mut_str() } } // expect: refinement_escape
     impl AsRef<str> for Token { fn as_ref(&self) -> &str { &self.0 } }
+    impl std::borrow::Borrow<str> for Token { fn borrow(&self) -> &str { &self.0 } }
+    impl std::borrow::BorrowMut<str> for Token { fn borrow_mut(&mut self) -> &mut str { self.0.as_mut_str() } } // expect: refinement_escape
 
     /// A tag has no invariant to escape: it may deref.
     pub struct Label(pub String);

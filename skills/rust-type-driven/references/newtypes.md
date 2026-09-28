@@ -2,7 +2,7 @@
 
 Read with the Newtypes section of SKILL.md, which says which constructor to write, what to name it,
 and what a refinement may expose. This file says how a refinement meets the rest of the ecosystem,
-and ends with a template that passes every check the skill runs. The tool named after a rule holds
+and ends with a template checked against the skill's own tools. The tool named after a rule holds
 it (Enforce with Tools); the rest is review's.
 
 ## Errors

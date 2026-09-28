@@ -58,7 +58,9 @@ Done 2026-09-26 on cargo-dylint and dylint-link 6.1.0, nightly-2026-08-20: the l
 
 Open: the library pins a nightly; when that nightly is updated, rebuild, run `verify.py dylint`, and move `rust-toolchain.toml` and the `clippy_utils` rev together. Projects point `[workspace.metadata.dylint]` at this repository's `dev/rust-type-driven/lints`, so it must be pushed before anyone can adopt it.
 
-## Consistency pass, 2026-09-28
+## Consistency pass, 2026-09-28 (naming superseded the same day)
+
+The `try_*`/`parse` naming below was overridden by the newtype guide (next section): the sole fallible constructor is `new`, and `domain-constructor-name` and mutation testing are gone. The record is kept as history.
 
 Prompted by the user: `Email` parses, yet under "parse, don't validate" it is constructed, so it is `try_new`; `parse` is for an API that exposes a parser. Read the whole skill for the same kind of slip and fixed each, test-first where a tool is involved; `verify.py` all five parts pass (clippy 24, ast-grep 18, dependencies 5, mutants 2, dylint 11).
 
@@ -71,7 +73,7 @@ Prompted by the user: `Email` parses, yet under "parse, don't validate" it is co
 
 ## Newtype guide, 2026-09-28
 
-The user supplied a newtype guide ("Rust newtypes: parse, don't validate") and said it overrides past definitions. It is adopted in SKILL.md and `references/newtypes.md`, adapted to the skill's other rules and to architecture-blueprint, and every rule a tool can decide got a tool. `verify.py`: all six parts pass (clippy 26, ast-grep 31, dependencies 5, coverage 4, dylint 20, template clean).
+The user supplied a newtype guide ("Rust newtypes: parse, don't validate") and said it overrides past definitions. It is adopted in SKILL.md and `references/newtypes.md`, adapted to the skill's other rules and to architecture-blueprint, and every rule a tool can decide got a tool. `verify.py`: all six parts pass (clippy 26, ast-grep 32, dependencies 5, coverage 4, dylint 21, template clean).
 
 - [x] **Naming reverts to std's** (`abc6c72`). The sole fallible constructor is `new`, returning `Result` or `Option`; `try_new` only beside an infallible `new`; `parse` may exist and delegates to `FromStr`; named constructors for several formats (`from_hex`). This undoes the 2026-09-26 rule and the consistency pass's `try_*` naming: the ast-grep rules `fallible-new` and `domain-constructor-name` are removed.
 - [x] **Tag and refinement.** A tag (`UserId(u64)`) has no invariant and a `pub` field; a refinement (`Email`, `Port`) has private fields and every rule. The guide allows a tag either; the skill picks the `pub` field so tools can tell the two apart. architecture-blueprint's identity newtype is a tag; its single-value value object is a refinement (one sentence in `domain-modeling.md`).
@@ -81,6 +83,15 @@ The user supplied a newtype guide ("Rust newtypes: parse, don't validate") and s
 - [x] **clippy** (`9357a4c`): `missing_debug_implementations` (rustc) and `derive_partial_eq_without_eq`.
 - [x] **Rejection coverage replaces cargo-mutants** (`c12afdf`). ast-grep lists each `Err(..)` in domain code and each `None` in a function returning `Option`. `cargo llvm-cov --json` records region counts, and a jq join fails on a rejection whose region never ran. Region, not line: a one-line `if n == 0 { None } else { .. }` is judged on its own. It also sees one-call guards (`is_empty()`) and forbidden transitions, which mutation testing missed. It cannot see `?` or `ok_or`, nor whether a test asserted; review keeps both. Setup: `rustup component add llvm-tools-preview` added 26 MB to stable here; cargo-llvm-cov 0.9.1 release binary is in `/tmp/claude-1000/tools`.
 - [x] **dylint** (`292fc14`). `pub_field_on_invariant_type` counts `new` returning `Option<Self>`, and no longer counts methods taking `self` (transitions). New lints: `refinement_escape` (`Deref`, `DerefMut`, `AsMut`, `BorrowMut`, or a pub `&mut` method on a type with a fallible constructor) and `error_not_std_error` (`()` or a local type without `Error + Send + Sync` as a public fn's error or a `FromStr`/`TryFrom` impl's). `sym::Error` comes from `clippy_utils::sym`, not rustc's.
+- [x] **Review before push.** Fixed eight defects:
+  - normalization is to the domain's canonical form, never collapsing a distinction it keeps;
+  - the Email comment named delegations the snippet did not show;
+  - the suppression notes now say exactly where the comment goes;
+  - `domain-error-derives`, a SHOULD, gained its stated-reason escape;
+  - `error-message-style` missed a single capital letter such as "A port";
+  - the reference overclaimed which checks the template passes;
+  - `BorrowMut` in `refinement_escape` had no fixture case;
+  - the consistency-pass section did not say it was superseded.
 - [x] **Docs aligned.** `docs/RUST_BACKEND_STACK.md`'s `newtypes/` folder became `domain/`, as the blueprint requires. The blueprint got Rust-specific edits here too (`Port(NonZeroU16)`, a `pub` field, a rust-type-driven sentence); the user ruled the blueprint language-neutral, so those came out again and only the guide's language-neutral rules went in (every way in is the parse, normalize at construction, no invalid default, immutable all the way down).
 
 ## Stays with review (no tool can decide these)

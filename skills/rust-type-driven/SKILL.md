@@ -161,8 +161,9 @@ Invariant integrity:
 - Its fields MUST stay private: the module is the trust boundary. It MUST NOT hand out `&mut` to
   its inner value, nor implement `Deref` or `DerefMut`; it offers `as_str()`, `get()`, `AsRef` or
   `into_inner()` instead.
-- The constructor MUST normalize (trim, canonical case), so `Eq`, `Hash` and `Ord` compare
-  canonical values.
+- The constructor MUST normalize to the canonical form the domain defines (trim, canonical
+  case), so `Eq`, `Hash` and `Ord` compare canonical values; it never collapses a distinction the
+  domain keeps (an email's local part keeps its case).
 - A mutating method MUST preserve the invariant, or not exist (`NonEmptyVec::pop` returns `None`
   at length 1).
 - A refinement SHOULD build on std's (`Port(NonZeroU16)`, not `Port(u16)` plus a check), which
@@ -173,8 +174,8 @@ Invariant integrity:
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct Email(String);
 
-// The field is private, so new() is the only way in; FromStr, TryFrom<String> and serde delegate
-// to it. After new() succeeds, the Email is trusted everywhere: no re-validation.
+// The field is private, so new() is the only way in; FromStr (below), TryFrom<String> and serde
+// (references/newtypes.md) delegate to it. After new() succeeds, the Email is trusted everywhere.
 impl Email {
     pub fn new(raw: impl Into<String>) -> Result<Self, EmailError> {
         let raw = raw.into();
@@ -667,7 +668,7 @@ id: refinement-default
 language: rust
 severity: error
 message: A refinement derives Default.
-note: "Newtypes: remove the derive; when the default is valid, say why on the line above the struct: // ast-grep-ignore: refinement-default -- <why>"
+note: "Newtypes: remove the derive; when the default is valid, say why directly above `pub struct`, below its attributes: // ast-grep-ignore: refinement-default -- <why>"
 files: ["**/domain/**"]
 rule:
   all:
@@ -752,7 +753,7 @@ id: newtype-derives
 language: rust
 severity: error
 message: A newtype without Clone, PartialEq, Eq and Hash.
-note: "references/newtypes.md: derive them; a type that cannot (an f64 inside) says why on the line above: // ast-grep-ignore: newtype-derives -- <why>"
+note: "references/newtypes.md: derive them; a type that cannot (an f64 inside) says why directly above `pub struct`, below its attributes: // ast-grep-ignore: newtype-derives -- <why>"
 files: ["**/domain/**"]
 rule:
   all:
@@ -841,7 +842,7 @@ rule:
 
 ```yaml
 # .ast-grep/rules/error-message-style.yml
-# An error message that starts with a capitalized word or ends with a period.
+# An error message that starts with a capitalized word (a single letter too, as in "A port") or ends with a period.
 # Holds Error Modeling: "A message MUST be lowercase, with no trailing period"; an acronym (HTTP, I/O) keeps its case.
 id: error-message-style
 language: rust
@@ -850,7 +851,7 @@ message: An error message that starts with a capital or ends with a period.
 note: "Error Modeling: it is read inside a longer chain; a name keeps its case, silenced on the line above: // ast-grep-ignore: error-message-style -- <the name>"
 rule:
   kind: attribute_item
-  regex: '^#\[error\("([A-Z][a-z]|[^"]*\.")'
+  regex: '^#\[error\("([A-Z][a-z]|[A-Z]\s|[^"]*\.")'
 ```
 
 ```yaml
@@ -861,7 +862,7 @@ id: domain-error-derives
 language: rust
 severity: error
 message: A domain error without Clone and PartialEq.
-note: "Error Modeling: derive Debug, Clone, PartialEq, Eq, so tests assert on variants."
+note: "Error Modeling: derive Debug, Clone, PartialEq, Eq, so tests assert on variants; an error that cannot says why directly above `pub enum`, below its attributes: // ast-grep-ignore: domain-error-derives -- <why>"
 files: ["**/domain/**"]
 rule:
   all:

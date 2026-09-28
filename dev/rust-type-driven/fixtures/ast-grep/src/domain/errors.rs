@@ -30,6 +30,7 @@ pub enum PriceError { // expect: domain-error-derives
 pub enum EmailError {
     #[error("Email is empty")] Capitalized, // expect: error-message-style
     #[error("email is missing '@'.")] Period, // expect: error-message-style
+    #[error("A port must be non-zero")] Article, // expect: error-message-style
     #[error("HTTP request failed")] Acronym,
     #[error("I/O failed on {path}")] Slash { path: String },
     #[error("{0} is not an email")] Leading(u16),
