@@ -91,10 +91,17 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
 - Fields of a type with an invariant MUST be private; a fallible constructor is the only way in.
 - A fallible constructor MUST NOT be named `new`: `new` reads as infallible, and mutation testing
   (Enforce with Tools) skips any function named `new`, so its rejection tests would go unchecked.
-  Name it `try_new` when parsing is an implementation detail of construction: the caller hands over
-  values and the constructor checks them (`PriceCut::try_new(sale, regular)`). Name it `parse` when
-  the API conceptually exposes a parser: the caller hands over raw text or bytes to be read
-  (`Email::parse(raw)`).
+  Name it `try_new` when parsing is an implementation detail of construction, whatever the input
+  is. Name it `parse` when the API conceptually exposes a parser, when reading that format is what
+  the type offers (`Email::parse(raw)`).
+
+  ```rust
+  impl Foo {
+      pub fn try_new(input: &str) -> Result<Self, Error> {
+          // parse + validate + construct
+      }
+  }
+  ```
 - Enum variant fields are always public. A variant whose fields share an invariant
   (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
 - Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
@@ -594,7 +601,7 @@ id: fallible-new
 language: rust
 severity: error
 message: A fallible constructor is named `new`.
-note: "Type-Driven Design: try_new when checking values is part of construction, parse when the API reads raw input; cargo-mutants never mutates a function named new."
+note: "Type-Driven Design: try_new when parsing is part of construction, parse when the API exposes a parser; cargo-mutants never mutates a function named new."
 rule:
   kind: function_item
   all:
@@ -641,7 +648,7 @@ runs the tests. A broken guard that no test notices is a rejection reason nobody
 # .cargo/mutants.toml
 # Mutate domain constructors only, so a surviving mutant is exactly a missing rejection test; mutating
 # getters would demand the tests Testing Strategy rules out. cargo-mutants skips any fn named `new`,
-# which is why a fallible constructor is named try_new (it checks values) or parse (it reads raw input).
+# which is why a fallible constructor is named try_new (parsing is part of construction) or parse (the API is a parser).
 examine_globs = ["src/domain/**/*.rs"]
 examine_re = ["::(parse|try_new|try_from)\\b"]
 ```
