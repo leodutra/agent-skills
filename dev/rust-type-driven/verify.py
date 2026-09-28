@@ -93,7 +93,7 @@ def check_ast_grep():
     """sgconfig.yml and the .ast-grep/rules files of Enforce with Tools, on a tree with every rule's cases."""
     root = scratch("ast-grep")
     for first, body in blocks("yaml"):
-        m = re.match(r"# (sgconfig\.yml|\.ast-grep/rules/[\w-]+\.yml)", first)
+        m = re.match(r"# (sgconfig\.yml|\.ast-grep/[\w-]+/[\w-]+\.yml)", first)
         if m:
             path = os.path.join(root, m.group(1))
             os.makedirs(os.path.dirname(path), exist_ok=True)

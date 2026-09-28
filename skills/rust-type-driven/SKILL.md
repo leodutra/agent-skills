@@ -603,31 +603,72 @@ never counts. `ast-grep scan` exits non-zero on any finding.
 # sgconfig.yml, at the repository root
 ruleDirs:
   - .ast-grep/rules
+utilDirs:  # patterns several rules share
+  - .ast-grep/utils
 ```
 
 ```yaml
-# .ast-grep/rules/domain-structural-deserialize.yml
-# A domain type deriving Deserialize, which builds it without its constructor.
-# Holds Parse, Don't Validate: "Domain types MUST NOT derive Deserialize structurally".
-id: domain-structural-deserialize
+# .ast-grep/utils/attributes-before.yml
+# Where a search up through an item's attributes stops: the first node above that is neither an attribute nor a comment.
+id: attributes-before
+language: rust
+rule:
+  not: { any: [{ kind: attribute_item }, { kind: line_comment }, { kind: block_comment }] }
+```
+
+```yaml
+# .ast-grep/utils/refinement.yml
+# A refinement: a struct with a private field. A tag's field is pub (Type-Driven Design).
+id: refinement
+language: rust
+rule:
+  kind: struct_item
+  has:
+    field: body
+    any:
+      - kind: field_declaration_list
+        has: { kind: field_declaration, not: { has: { kind: visibility_modifier } } }
+      - kind: ordered_field_declaration_list
+        has:  # a field type whose previous token is not `pub`; punctuation tokens are children here too
+          not: { any: [{ kind: visibility_modifier }, { kind: attribute_item }, { kind: line_comment }, { kind: block_comment }, { regex: '^[(),]$' }] }
+          follows: { not: { kind: visibility_modifier } }
+```
+
+```yaml
+# .ast-grep/rules/refinement-bypass.yml
+# A refinement (a domain struct with a private field) that serde or sqlx builds field by field, skipping its constructor.
+# Holds Parse, Don't Validate: "Every way in MUST reach a refinement through its one validating constructor".
+id: refinement-bypass
 language: rust
 severity: error
-message: A domain type derives Deserialize without its constructor.
-note: "Parse, Don't Validate: deserialize a record and convert it with TryFrom, or add #[serde(try_from = \"...\")]."
+message: A derive builds this refinement without its constructor.
+note: "Parse, Don't Validate: route serde through #[serde(try_from = \"...\")], and decode from the database through TryFrom."
 files: ["**/domain/**"]  # the domain path convention above; records and DTOs live elsewhere
-utils:
-  attributes-before:  # the attributes and comments directly above an item
-    not: { any: [{ kind: attribute_item }, { kind: line_comment }, { kind: block_comment }] }
 rule:
   all:
-    - any: [{ kind: struct_item }, { kind: enum_item }]
-    - follows: { kind: attribute_item, regex: 'derive\([^)]*\bDeserialize\b', stopBy: { matches: attributes-before } }
-    - not:
-        follows: { kind: attribute_item, regex: 'serde\([^)]*\btry_from\b', stopBy: { matches: attributes-before } }
-    - not:  # a fieldless enum has no invalid value, so a derive skips no parse
-        all:
-          - kind: enum_item
-          - not: { has: { stopBy: end, any: [{ kind: ordered_field_declaration_list }, { kind: field_declaration_list }] } }
+    - matches: refinement
+    - any:
+        - all:
+            - follows: { kind: attribute_item, regex: 'derive\([^)]*\bDeserialize\b', stopBy: { matches: attributes-before } }
+            - not:  # try_from runs the constructor; from, an infallible From, has nothing to skip
+                follows: { kind: attribute_item, regex: 'serde\([^)]*\b(try_)?from\s*=', stopBy: { matches: attributes-before } }
+        - follows: { kind: attribute_item, regex: '^#\[(serde|sqlx)\([^)]*\btransparent\b', stopBy: { matches: attributes-before } }
+```
+
+```yaml
+# .ast-grep/rules/refinement-default.yml
+# A refinement deriving Default, whose value no constructor checked.
+# Holds Newtypes: "It MUST NOT derive Default unless the default value is valid".
+id: refinement-default
+language: rust
+severity: error
+message: A refinement derives Default.
+note: "Newtypes: remove the derive; when the default is valid, say why on the line above the struct: // ast-grep-ignore: refinement-default -- <why>"
+files: ["**/domain/**"]
+rule:
+  all:
+    - matches: refinement
+    - follows: { kind: attribute_item, regex: 'derive\([^)]*\bDefault\b', stopBy: { matches: attributes-before } }
 ```
 
 ```yaml
@@ -697,6 +738,140 @@ rule:
   inside:  # the name being declared, never a use of one
     any: [{ kind: struct_item }, { kind: enum_item }, { kind: trait_item }, { kind: type_item }]
     field: name
+```
+
+```yaml
+# .ast-grep/rules/newtype-derives.yml
+# A domain newtype (a tuple struct of one field) that does not derive Clone, PartialEq, Eq and Hash.
+# Holds references/newtypes.md, std traits: "Every newtype provides Debug, Clone, PartialEq, Eq, Hash" (Debug is rustc's lint).
+id: newtype-derives
+language: rust
+severity: error
+message: A newtype without Clone, PartialEq, Eq and Hash.
+note: "references/newtypes.md: derive them; a type that cannot (an f64 inside) says why on the line above: // ast-grep-ignore: newtype-derives -- <why>"
+files: ["**/domain/**"]
+rule:
+  all:
+    - kind: struct_item
+    - has:  # one field: no comma before another field
+        field: body
+        kind: ordered_field_declaration_list
+        not: { has: { regex: '^,$', not: { precedes: { regex: '^\)$' } } } }
+    - any:
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bClone\b', stopBy: { matches: attributes-before } } }
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bPartialEq\b', stopBy: { matches: attributes-before } } }
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bEq\b', stopBy: { matches: attributes-before } } }
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bHash\b', stopBy: { matches: attributes-before } } }
+```
+
+```yaml
+# .ast-grep/rules/validation-predicate.yml
+# A check that answers yes or no instead of returning the parsed type.
+# Holds Parse, Don't Validate: "is_valid_x(&str) -> bool or validate(&self) MUST be replaced by a constructor that returns the type".
+id: validation-predicate
+language: rust
+severity: error
+message: A validation that returns a verdict, not the type.
+note: "Parse, Don't Validate: a constructor that returns the type (Newtypes) replaces it, and the type is the proof."
+ignores: ["tests/**"]
+rule:
+  kind: function_item
+  all:
+    - has: { field: name, regex: '^(validate|is_valid)(_\w+)?$' }
+    - has: { field: return_type, regex: '^(bool|(\w+::)*Result<\s*\(\s*\)\s*[,>])' }  # bool, or Result<(), _>
+```
+
+```yaml
+# .ast-grep/rules/infallible-try-from.yml
+# A TryFrom impl that cannot fail.
+# Holds Newtypes: "Every input is valid: From, never TryFrom".
+id: infallible-try-from
+language: rust
+severity: error
+message: A TryFrom whose Error is Infallible.
+note: "Newtypes: every input is valid, so implement From; TryFrom comes with it for free."
+rule:
+  kind: impl_item
+  all:
+    - has: { field: trait, regex: '^((std|core)::convert::)?TryFrom\b' }
+    - has: { field: body, has: { kind: type_item, regex: '^type\s+Error\s*=\s*((std|core)::convert::)?Infallible\s*;' } }
+```
+
+```yaml
+# .ast-grep/rules/try-new-without-new.yml
+# A try_new with no infallible or panicking new beside it in the same impl.
+# Holds Newtypes: "try_new MUST exist only beside an infallible or panicking new".
+id: try-new-without-new
+language: rust
+severity: error
+message: try_new without an infallible new beside it.
+note: "Newtypes: the sole fallible constructor is new; try_new is the fallible twin of a new that cannot fail (Box::new, Box::try_new)."
+ignores: ["tests/**"]
+rule:
+  kind: function_item
+  has: { field: name, regex: '^try_new$' }
+  inside:
+    kind: declaration_list
+    not:
+      has:
+        kind: function_item
+        all:
+          - has: { field: name, regex: '^new$' }
+          - not: { has: { field: return_type, regex: '^((\w+::)*Result|Option)\b' } }
+```
+
+```yaml
+# .ast-grep/rules/literal-outside-const.yml
+# A panicking literal constructor called where it runs at runtime.
+# Holds the Panic policy: "A const fn literal is called only in a const item, where an invalid value fails compilation".
+id: literal-outside-const
+language: rust
+severity: error
+message: A literal constructor called outside a const item, where a bad value panics at runtime.
+note: "Panic policy: bind it to a const item (pub const HTTP: Port = Port::literal(80)), or call the fallible new."
+ignores: ["tests/**"]
+rule:
+  pattern: $T::literal($$$)
+  not: { inside: { any: [{ kind: const_item }, { kind: static_item }, { kind: const_block }], stopBy: end } }
+```
+
+```yaml
+# .ast-grep/rules/error-message-style.yml
+# An error message that starts with a capitalized word or ends with a period.
+# Holds Error Modeling: "A message MUST be lowercase, with no trailing period"; an acronym (HTTP, I/O) keeps its case.
+id: error-message-style
+language: rust
+severity: error
+message: An error message that starts with a capital or ends with a period.
+note: "Error Modeling: it is read inside a longer chain; a name keeps its case, silenced on the line above: // ast-grep-ignore: error-message-style -- <the name>"
+rule:
+  kind: attribute_item
+  regex: '^#\[error\("([A-Z][a-z]|[^"]*\.")'
+```
+
+```yaml
+# .ast-grep/rules/domain-error-derives.yml
+# A domain error that tests cannot compare: it derives Error without Clone and PartialEq, and holds no cause.
+# Holds Error Modeling: "An error SHOULD derive Debug, Clone, PartialEq, Eq ... unless it holds a cause that cannot".
+id: domain-error-derives
+language: rust
+severity: error
+message: A domain error without Clone and PartialEq.
+note: "Error Modeling: derive Debug, Clone, PartialEq, Eq, so tests assert on variants."
+files: ["**/domain/**"]
+rule:
+  all:
+    - kind: enum_item
+    - follows: { kind: attribute_item, regex: 'derive\([^)]*\bError\b', stopBy: { matches: attributes-before } }
+    - any:
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bClone\b', stopBy: { matches: attributes-before } } }
+        - not: { follows: { kind: attribute_item, regex: 'derive\([^)]*\bPartialEq\b', stopBy: { matches: attributes-before } } }
+    - not:  # a cause (#[source], #[from], or a field named source) may be neither Clone nor PartialEq
+        has:
+          stopBy: end
+          any:
+            - { kind: attribute_item, regex: '^#\[(source|from)\]$' }
+            - { kind: field_declaration, has: { field: name, regex: '^source$' } }
 ```
 
 The infrastructure list names types as they are written; an error imported as a bare `Error`
@@ -796,8 +971,12 @@ The tools above hold these rules, and review never re-checks them: `_ =>` on you
 `unsafe`, and an unsafe block without a `// SAFETY:` comment; a spawned future without `Send`; a lock held across `.await`; an owned parameter where
 a borrow would do; a redundant clone; bool flags for exclusive states; `anyhow` or `eyre` in
 library code; interior mutability in domain types; ambient time or randomness in domain code;
-a domain type deriving `Deserialize` structurally; a stringly typed error; an infrastructure
-error held without `#[source]`; generic role names; a
+a refinement that serde or sqlx builds without its constructor, or that derives `Default`; a
+newtype without `Clone`, `PartialEq`, `Eq` and `Hash`; a yes-or-no validation; a `TryFrom` that
+cannot fail; a `try_new` without an infallible `new`; a `const fn literal` called outside a
+`const` item; a stringly typed error; an error message that is capitalized or ends in a period; a
+domain error without `Clone` and `PartialEq`; an infrastructure error held without `#[source]`;
+generic role names; a
 dependency without an approval reason; an unused dependency; a constructor's rejection reason with
 no test; formatting.
 
