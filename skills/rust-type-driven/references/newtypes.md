@@ -1,10 +1,7 @@
 # Newtypes: serde, clap, databases, std traits, and a template
 
-Read with the Newtypes section of SKILL.md, which says which constructor to write, what to name it,
-and what a refinement may expose. This file says how a refinement meets the rest of the ecosystem,
-and ends with a template that passes the skill's lints. A lint named after a rule holds
-it (Enforce with Tools); the rest is review's. A refinement's error follows SKILL.md, Error
-Modeling.
+Companion to SKILL.md, Newtypes: how a refinement meets serde, clap, databases and std, then a
+template that passes the skill's lints.
 
 ## serde
 
@@ -12,7 +9,6 @@ Modeling.
   `#[serde(try_from = "String", into = "String")]` (or `"u16"`, and so on), backed by
   `TryFrom<Inner>` and `From<Self> for Inner`. A bad value then fails deserialization with the
   constructor's own message.
-- A tag MAY use `#[serde(transparent)]`: it has no invariant to skip.
 - A closed set is an enum with `#[serde(rename_all = "kebab-case")]`, not a refinement over a
   string.
 
@@ -28,13 +24,12 @@ Modeling.
 
 ## Databases (sqlx, diesel)
 
-- A refinement never has `#[sqlx(transparent)]`: decoding builds it without the constructor.
 - `Decode` (sqlx) or `FromSql` (diesel) decodes the inner type, then calls `T::try_from(inner)`
   and maps the error. `Encode` or `ToSql` may delegate to the inner type.
 
 ## std traits
 
-- Every newtype provides `Debug, Clone, PartialEq, Eq, Hash` (clippy:
+- Every newtype provides `Debug, Clone, PartialEq, Eq, Hash` (lints:
   `missing_debug_implementations`, `derive_partial_eq_without_eq`); `Copy` when the inner
   type is `Copy`; `PartialOrd` and `Ord` when an order means something.
 - `Display` when there is a canonical text form: `FromStr` and clap's defaults invert it.

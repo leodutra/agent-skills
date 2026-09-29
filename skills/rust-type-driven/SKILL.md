@@ -113,13 +113,10 @@ impl TryFrom<CreateOrderRequest> for CreateOrder {
   - A **refinement** (`Email`, `Port`) has an invariant. Its fields MUST be private, and every
     rule under Newtypes applies. architecture-blueprint calls a single-value refinement a value
     object.
-
-  The field says which, so a reader tells the two apart at the definition.
 - Enum variant fields are always public. A variant whose fields share an invariant
   (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
 - Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
   `-1`) MUST NOT stand for absence. When `None` would mean two things, use an enum.
-- Enums + structs SHOULD be preferred over class hierarchies.
 - State transitions SHOULD default to immutable values.
 - A partial update SHOULD be `Option` fields whose present values are already parsed domain types.
 
@@ -152,8 +149,6 @@ Naming:
 - `try_new` MUST exist only beside an infallible or panicking `new` (`Box::new` / `Box::try_new`).
 - A constructor MUST return `Option` only for one self-evident failure (zero, empty); any other
   returns `Result` with a dedicated error enum.
-- An inherent `parse(&str)` MAY exist for discoverability; it MUST delegate to the same path as
-  `FromStr`.
 
 Invariant integrity:
 
@@ -170,21 +165,6 @@ Invariant integrity:
 - A refinement SHOULD build on std's (`Port(NonZeroU16)`, not `Port(u16)` plus a check), which
   also gives a niche: `Option<Port>` is 2 bytes.
 - It MUST NOT derive `Default` unless the default value is valid.
-
-```rust
-// One self-evident failure, so Option; std's NonZeroU16 holds the invariant.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Port(NonZeroU16);
-
-impl Port {
-    pub const fn new(n: u16) -> Option<Self> {
-        match NonZeroU16::new(n) {
-            Some(n) => Some(Self(n)),
-            None => None,
-        }
-    }
-}
-```
 
 ### Illegal states
 
@@ -216,8 +196,6 @@ impl PriceCut {
 
 ## Error Modeling
 
-Errors are typed and structured, never stringly typed.
-
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OrderError {
@@ -230,7 +208,6 @@ pub enum OrderError {
 }
 
 // The adapter translates its infrastructure error at the boundary and keeps it as the cause.
-// io::Error is neither Clone nor PartialEq, so this error derives neither; tests use matches!.
 #[derive(Debug, thiserror::Error)]
 pub enum LoadError {
     #[error("order {id} not found")]
@@ -244,8 +221,8 @@ Rules:
 
 - Error variants MUST carry typed context, not ad-hoc strings.
 - Library code MUST return typed errors: an error type implements
-  `std::error::Error + Send + Sync + 'static`, which clap, anyhow and `Box<dyn Error>` require.
-  `String` and `()` MUST NOT be error types.
+  `std::error::Error + Send + Sync + 'static`, which clap, anyhow and
+  `Box<dyn Error + Send + Sync>` require. `String` and `()` MUST NOT be error types.
 - An error SHOULD derive `Debug, Clone, PartialEq, Eq`, so tests assert on variants, unless it
   holds a cause that cannot (`io::Error`).
 - A message MUST be lowercase, with no trailing period, and state what is wrong
@@ -282,10 +259,8 @@ Rules:
 - Code MUST match exhaustively on its own enums: no wildcard `_ =>` arm, so adding a variant
   breaks the build everywhere it matters.
 - Functions SHOULD borrow inputs when ownership is not required.
-- A constructor that keeps its input SHOULD accept it owned-friendly (`impl Into<String>`, and
-  `TryFrom<String>` beside `FromStr`), so a caller holding a `String` hands it over without a copy;
-  one that only reads its input, parsing it into other fields, SHOULD take `&str`. Either returns
-  an owned value.
+- A constructor that keeps its input SHOULD take `impl Into<String>`, so a caller's `String` is not
+  copied; one that only reads it SHOULD take `&str`.
 - Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
 - Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
   domain logic. That is what keeps domain tests deterministic.
@@ -344,10 +319,9 @@ pub trait LoadOrders {
 ### Panic policy
 
 - `panic!`, `unwrap()`, and `expect()` MUST NOT appear in production paths.
-- They MAY be used in tests and unrecoverable bootstrap code in `main.rs` with a clear message.
-- A `const fn literal` (Newtypes) MAY panic, and is called only in a `const` item, where an
-  invalid value fails compilation instead of a run. It carries
-  `#[expect(clippy::panic, reason = "a compile-time literal: an invalid value fails compilation")]`.
+- They MAY be used in tests, and in unrecoverable bootstrap code in `main.rs` with a clear message
+  under `#[expect(clippy::expect_used, reason = "…")]`.
+- A `const fn literal` (Newtypes) MAY panic, under `#[expect(clippy::panic, reason = "…")]`.
 
 ---
 
@@ -359,14 +333,13 @@ pub trait LoadOrders {
 
 ### Budget
 
-- Each constructor gets one accepted input and one rejected input, plus one rejected input per
-  distinct *reason* for rejection. More examples of a rule already pinned SHOULD NOT be added.
+- Each constructor gets one accepted input, and every rejection reason in domain code MUST be
+  reached by one rejected input. More examples of a rule already pinned SHOULD NOT be added.
 - Where a law exists (round-trip, idempotence, a charset), a property test SHOULD replace the
   examples.
 - A type with both `Display` and `FromStr` MUST have a property test that its `Display` parses
   back: `Display` is `FromStr`'s exact inverse, and clap's `default_value_t` relies on it.
 - State transitions SHOULD be tested for each forbidden transition the type cannot rule out.
-- Every rejection reason in domain code MUST be reached by a test.
 
 ```rust
 use proptest::prelude::*;
@@ -397,13 +370,12 @@ lints that already exist in rustc and clippy are used, so there is nothing to in
 rule is held by review (Code Review Checklist).
 
 To adopt them, paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml`, and copy
-[assets/clippy.toml](assets/clippy.toml) to each crate's root. Each lint in those files names what
-it catches and the rule it holds. `cargo clippy --all-targets -- -D warnings` (Commands) then
-checks them on every change.
+[assets/clippy.toml](assets/clippy.toml) to each crate's root, without the entries its comments
+limit to other kinds of crate. Each lint in those files names what it catches and the rule it
+holds. `cargo clippy --all-targets -- -D warnings` (Commands) then checks them on every change.
 
-The test allowances cover `#[cfg(test)]` code only. Each file under `tests/` is its own crate,
-so the denies apply there in full: integration tests SHOULD return `Result<(), Box<dyn Error>>`
-and use `?`.
+The test allowances cover `#[test]` functions and `#[cfg(test)]` code. A helper under `tests/` is
+neither, so the denies apply to it in full: it SHOULD return `Result` and use `?`.
 
 A lint that misfires is silenced where it misfires, with `#[expect(clippy::name, reason = "…")]`,
 never switched off for the crate.
@@ -417,9 +389,10 @@ The lints above hold these rules, and review never re-checks them: `_ =>` on you
 and an unsafe block without a `// SAFETY:` comment; a public type without `Debug`; a `PartialEq`
 without the `Eq` it could have; a `TryFrom` that cannot fail; `()` as a public fn's error; a struct
 mixing `pub` and private fields; a spawned future without `Send`; a lock or `RefCell` borrow held
-across `.await`; an owned parameter where a borrow would do; a redundant clone; bool flags for
-exclusive states; `anyhow` or `eyre` in library code; interior mutability in domain types; ambient
-time or randomness in domain code; formatting.
+across `.await`; an owned parameter where a borrow would do; a redundant clone; more than three
+bools in a struct or a fn's parameters; `anyhow` or `eyre` in library code; `Cell`, `RefCell`,
+`Mutex` or `RwLock` in domain types; the clocks and `rand` calls `clippy.toml` bans in domain
+code; formatting.
 
 Review checks the rest:
 
@@ -435,7 +408,7 @@ Review checks the rest:
 - [ ] Any `Deref`, `DerefMut`, `AsMut`, or `&mut` to the inner value on a refinement, or a mutating method that can break its invariant? Offer `as_str()`, `get()`, `AsRef` or `into_inner()`; keep the invariant or drop the method.
 - [ ] Any newtype without `Clone`, `PartialEq`, `Eq` and `Hash`, or a hand-written `Borrow<str>` that disagrees with them? Derive them; remove the `Borrow`.
 - [ ] Any `const fn literal` called outside a `const` item? Bind it to a `const`.
-- [ ] Any sentinel, or pair of `Option`s, standing for exclusive states? Use one enum.
+- [ ] Any sentinel, `bool` flags, or pair of `Option`s standing for exclusive states? Use one enum.
 
 **Errors**
 
@@ -458,6 +431,7 @@ Review checks the rest:
 - [ ] Any dependency the standard library covers, or one no code uses? Remove it.
 - [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
 - [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
+- [ ] Any interior mutability, clock or random source in domain code that `clippy.toml` does not ban (atomics, `OnceCell`, `Uuid::new_v4`)? Move it out, or pass it in.
 - [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
 - [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
 
