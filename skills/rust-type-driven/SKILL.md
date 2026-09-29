@@ -319,8 +319,9 @@ pub trait LoadOrders {
 ### Panic policy
 
 - `panic!`, `unwrap()`, and `expect()` MUST NOT appear in production paths.
-- They MAY be used in tests, and in unrecoverable bootstrap code in `main.rs` with a clear message
-  under `#[expect(clippy::expect_used, reason = "…")]`.
+- They MAY be used in tests.
+- Unrecoverable bootstrap code in `main.rs` MAY use `expect()` with a clear message, under
+  `#[expect(clippy::expect_used, reason = "…")]`.
 - A `const fn literal` (Newtypes) MAY panic, under `#[expect(clippy::panic, reason = "…")]`.
 
 ---
