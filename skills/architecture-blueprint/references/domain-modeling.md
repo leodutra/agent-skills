@@ -39,7 +39,7 @@ An identity newtype carries no invariant, so it needs no parse and MAY expose it
 
 (1, 4; ledger: value object; 6 — immutable by default) Value objects MUST be immutable, self-validating, and equal by value, and they carry the concept's own operations where it has any (`Money.add`). Use one when a concept carries validation, invariants, or behavior: jointly-meaningful facts travel in one receipt, so their relationship is never reconstructed at use sites. Examples: `Money`, `Email`, `Percentage`, `Quantity`, `Distance`, `Duration`.
 
-- **Normalize at construction** (4, 1). The parse normalizes to the canonical form the domain defines (trimmed, canonical case, one unit), so equality by value compares canonical values. It MUST NOT collapse a distinction the domain keeps: an email's local part keeps its case. Normalization is idempotent, so the re-parse at a crossing is stable; `parse(format(x)) = x` is the round-trip law in `testing-and-governance.md`.
+- **Normalize at construction** (4, 1). The parse normalizes to the canonical form the domain defines (trimmed, canonical case, one unit), so equality by value compares canonical values. It MUST NOT collapse a distinction the domain keeps: an email's local part keeps its case. Normalization is idempotent, so the re-parse at a crossing is stable; `parse(serialize(x)) = x` is the round-trip law in `testing-and-governance.md`.
 - **No default that skips the parse** (1, 4). A default, empty, or zero instance MUST NOT exist unless it is a valid value; otherwise it is a way in without the proof.
 - **Immutable all the way down** (6; ledger: immutability by default). Immutability covers what the value holds: a frozen record holding a mutable list is not immutable.
 
@@ -83,7 +83,7 @@ The same technique applies to **component lifecycle** (`Created → Initialized 
 
 ## Error taxonomy
 
-(9, 3; ledger: typed errors, error translation per boundary) Errors MUST be classified by the layer that owns them. A system with one flat error type CANNOT distinguish a business outcome from an outage, and will retry the wrong things. A failure is information with a frame: propagated raw across frames it leaks mechanism; swallowed, it destroys evidence. Handling is translation. The four kinds below are this skill's partition (*convention*); what 9 derives is that distinct meanings of failure get distinct representations.
+(9, 3; ledger: typed errors, error translation per boundary) Errors MUST be classified by who owns them. A system with one flat error type CANNOT distinguish a business outcome from an outage, and will retry the wrong things. A failure is information with a frame: propagated raw across frames it leaks mechanism; swallowed, it destroys evidence. Handling is translation. The four kinds below are this skill's partition (*convention*); what 9 derives is that distinct meanings of failure get distinct representations.
 
 | Kind | Owner | Example |
 | --- | --- | --- |
@@ -97,7 +97,7 @@ The same technique applies to **component lifecycle** (`Created → Initialized 
 - Domain errors MUST be typed values, not strings, and SHOULD form an enum/union so exhaustive handling is checkable by the compiler.
 - The transport edge decides status codes; the domain MUST NOT know them. `OrderAlreadyCancelled` → 409 is an edge mapping, and it MUST live at the edge.
 - Expected business outcomes SHOULD be return values (`Result`, typed union), NOT exceptions or panics. Reserve unwinding for genuine faults.
-- Handle where understanding lives: the frame that can tell retry from refusal from redesign decides. Only infrastructure errors are candidates for retry; retrying a domain error is a defect.
+- Handle where understanding lives: the frame that can tell retry from refusal from redesign decides. Only infrastructure errors are candidates for retry; retrying a domain error is a defect. A `ConcurrentUpdate` is not retried either: the whole command runs again from load, deciding afresh on the new state.
 - A failure's audience includes the future: translation MUST preserve the causal trail (source/cause chain, correlation ID) rather than tidy it away.
 
 ## Policies vs. specifications

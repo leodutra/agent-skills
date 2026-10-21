@@ -84,7 +84,7 @@ pub enum Denial {
 
 ```rust
 let filter = ListAppointments { clinic_id }.can(&actor).granted()?;
-repository.list(filter)?;                    // authorized scope, applied as a predicate
+appointments.list(filter)?;                  // authorized scope, applied as a predicate
 
 let grant = CancelAppointment { appointment_id }.can(&actor).granted()?;
 appointments.cancel(grant)?;                 // execution consumes the decision's artifact
@@ -113,9 +113,10 @@ impl<G> Permit<G> {
 Composition is sequential and fail-fast — the first failed check determines the denial, and each reason stays next to the predicate that produces it:
 
 ```rust
-Permit::check(actor.has(Permission::CancelAppointment), Denial::NotAllowed(Reason::MissingPermission))
-    .check(actor.member_of(clinic_id),                  Denial::NotAllowed(Reason::NotMemberOfClinic))
-    .check(appointment.is_cancellable(),                Denial::NotPossible(Reason::AlreadyCancelled))
+Permit::check(actor.has(Permission::CancelAppointment),
+               Denial::NotAllowed(Reason::MissingPermission(Permission::CancelAppointment)))
+    .check(actor.member_of(clinic_id), Denial::NotAllowed(Reason::NotMemberOfClinic(clinic_id)))
+    .check(appointment.is_cancellable(), Denial::NotPossible(Reason::AlreadyCancelled))
     .grant(grant)
 ```
 

@@ -6,7 +6,7 @@ The names a file or folder may carry, by the **role it plays**. (Keywords and th
 
 - Name by **responsibility**, not by technical kind. A file MUST NOT carry a role name it does not fulfil (`repository.ts` that wraps one ORM call is a `store`).
 - A **catalog to pull from, not a tree to create**. Most slices need three or four of these names, ever; a slice whose folder mirrors its siblings role-for-role was copied, not designed.
-- **Singular for a file, plural for a folder** of several: `validator.ts`, `policies/`. snake_case languages transliterate: `use_case.py`.
+- **Singular for a file, plural for a folder** of several: `validator.ts`, `policies/`. A file that collects one kind (`errors`, `events`, `tests`) is plural. snake_case languages transliterate: `use_case.py`.
 - **One role per file.** A file needing two role names SHOULD be split — or the names are wrong.
 - These names live *inside* a module; top-level source folders stay business capabilities.
 - A role name binds only where the obligation it discharges exists (`first-principles.md`, §The ladder of statements). The tag on each category names the deriving principle.
@@ -42,7 +42,7 @@ A name with no note lives in the slice and has no rule of its own.
 
 ## Domain
 
-(1, 3, 4 — receipts, distinctions in the medium, representable matched to meaningful) newtype, `value-object`, and `errors` live in `domain/` (technical error primitives MAY live in `platform/`); `events` in the slice or `domain/`.
+(1, 3, 4 — receipts, distinctions in the medium, representable matched to meaningful) newtype, `value-object`, and domain `errors` live in `domain/`; other `errors` live where `domain-modeling.md`'s Error taxonomy puts them (technical error primitives MAY live in `platform/`); `events` in the slice or `domain/`.
 
 - `entity` — `domain/`; rich behavior ONLY on a SKILL.md trigger.
 - `policy` — slice by default; `policies/` when shared by 2+ slices.
@@ -56,7 +56,7 @@ A name with no note lives in the slice and has no rule of its own.
 
 - `store` — the Stage-1 default, module level (SKILL.md, Repository vs. ORM). Parses rows into domain types (2).
 - `repository` — ONLY on SKILL.md's condition; never one per table (ledger).
-- `read-model`, `cache` — copies of a fact, under SKILL.md's Copy vs. single home. `cache` lives in `platform/`.
+- `read-model`, `cache` — copies of a fact, under SKILL.md's Copy vs. single home. A cache mechanism lives in `platform/`; a cache of a capability's facts lives in that capability.
 - `projection` — only where events already exist; MUST be idempotent (10).
 - `unit-of-work` / `transaction` — imperative shell or `platform/`; drawn no larger than its invariants demand (11).
 - `outbox` — ONLY under `events-and-consistency.md` §Dual writes.

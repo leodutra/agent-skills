@@ -21,7 +21,7 @@ A cross-module business flow (e.g., create → approve → invoice) is an **acce
 
 (14 — what is needed to verify a thing should live near the thing) Dividing rule (by **scope/ownership**, not by test type): a test that owns a **single** module/slice — unit, integration, OR acceptance — SHOULD be colocated with it; a test whose behavior spans **multiple** modules MUST live in `tests/`, never inside any one module.
 
-**Colocate (single-module)** — a single-module integration test included: a sibling test file or an in-module test block (Rust: a sibling `tests.rs` or in-file `#[cfg(test)] mod tests { ... }`).
+**Colocate (single-module)** — a single-module integration test included: a sibling test file or an in-module test block (TypeScript: a sibling `handler.test.ts`; Python: a sibling `test_handler.py`; Rust: a sibling `tests.rs` or in-file `#[cfg(test)] mod tests { ... }`).
 
 ```text
 orders/
@@ -61,7 +61,7 @@ Candidates — each a rule of this skill the type system cannot hold — and the
 | --- | --- | --- | --- |
 | Other modules import only a module's `api/` (5) | `import/no-restricted-paths` (eslint-plugin-import), or dependency-cruiser | import-linter `forbidden` contract | the compiler: internals private, only `api` public |
 | Dependencies one-way and acyclic (5) | `import/no-cycle`, or dependency-cruiser | import-linter `layers` contract | the compiler, with a crate per module |
-| `domain/` imports no infrastructure or framework (7, 8) | `no-restricted-imports`, scoped to `domain/` | import-linter `forbidden` contract | the domain crate does not depend on them |
+| `domain/` imports no infrastructure or framework (7, 8) | `no-restricted-imports`, scoped to `domain/` | import-linter `forbidden` contract | `domain/` as its own crate, which does not depend on them |
 | Validation libraries and `env` read only in boundary files and the composition root (7, 8) | `no-restricted-imports` and `no-restricted-properties` (`process.env`), off for those files | ruff `TID251` (banned-api), with `per-file-ignores` for those files | clippy `disallowed-methods` (`std::env::var`), expected in those files |
 | No clock or randomness outside the imperative shell and `platform/` (7) | `no-restricted-properties` (`Date.now`, `Math.random`) and `no-restricted-syntax` (`new Date()`) | ruff `TID251` in the core folders' own `ruff.toml` | clippy `disallowed-methods` in the core crate's `clippy.toml` |
 | No primitive where a newtype exists, no newtype unwrapped outside boundary files (1) | review | review | review |

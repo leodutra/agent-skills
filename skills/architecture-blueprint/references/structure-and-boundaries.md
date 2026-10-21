@@ -4,7 +4,7 @@ Physical organization, module APIs, dependency control, ownership. File and fold
 
 ## Top-level structure
 
-(13, 14; ledger: vertical slice) Capabilities at the top (SKILL.md). Repository-level support folders such as `specs/` (specifications and ADRs, `specs/adr/`) and, in Rust repositories, `xtask/` MAY exist alongside the source tree.
+(13, 14; ledger: vertical slice) Capabilities at the top (SKILL.md). Repository-level support folders such as `specs/` (specifications and ADRs, `specs/adr/`) MAY exist alongside the source tree.
 
 ```text
 src/
