@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-payments-module
+expected_outcome: |
+  A control case: every planted defect breaks a rule both skill versions state identically. review.md flags Iban's serde(transparent) and derived Default, its Deref to String, its String error, the sole fallible constructor named try_new, the capitalized error message with a trailing period, and ApiKey's derived Debug; it does not call PaymentId's pub field or serde(transparent) a defect.
+context:
+  scaffold_script: place-files.sh

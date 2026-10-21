@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: typed-env-config
+expected_outcome: |
+  A cargo project whose library parses the three variables once, at startup, into domain types with private invariants, with typed errors, tests for each rejection reason, and a main that fails cleanly; it builds, tests and lints clean under the skill's current lint set.

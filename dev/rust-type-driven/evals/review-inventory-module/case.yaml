@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-inventory-module
+expected_outcome: |
+  review.md flags the planted defects (anyhow::Result in domain code, ambient rand::rng(), RwLock interior mutability in a domain type, two bools standing for exclusive states, a bool validator with a public-field Sku built by a derived Deserialize) and does not call the unwrap() calls inside #[test] functions defects.
+context:
+  scaffold_script: place-files.sh

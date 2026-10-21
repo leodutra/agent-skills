@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: order-lifecycle
+expected_outcome: |
+  A library where the order state is one enum (or typestate) whose variants carry exactly their data, transitions return typed errors, there is no wildcard match on its own enums, each forbidden transition is tested, and an integration test passes under the skill's lints.
