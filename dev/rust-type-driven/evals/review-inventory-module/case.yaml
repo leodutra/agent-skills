@@ -1,6 +1,8 @@
 schema_version: "1.1"
 name: review-inventory-module
 expected_outcome: |
-  review.md flags the planted defects (anyhow::Result in domain code, ambient rand::rng(), RwLock interior mutability in a domain type, two bools standing for exclusive states, a bool validator with a public-field Sku built by a derived Deserialize) and does not call the unwrap() calls inside #[test] functions defects.
+  Targets the 2026-09-29 fixes. The prompt's "CI is green" holds only for the lint set before them
+  (217915f), which did not ban anyhow::Result, rand::rng or RwLock; the case checks that a review
+  flags them anyway. review.md flags the planted defects (anyhow::Result in domain code, ambient rand::rng(), RwLock interior mutability in a domain type, two bools standing for exclusive states, a bool validator with a public-field Sku built by a derived Deserialize) and does not call the unwrap() calls inside #[test] functions defects.
 context:
   scaffold_script: place-files.sh

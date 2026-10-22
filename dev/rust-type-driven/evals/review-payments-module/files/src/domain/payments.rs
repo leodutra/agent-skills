@@ -67,6 +67,11 @@ impl ApiKey {
     pub fn new(key: String) -> Self {
         Self(key)
     }
+
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
 }
 
 #[derive(Debug, thiserror::Error)]
