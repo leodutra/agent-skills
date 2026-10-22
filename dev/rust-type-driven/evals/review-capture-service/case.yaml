@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-capture-service
+expected_outcome: |
+  review.md flags: capture is unsafe under retry or cancellation (double charge); the blocking std::fs write inside the async fn; ambient Utc::now(); CardNumber's derived Debug leaking the card; the Declined message echoing the card number; String as the provider error type; cents as a raw u64 for money; and the generic CaptureService name.
+context:
+  scaffold_script: place-files.sh

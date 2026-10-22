@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: cli-json-recipients
+expected_outcome: |
+  Email and Port are refinements with private fields and one validating constructor (named new if inherent); serde and clap both reach it (serde try_from or a DTO converted with TryFrom; clap through FromStr with no hand-written value_parser); Display/FromStr pairs have a round-trip property test; a test pins the rejection of a bad email in the JSON file; typed errors; builds, tests and lints clean.

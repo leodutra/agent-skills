@@ -18,333 +18,108 @@ description: >
 
 # Rust — Idiomatic Type-Driven Patterns
 
-## Precedence
+These rules override default Rust conventions in the project; an ADR may override them. Read
+`MUST`, `SHOULD` and `MAY` literally.
 
-These guidelines MUST override default Rust conventions in the project you are working on. If following them creates
-an important technical conflict, raise it during planning. ADRs MAY override these patterns when explicitly recorded.
-Interpret `MUST`, `MUST NOT`, `SHOULD`, `SHOULD NOT`, and `MAY` literally.
+## Parse, don't validate
 
-## Philosophy
+External data (HTTP, RPC, CLI, config, database rows, queues, files, environment) is parsed once,
+where it enters, into a domain type; from then on the type is the proof.
 
-Use Rust's type system, ownership model, and enums as architecture, not just syntax to enforce discipline that other languages simulate with patterns.
+- Code MUST NOT re-check an invariant after parsing. Domain functions MUST take the domain type
+  (`Email`), never the primitive it came from (`&str`).
+- A yes/no check (`is_valid_x(&str) -> bool`, `validate(&self)` over public fields) MUST be replaced
+  by a constructor that returns the type.
+- A record, row or DTO is deserialized as is and converted with `impl TryFrom<Dto> for Domain`.
+- Domain code SHOULD live under a `domain` path, DTOs elsewhere.
 
-Two axioms drive the type-level decisions:
+## Types
 
-1. **If it compiles, it's valid.** Encode rules in types so invalid states CANNOT exist.
-2. **Ownership is design.** Who owns a value, who borrows it, and who consumes it are not
-   implementation details — they shape the API.
+- Illegal states MUST be unrepresentable: exclusive states are one enum, not `bool` flags,
+  `Option`s or a string; fields that exist only together are one variant's data; a number that
+  cannot be zero is `NonZero*`. State read from storage or the wire is an enum, not typestate.
+- Absence is an `Option` with one meaning, or a variant; sentinels (`""`, `0`, `-1`) MUST NOT stand
+  for it.
+- A value gets a newtype when it carries an invariant or could be swapped with another value of the
+  same primitive. A newtype is one of two kinds, and its field says which:
+  - A **tag** (`UserId(u64)`) has no invariant: its field is `pub`, and `From` and
+    `#[serde(transparent)]` are fine.
+  - A **refinement** (`Email`, `Port`) has one: its fields MUST be private.
+- Variant fields are public, so fields sharing an invariant (`sale < regular`) MUST sit in a
+  private-field struct the variant wraps.
 
-- The standard library SHOULD be preferred over new dependencies unless a crate provides clear value.
-- `unsafe` MUST be minimized; every unsafe block MUST document its invariants.
+### Refinements
 
----
+- One validating constructor, and every way in delegates to it: `FromStr` (with `Display` as its
+  exact inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>`
+  and so on for one non-string source, `impl TryFrom<Dto>` for a payload.
+- The sole fallible constructor MUST be named `new` (as `NonZero::new`, `CString::new`); `try_new`
+  exists only beside an infallible `new`. It returns `Option` only for one self-evident failure
+  (zero, empty); otherwise `Result` with a dedicated error enum.
+- The constructor normalizes first (trim, canonical case), so `Eq`/`Hash`/`Ord` compare canonical
+  values, without collapsing a distinction the domain keeps.
+- No `Deref`/`DerefMut`, no `&mut` to the inner value; offer `as_str()`, `get()`, `AsRef` or
+  `into_inner()`. A mutating method keeps the invariant or does not exist. No `Default` unless the
+  default is valid. Build on std's where it holds the invariant (`Port(NonZeroU16)`).
+- serde: `#[serde(try_from = "String", into = "String")]` (or `"u16"`, …) backed by `TryFrom` and
+  `From<Self> for Inner`. A derived `Deserialize`, `#[serde(transparent)]` or `#[sqlx(transparent)]`
+  on a refinement skips the constructor and MUST NOT be used; a database `Decode`/`FromSql`
+  decodes the inner type and calls `try_from`.
+- clap: a field of the refinement type parses through `FromStr`, with no custom `value_parser`;
+  `default_value_t = CONST` prints with `Display` and parses back, so the round trip must hold. A
+  closed set is a `ValueEnum` (clap) or a `rename_all` enum (serde), not a refinement over a string.
+- Derive `Debug, Clone, PartialEq, Eq, Hash` (`Copy` when the inner type is); `Borrow<str>` only
+  when the derives agree with `str`'s. A secret hand-writes a redacted `Debug`, with no `Display` and
+  no `Serialize`.
+- A compile-time literal is `const fn literal(..) -> Self` that calls `new` and panics on its
+  failure, called only in `const` items, under `#[expect(clippy::panic, reason = "…")]`.
 
-## Parse, Don't Validate
-
-All external data is untrusted. It is parsed once, at the edge where it enters, into a domain
-type, and from then on the type is the proof: HTTP and RPC handlers, the CLI, config load,
-database decode, queue consumers, files, and environment variables.
-
-Rules:
-
-- External data MUST be parsed at the edge and trusted afterward. Code MUST NOT re-check an
-  invariant after successful parsing.
-- Domain functions MUST take the domain type (`Email`), never the primitive it was parsed from
-  (`&str`).
-- A check that answers yes or no, such as `is_valid_x(&str) -> bool` or `validate(&self)` over
-  public fields, MUST be replaced by a constructor that returns the type.
-- Inbound conversions SHOULD use `TryFrom` / `TryInto`, or `FromStr` for text. Outbound
-  conversions SHOULD use `From` / `Into`.
-- Every way in (serde, clap, a database decode, `FromStr`, `TryFrom`) MUST reach a refinement
-  through its one validating constructor (Newtypes). A derive that builds the value field by
-  field skips it: a derived `Deserialize`, `#[serde(transparent)]`, `#[sqlx(transparent)]`, or a
-  `Default` whose value breaks the invariant. Deserialize a record or DTO and convert it with
-  `TryFrom`, or route the derive through the constructor with `#[serde(try_from = "…")]`. A
-  fieldless enum MAY derive `Deserialize`: every value it can hold is valid.
-- Domain code SHOULD live under a `domain` path (a `domain/` module, or a crate whose path
-  contains `domain`), and records and DTOs elsewhere, so the two are never mistaken for each other.
-
-```rust
-#[derive(Deserialize)]
-pub struct CreateOrderRequest {
-    pub customer_id: String,
-    pub items: Vec<OrderItemDto>,
-}
-
-impl TryFrom<CreateOrderRequest> for CreateOrder {
-    type Error = ValidationError;
-
-    fn try_from(req: CreateOrderRequest) -> Result<Self, Self::Error> {
-        Ok(CreateOrder {
-            customer: req.customer_id.parse()?, // CustomerId: FromStr, its one canonical text form
-            items: req.items
-                .into_iter()
-                .map(OrderItem::try_from)
-                .collect::<Result<Vec<_>, _>>()?,
-        })
-    }
-}
-```
-
----
-
-## Type-Driven Design
-
-### Core rules
-
-- Illegal states MUST be unrepresentable. Structure comes before a runtime check, and before
-  a newtype:
-  - States that exclude each other MUST be one enum, not several `bool` flags, `Option`s, or a
-    string.
-  - Fields that exist only together MUST be one variant's data, not co-dependent `Option`s.
-  - A collection that cannot be empty SHOULD be `NonEmpty<T>` (or a head plus a `Vec`), not a
-    `Vec` plus a length check; a number that cannot be zero SHOULD be `NonZero*`.
-  - Typestate SHOULD be used when the risk is calling operations in the wrong order, and only
-    when the state is known statically at every call site and invalid transitions are costly.
-    State read from storage or the wire MUST be an enum, since its value is known only at
-    runtime.
-- A value SHOULD get a newtype when it carries an invariant, or when it could be swapped with
-  another value of the same primitive (`StoreName` / `StoreAddress`). A value with neither
-  SHOULD NOT be wrapped.
-- Every newtype is one of two kinds, and its field says which:
-  - A **tag** (`UserId(u64)`) has no invariant; it exists only to prevent mix-ups. Its field is
-    `pub`, and `From` and `#[serde(transparent)]` are fine. architecture-blueprint calls it an
-    identity newtype.
-  - A **refinement** (`Email`, `Port`) has an invariant. Its fields MUST be private, and every
-    rule under Newtypes applies. architecture-blueprint calls a single-value refinement a value
-    object.
-- Enum variant fields are always public. A variant whose fields share an invariant
-  (`sale < regular`) MUST wrap a private-field struct instead of carrying the fields itself.
-- Absence MUST be an `Option` with one stated meaning, or a variant. Sentinels (`""`, `0`,
-  `-1`) MUST NOT stand for absence. When `None` would mean two things, use an enum.
-- State transitions SHOULD default to immutable values.
-- A partial update SHOULD be `Option` fields whose present values are already parsed domain types.
-
-### Newtypes
-
-A refinement's rules. Read [references/newtypes.md](references/newtypes.md) when adding or
-reviewing one: it holds the serde, clap, database and std trait rules, and a complete
-template that passes this skill's lints.
-
-Pick the constructor by its input:
-
-| Input | Provide |
-| --- | --- |
-| One canonical text form | `FromStr`, plus `Display` as its exact inverse |
-| An owned `String` the value keeps | `TryFrom<String>` as well as `FromStr`, so it is not copied |
-| One non-string source with an obvious mapping | `TryFrom<u16>` (and so on) |
-| Several arguments, or a name adds meaning | an inherent `fn new(a, b) -> Result<Self, E>` |
-| Several formats | named constructors: `from_hex`, `from_rgb`, `from_secs` |
-| Needs context, or consumes part of the input | `fn parse(input, &ctx)`, or a parser returning `(T, &rest)` |
-| A DTO, row or payload | `impl TryFrom<Dto> for Domain` |
-| Every input is valid | `From`, never `TryFrom` |
-| A compile-time literal | `const fn literal(..) -> Self` that panics, called only in `const` items |
-| Zero-copy, borrowed | `TryFrom<&'a str> for Name<'a>` (`FromStr` cannot borrow) |
-| A trusted internal source | `pub(crate) fn from_trusted`; `unsafe fn new_unchecked` only if soundness depends on the invariant |
-
-Naming:
-
-- The sole fallible constructor MUST be named `new` and return `Result` or `Option`, as std does
-  (`NonZero::new`, `CString::new`).
-- `try_new` MUST exist only beside an infallible or panicking `new` (`Box::new` / `Box::try_new`).
-- A constructor MUST return `Option` only for one self-evident failure (zero, empty); any other
-  returns `Result` with a dedicated error enum.
-
-Invariant integrity:
-
-- A refinement MUST have one validating function. `FromStr`, `TryFrom`, serde, clap and database
-  decoding all delegate to it.
-- Its fields MUST stay private: the module is the trust boundary. It MUST NOT hand out `&mut` to
-  its inner value, nor implement `Deref` or `DerefMut`; it offers `as_str()`, `get()`, `AsRef` or
-  `into_inner()` instead.
-- The constructor MUST normalize to the canonical form the domain defines (trim, canonical
-  case), so `Eq`, `Hash` and `Ord` compare canonical values; it never collapses a distinction the
-  domain keeps (an email's local part keeps its case).
-- A mutating method MUST preserve the invariant, or not exist (`NonEmptyVec::pop` returns `None`
-  at length 1).
-- A refinement SHOULD build on std's (`Port(NonZeroU16)`, not `Port(u16)` plus a check), which
-  also gives a niche: `Option<Port>` is 2 bytes.
-- It MUST NOT derive `Default` unless the default value is valid.
-
-### Illegal states
-
-```rust
-// A cross-field invariant lives in a private-field struct, never in variant fields,
-// or `Price::Cut { sale: high, regular: low }` could be built by a struct literal.
-pub enum Price {
-    Regular(Money),
-    Cut(PriceCut),
-}
-
-pub struct PriceCut {
-    sale: Money,
-    regular: Money,
-}
-
-impl PriceCut {
-    pub fn new(sale: Money, regular: Money) -> Result<Self, PriceError> {
-        if sale < regular {
-            Ok(Self { sale, regular })
-        } else {
-            Err(PriceError::NotACut { sale, regular })
-        }
-    }
-}
-```
-
----
-
-## Error Modeling
+## Errors
 
 ```rust
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum OrderError {
     #[error("cannot transition from {from} to {to}")]
     InvalidTransition { from: OrderStatus, to: OrderStatus },
-    #[error("order total exceeds credit limit: {total} > {limit}")]
-    CreditLimitExceeded { total: Money, limit: Money },
-    #[error("empty order")]
-    EmptyOrder,
-}
-
-// The adapter translates its infrastructure error at the boundary and keeps it as the cause.
-#[derive(Debug, thiserror::Error)]
-pub enum LoadError {
-    #[error("order {id} not found")]
-    NotFound { id: OrderId },
     #[error("order store unavailable")]
-    StoreUnavailable(#[source] std::io::Error),
+    StoreUnavailable(#[source] StoreError),
 }
 ```
 
-Rules:
+- Library errors are typed enums (`thiserror`) implementing `Error + Send + Sync + 'static`, with
+  typed context; `String`, `&str` and `()` MUST NOT be errors or carry their context. `anyhow`/`eyre`
+  stay at process boundaries, with `.context(...)`.
+- Derive `Clone, PartialEq, Eq` unless a cause cannot (`io::Error`), so tests assert on variants.
+- Messages are lowercase, with no trailing period, say what is wrong, and never echo secret input.
+- An infrastructure error MUST NOT cross a domain or capability boundary raw: translate it there and
+  keep it as `#[source]`.
 
-- Error variants MUST carry typed context, not ad-hoc strings.
-- Library code MUST return typed errors: an error type implements
-  `std::error::Error + Send + Sync + 'static`, which clap, anyhow and
-  `Box<dyn Error + Send + Sync>` require. `String` and `()` MUST NOT be error types.
-- An error SHOULD derive `Debug, Clone, PartialEq, Eq`, so tests assert on variants, unless it
-  holds a cause that cannot (`io::Error`).
-- A message MUST be lowercase, with no trailing period, and state what is wrong
-  (`"port must be non-zero"`): it is read inside a longer chain. An acronym or a name keeps its
-  case. A message MUST NOT echo secret input.
-- A public library's error enums SHOULD be `#[non_exhaustive]`.
-- Errors SHOULD compose through explicit `From` impls so `?` stays honest.
-- An infrastructure error MUST NOT cross a domain or capability boundary raw: translate it into
-  the caller's error type there, and keep the original as `#[source]` so the chain survives.
-- Libraries SHOULD use `thiserror`; `anyhow` / `eyre` SHOULD be limited to process boundaries.
-- Application code using `anyhow` SHOULD add `.context(...)` when propagating fallible operations.
+## Behavior
 
----
+- Functions are total; code MUST NOT panic on valid input or validate user input with `assert!`.
+- Match exhaustively on your own enums: no `_ =>` arm.
+- Time and randomness are parameters in domain logic, never ambient (`Utc::now()`, `rand`).
+- Domain types hold no interior mutability; prefer `&mut self`, leaving sharing to the caller.
+- No `Service`, `Manager`, `Helper`, `Utils`, `Misc` names; traits name capabilities
+  (`LoadOrders`), and a trait needs a second implementation or a test double to exist.
+- A trait whose futures are spawned multithreaded declares `-> impl Future<Output = …> + Send`.
+- Async: no `std::sync::MutexGuard` across `.await`; no blocking calls on the runtime (use async APIs
+  or `spawn_blocking`); every `.await` is a cancellation point, so money, inventory or external
+  effects are idempotent or transactional.
+- `panic!`, `unwrap()`, `expect()` MUST NOT appear outside tests, except `expect()` with a clear
+  message in `main.rs` bootstrap under `#[expect(clippy::expect_used, reason = "…")]`.
 
-## Invariants and Assertions
+## Tests
 
-Enforce invariants in this order:
-
-1. Encode the invariant in a type.
-2. Return a typed error.
-3. Use `debug_assert!()` for impossible states that indicate a bug.
-4. Use `assert!()` only when continuing would be unsafe or corrupt state.
-
-Rules:
-
-- User input MUST NOT be validated with assertions.
-- Exhaustive `match` SHOULD be preferred over `unreachable!()`.
-
----
-
-## Behavior Rules
-
-- Functions SHOULD be total. Code MUST NOT panic on valid input.
-- Code MUST match exhaustively on its own enums: no wildcard `_ =>` arm, so adding a variant
-  breaks the build everywhere it matters.
-- Functions SHOULD borrow inputs when ownership is not required.
-- A constructor that keeps its input SHOULD take `impl Into<String>`, so a caller's `String` is not
-  copied; one that only reads it SHOULD take `&str`.
-- Important return values SHOULD use `#[must_use]` when ignoring them is likely a bug.
-- Time and randomness SHOULD be parameters, not ambient calls (`Utc::now()`, `rand`) inside
-  domain logic. That is what keeps domain tests deterministic.
-- Generic role names like `Service`, `Manager`, `Helper`, `Utils`, and `Misc` MUST NOT be introduced.
-
-### Mutation discipline
-
-- `&mut self` SHOULD be used when it is the natural model, improves performance, or avoids unnecessary allocation.
-- Domain types MUST NOT use interior mutability (`Cell`, `RefCell`, `Mutex`).
-
-### Allocation discipline
-
-- Owned types SHOULD be the default.
-- Borrowed types SHOULD be used for transient parsing and short-lived views.
-- Struct lifetimes SHOULD NOT be introduced unless profiling shows a measurable need.
-- `clone()` SHOULD NOT appear inside per-item loops or other hot paths without a stated reason.
-
----
-
-## Dependency Injection
-
-- Traits SHOULD define capabilities: `LoadOrders`, `ChargePayment`, `PublishEvent`.
-- Callers SHOULD depend on capabilities; adapters SHOULD implement them at the edges.
-- A trait SHOULD NOT be introduced for a single implementation unless a real second implementation or test double is needed.
-- Traits with `async fn` are not dyn-compatible, and their futures are not promised `Send`.
-  When a trait's futures are spawned onto a multithreaded runtime, the method MUST declare
-  `-> impl Future<Output = …> + Send`; implementors may still write `async fn`.
-- Generics or a closed `enum` over the implementations SHOULD be preferred to `dyn`.
+- One accepted input per constructor, and every rejection reason in domain code reached by a test
+  that asserts its specific error. No second example of a rule already pinned, and no tests of
+  derives, getters or what the compiler guarantees.
+- Where a law exists, a property test replaces examples; a type with `Display` and `FromStr` MUST
+  have one that its `Display` parses back.
+- Each forbidden state transition the types cannot rule out is tested. Integration tests in `tests/`
+  use the public API.
 
 ```rust
-pub trait LoadOrders {
-    fn load(&self, id: &OrderId) -> impl Future<Output = Result<Order, LoadError>> + Send;
-}
-```
-
----
-
-## Async / Runtime Rules
-
-### Task boundaries
-
-- `Arc<T>` + immutable state SHOULD be preferred. Shared mutation MUST be explicitly justified.
-- `std::sync::MutexGuard` MUST NOT be held across `.await`.
-- `tokio::sync::Mutex` SHOULD be used only when a lock truly must span `.await`.
-
-### Cancellation
-
-- Every `await` MUST be treated as a cancellation point.
-- Workflows with money, inventory, or external side effects MUST be idempotent or transactionally safe.
-
-### Blocking work
-
-- Async code MUST NOT block the runtime.
-- Blocking I/O or CPU-heavy work MUST use async-aware APIs or `spawn_blocking`.
-
-### Panic policy
-
-- `panic!`, `unwrap()`, and `expect()` MUST NOT appear in production paths.
-- They MAY be used in tests.
-- Unrecoverable bootstrap code in `main.rs` MAY use `expect()` with a clear message, under
-  `#[expect(clippy::expect_used, reason = "…")]`.
-- A `const fn literal` (Newtypes) MAY panic, under `#[expect(clippy::panic, reason = "…")]`.
-
----
-
-## Testing Strategy
-
-- Unit tests for pure domain logic SHOULD be the default: fast, deterministic, no mocks.
-- Integration tests SHOULD live in `tests/` and exercise the public API only.
-- Cancellation tests SHOULD be added for async workflows with externally visible side effects.
-
-### Budget
-
-- Each constructor gets one accepted input, and every rejection reason in domain code MUST be
-  reached by one rejected input. More examples of a rule already pinned SHOULD NOT be added.
-- Where a law exists (round-trip, idempotence, a charset), a property test SHOULD replace the
-  examples.
-- A type with both `Display` and `FromStr` MUST have a property test that its `Display` parses
-  back: `Display` is `FromStr`'s exact inverse, and clap's `default_value_t` relies on it.
-- State transitions SHOULD be tested for each forbidden transition the type cannot rule out.
-
-```rust
-use proptest::prelude::*;
-
 proptest! {
     #[test]
     fn port_display_parses_back(n in 1u16..) {
@@ -354,97 +129,20 @@ proptest! {
 }
 ```
 
-### What not to test
+## Lints
 
-- Private helpers SHOULD be tested through the public API.
-- Framework glue SHOULD NOT be tested unless custom logic is involved.
-- Tests SHOULD NOT target what the compiler already guarantees, nor derives, getters, or a
-  `Display` with no `FromStr` to invert.
+What clippy can check, clippy checks. Paste [assets/lints.toml](assets/lints.toml) into
+`Cargo.toml` and copy [assets/clippy.toml](assets/clippy.toml) to each crate's root, without the
+entries its comments limit to other kinds of crate. Silence a misfire where it happens with
+`#[expect(clippy::name, reason = "…")]`. The test allowances cover `#[test]` functions and
+`#[cfg(test)]` code; a helper under `tests/` is neither, so it returns `Result` and uses `?`.
 
----
+In review, the lints hold what their comments name (wildcard arms, unwrap/expect/panic outside
+tests, unsafe, missing `Debug`/`Eq`, infallible `TryFrom`, mixed `pub` fields, non-`Send` futures,
+locks across `.await`, more than three bools, `anyhow`/`eyre`, `Cell`/`RefCell`/`Mutex`/`RwLock`,
+the banned clocks and `rand` calls). Review every other rule above, plus what no lint bans
+(atomics, `OnceCell`, `Uuid::new_v4` in domain code; an unused dependency; a test that reaches a
+rejection without asserting its error).
 
-## Enforce with Tools
-
-A rule the compiler or clippy can check MUST be checked by them, not by an agent's or a reviewer's
-reading: a lint runs on every change, whoever made it, and cannot be talked out of a verdict. Only
-lints that already exist in rustc and clippy are used, so there is nothing to install. Every other
-rule is held by review (Code Review Checklist).
-
-To adopt them, paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml`, and copy
-[assets/clippy.toml](assets/clippy.toml) to each crate's root, without the entries its comments
-limit to other kinds of crate. Each lint in those files names what it catches and the rule it
-holds. `cargo clippy --all-targets -- -D warnings` (Commands) then checks them on every change.
-
-The test allowances cover `#[test]` functions and `#[cfg(test)]` code. A helper under `tests/` is
-neither, so the denies apply to it in full: it SHOULD return `Result` and use `?`.
-
-A lint that misfires is silenced where it misfires, with `#[expect(clippy::name, reason = "…")]`,
-never switched off for the crate.
-
----
-
-## Code Review Checklist
-
-The lints above hold these rules, and review never re-checks them: `_ =>` on your own enums;
-`unwrap()`, `expect()`, `panic!`, `todo!`, `unimplemented!`, `unreachable!` outside tests; `unsafe`,
-and an unsafe block without a `// SAFETY:` comment; a public type without `Debug`; a `PartialEq`
-without the `Eq` it could have; a `TryFrom` that cannot fail; `()` as a public fn's error; a struct
-mixing `pub` and private fields; a spawned future without `Send`; a lock or `RefCell` borrow held
-across `.await`; an owned parameter where a borrow would do; a redundant clone; more than three
-bools in a struct or a fn's parameters; `anyhow` or `eyre` in library code; `Cell`, `RefCell`,
-`Mutex` or `RwLock` in domain types; the clocks and `rand` calls `clippy.toml` bans in domain
-code; formatting.
-
-Review checks the rest:
-
-**Types and parsing**
-
-- [ ] Any raw `String`, `&str`, integer or `Uuid` naming a domain concept in a domain signature? Take the newtype.
-- [ ] Any public field on a refinement, or variant fields sharing an invariant? Make them private behind a constructor.
-- [ ] Any refinement built without its constructor: a plain `derive(Deserialize)`, `serde(transparent)`, `sqlx(transparent)`, or a `Default` that is not valid? Route it through `try_from`, or remove the derive.
-- [ ] Any `is_valid_*` or `validate` returning `bool` or `Result<()>`, or validation after parsing? Replace it with a constructor that returns the type.
-- [ ] Any `FromStr`, `TryFrom`, serde or database decode that checks on its own instead of delegating to the one validating function? Delegate.
-- [ ] Any sole fallible constructor not named `new`, or a `try_new` without an infallible `new`? Rename it.
-- [ ] Any constructor returning `Option` for more than one reason, or checking before it normalizes? Return a `Result` with an error enum; normalize first.
-- [ ] Any `Deref`, `DerefMut`, `AsMut`, or `&mut` to the inner value on a refinement, or a mutating method that can break its invariant? Offer `as_str()`, `get()`, `AsRef` or `into_inner()`; keep the invariant or drop the method.
-- [ ] Any newtype without `Clone`, `PartialEq`, `Eq` and `Hash`, or a hand-written `Borrow<str>` that disagrees with them? Derive them; remove the `Borrow`.
-- [ ] Any `const fn literal` called outside a `const` item? Bind it to a `const`.
-- [ ] Any sentinel, `bool` flags, or pair of `Option`s standing for exclusive states? Use one enum.
-
-**Errors**
-
-- [ ] Any stringly typed error (`Err("…".into())`, `Result<_, String>`), or an error type that is not `std::error::Error + Send + Sync`? Use a `thiserror` enum.
-- [ ] Any domain error without `Clone` and `PartialEq`, though it holds no cause? Derive them.
-- [ ] Any error message that is capitalized, ends in a period, or echoes secret input? Rewrite it.
-- [ ] Any infrastructure error held without `#[source]`, or crossing a boundary untranslated? Keep the cause; translate it into the caller's error type.
-- [ ] Any secret with a derived `Debug`, a `Display` or a `Serialize`? Redact it.
-
-**Tests**
-
-- [ ] Any rejection reason in domain code that no test reaches, or a test that reaches one without asserting on its error? Add the test; pin the error.
-- [ ] Any `Display` and `FromStr` pair without a round-trip property test? Add one.
-- [ ] Any test beyond the budget (a second example of a rule already pinned, a getter, a derive)? Remove it.
-
-**Design**
-
-- [ ] Any generic role name (`Service`, `Manager`, `Helper`, `Utils`, `Misc`)? Name the capability.
-- [ ] Any trait with a single implementor and no test double? Remove it.
-- [ ] Any dependency the standard library covers, or one no code uses? Remove it.
-- [ ] Any `clone()` in a hot path, even a needed one? Restructure or document it.
-- [ ] Any `assert!()` / `debug_assert!()` guarding what should be a type or typed error? Re-encode it.
-- [ ] Any interior mutability, clock or random source in domain code that `clippy.toml` does not ban (atomics, `OnceCell`, `Uuid::new_v4`)? Move it out, or pass it in.
-- [ ] Any async code blocking the runtime? Use async-aware APIs or `spawn_blocking`.
-- [ ] Any async path vulnerable to cancellation? Make it idempotent or transactional.
-
----
-
-## Commands
-
-```bash
-cargo check                                  # first: fastest compile feedback
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings    # --all-targets lints tests too
-cargo test
-```
-
-All four MUST pass before a task is considered complete, locally and in CI.
+`cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
+MUST pass before a task is done.
