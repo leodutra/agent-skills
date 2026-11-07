@@ -1,4 +1,4 @@
-# The rust-type-driven clippy configuration: copy to each crate's root as clippy.toml (a crate without
+# The rust-style-guide clippy configuration: copy to each crate's root as clippy.toml (a crate without
 # one inherits the workspace's). Each entry names the rule it holds and its SKILL.md section.
 # Behavior: unwrap, expect and panic MAY appear in tests.
 allow-unwrap-in-tests = true

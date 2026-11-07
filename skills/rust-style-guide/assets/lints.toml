@@ -1,4 +1,4 @@
-# The rust-type-driven lints: paste into Cargo.toml (in a workspace, as [workspace.lints.rust] and
+# The rust-style-guide lints: paste into Cargo.toml (in a workspace, as [workspace.lints.rust] and
 # [workspace.lints.clippy], with `lints.workspace = true` in each member). Each lint names what it
 # catches, then the rule it holds and the SKILL.md section that rule lives in.
 [lints.rust]

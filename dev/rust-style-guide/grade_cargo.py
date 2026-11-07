@@ -11,7 +11,7 @@ import subprocess
 import sys
 import tempfile
 
-SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "skills", "rust-type-driven")
+SKILL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "skills", "rust-style-guide")
 outputs = sys.argv[1]
 result = {}
 

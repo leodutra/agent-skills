@@ -18,18 +18,30 @@ Personal collection of Claude Code skills, reference docs, and configuration for
 | [`architecture-blueprint`](skills/architecture-blueprint/SKILL.md) | Vertical-slice-first backend/full-stack architecture: modular monoliths, feature folders, type-driven domain modeling (a domain vocabulary, not a domain layer), ADRs. |
 | [`gauntlet-loop`](skills/gauntlet-loop/SKILL.md) | Turn a goal into a paste-ready prompt (or run it as lead) that loops builders and fresh blind critics against a frozen real-world reference until two critics in a row, the second with the order swapped on a different model, pick ours, or a ceiling of invocations and hours is spent. Ships a deterministic controller (`gauntletctl`: event log, state machine, seeded pairs, attested verdicts, budgets), hooks, role definitions, a permission allowlist, an installer for target repositories, What each part is for, the decisions and the rule ledger: [`skills/gauntlet-loop/README.md`](skills/gauntlet-loop/README.md). Its tests, eval suite and design documents are in [`dev/gauntlet-loop/`](dev/gauntlet-loop/), outside the deployed skill. |
 | [`security-vuln-gauntlet`](skills/security-vuln-gauntlet/SKILL.md) | The gauntlet loop applied to authorized vulnerability hunting: a hunter proposes, a blind validator must build a non-destructive PoC before anything counts. |
-| [`good-readme`](skills/good-readme/SKILL.md) | Write, improve, or audit a README, with a source-grounded drift pass so every documented import, command and flag is checked against the actual manifests and exports. Vendored from [adewale/good-readme](https://github.com/adewale/good-readme) (MIT); notes: [`skills/good-readme/README.md`](skills/good-readme/README.md). |
+| [`good-readme`](skills/good-readme/SKILL.md) | Write, improve, or audit a README, with a source-grounded drift pass so every documented import, command and flag is checked against the actual manifests and exports. Notes: [`skills/good-readme/README.md`](skills/good-readme/README.md). |
 | [`macro-analyst`](skills/macro-analyst/SKILL.md) | Structured macro/FX analysis for currency pairs, rate differentials, central bank policy. |
 | [`opensrc`](skills/opensrc/SKILL.md) | Read the actual source of a dependency (npm/PyPI/crates.io/GitHub) at the installed version via `opensrc path`, instead of guessing from types or docs. |
 | [`rust-bevy-architecture`](skills/rust-bevy-architecture/SKILL.md) | Architecture method for Bevy (Rust ECS) game projects — layout, plugins, messages/observers, scheduling, determinism. |
-| [`rust-type-driven`](skills/rust-type-driven/SKILL.md) | Idiomatic type-driven Rust for domain/backend code — parse-don't-validate, newtypes, illegal states unrepresentable, typed errors, async cancellation discipline. |
+| [`rust-style-guide`](skills/rust-style-guide/SKILL.md) | Idiomatic type-driven Rust for domain/backend code — parse-don't-validate, newtypes, illegal states unrepresentable, typed errors, async cancellation discipline. |
 | [`rust-wgpu-functional`](skills/rust-wgpu-functional/SKILL.md) | Idiomatic Rust for wgpu / bare-metal GPU code, applying functional principles without sacrificing performance. |
 | [`sdd-spec`](skills/sdd-spec/SKILL.md) | Spec-Driven Development artifacts — product/domain/feature specs that define WHAT the software must do, with convention detection, cross-referencing instead of duplication, drift detection against code, and a human approval gate. |
+| [`seo`](skills/seo/SKILL.md) | Technical and on-page SEO from Lighthouse audits and Google Search guidelines: meta tags, canonicals, robots/sitemaps, structured data. Per web repo: `stack-init skills seo`. Origin: [`skills/seo/README.md`](skills/seo/README.md). |
 | [`worktrunk`](skills/worktrunk/SKILL.md) | Git worktree management via Worktrunk (`wt`; `git-wt`/`git wt` on Windows) for parallel/isolated work — create, switch, merge, and clean up worktrees by branch name. |
 
 Skills are picked up automatically by Claude Code when their trigger conditions match a request — no manual invocation needed beyond what each `SKILL.md` describes.
 
 Claude Code only discovers skills from `~/.claude/skills/` (global) and a repo's `.claude/skills/` — never from this checkout itself. `config/stack-init.sh global` deploys the five project-agnostic skills (`gauntlet-loop`, `opensrc`, `worktrunk`, `good-readme`, `sdd-spec`) globally; the domain skills deploy per repo with `stack-init skills <name>`, because a global skill's description is loaded into every session in every project ([D48](config/DECISIONS.md#d48), [D58](config/DECISIONS.md#d58)).
+
+### Recommended third-party skills
+
+Not vendored here; install them from upstream.
+
+| Skill | Use for | Install |
+| --- | --- | --- |
+| [`taste-skill`](https://github.com/Leonxlnx/taste-skill) | Art direction for frontend work: build from reference images and check the result in a browser instead of shipping a generic page. | `npx skills add https://github.com/Leonxlnx/taste-skill --skill "design-taste-frontend"` |
+| [`impeccable`](https://github.com/pbakaus/impeccable) | Design vocabulary and commands to shape, critique and audit UI, with a detector for AI-slop patterns. | `npx impeccable install` |
+| [`hallmark`](https://github.com/Nutlope/hallmark) | Design skill with themes and a `sloplint` checker so pages don't look AI-generated. | `npx skills add nutlope/hallmark -g` |
+| [`agent-browser`](https://github.com/vercel-labs/agent-browser) (Vercel) | Browser automation CLI for agents. Prefer Claude Code's `/chrome`; use this only where `/chrome` isn't available (headless, CI). | `npm install -g agent-browser && agent-browser install`, then `npx skills add vercel-labs/agent-browser` |
 
 ## Docs
 

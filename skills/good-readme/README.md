@@ -4,7 +4,7 @@
 
 ## Origin
 
-Vendored from [adewale/good-readme](https://github.com/adewale/good-readme) (MIT, author retained in the skill's `metadata`). Kept as-is rather than rewritten: it is a well-shaped skill already, and a fork that drifts from upstream is a fork that has to be maintained. Local edits should stay small enough to describe in one line here.
+Vendored from [adewale/good-readme](https://github.com/adewale/good-readme) (MIT; upstream `LICENSE` kept beside `SKILL.md`, author retained in its `metadata`). Kept as-is rather than rewritten: it is a well-shaped skill already, and a fork that drifts from upstream is a fork that has to be maintained. Local edits should stay small enough to describe in one line here.
 
 Local changes so far:
 

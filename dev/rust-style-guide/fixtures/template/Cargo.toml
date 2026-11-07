@@ -1,4 +1,4 @@
-# A crate exercising rust-type-driven's refinement rules; verify.py adds the skill's lints and checks it.
+# A crate exercising rust-style-guide's refinement rules; verify.py adds the skill's lints and checks it.
 [package]
 name = "template"
 version = "0.1.0"

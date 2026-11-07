@@ -1,5 +1,5 @@
 ---
-name: rust-type-driven
+name: rust-style-guide
 description: >
   Idiomatic type-driven Rust for domain and backend code: parse-don't-validate at trust
   boundaries, newtypes for domain concepts, illegal states unrepresentable, typed errors

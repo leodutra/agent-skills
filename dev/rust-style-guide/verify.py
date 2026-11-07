@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Smoke test for skills/rust-type-driven: build fixtures/template (refinements, serde, clap) with the
+"""Smoke test for skills/rust-style-guide: build fixtures/template (refinements, serde, clap) with the
 skill's assets/lints.toml and assets/clippy.toml; cargo fmt --check, clippy -D warnings and test must pass.
 A lint clippy no longer knows fails it too (clippy itself only warns: unknown_lints ignores -D warnings). Needs only cargo (and the network once, for crates)."""
 import os
@@ -9,7 +9,7 @@ import sys
 import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-SKILL = os.path.join(HERE, "..", "..", "skills", "rust-type-driven")
+SKILL = os.path.join(HERE, "..", "..", "skills", "rust-style-guide")
 
 root = tempfile.mkdtemp(prefix="rtd-template-")
 shutil.copytree(os.path.join(HERE, "fixtures", "template"), root, dirs_exist_ok=True)

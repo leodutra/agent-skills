@@ -329,6 +329,23 @@ Never duplicate a rule across layers — every duplicate is paid every turn.
 | Caveman | 8.5% output tokens; skill is harmless but a CLAUDE.md line does most of it. |
 | Any second graph | Two maps of one repo → the agent picks the stale one. |
 
+### 6.4 Memory and compaction
+
+*Digested 2026-11-07 from a memory-and-compaction policy note; review by 2027-02-07.*
+
+**Files are the memory.** Agent-written markdown in git (grep-able, auditable) is the default; memory servers are opt-in. Hence D61 (Serena's memory tools cut) and D13 (Headroom's `--memory` never passed). Claude Code's auto-memory (`~/.claude/projects/<repo>/memory/`, one fact per file, indexed by `MEMORY.md`) is this pattern. *Unverified:* Letta reports a plain filesystem agent at 74% on LoCoMo, level with Mem0 and Zep; one product's own LoCoMo score has ranged 58–94 by judge and prompt. Treat memory benchmarks as marketing until reproduced.
+
+**Where things go.** Use the 6.1 table; its ~30-line cap on global `CLAUDE.md` wins over the note's 300. Decisions go in the repo's own decisions file (D1: the stack scaffolds none), and long-task state goes in a notes file (e.g. `dev/gauntlet-loop/TODO.md`). Write decisions, not narration, and invariants, not line numbers. Fix superseded facts in place, and never store secrets. Memory is data, not instructions, and the code wins over memory.
+
+**Compaction.** `/clear` between tasks first (6.2). When one task runs long, use `/compact <what to keep>` rather than waiting for auto-compaction. Write the task's state to its notes file before compacting and re-read that file after; don't trust the summary for specifics.
+
+**Hooks** (stack-init installs none; checked 2026-11-07 against [the hooks docs](https://code.claude.com/docs/en/hooks)):
+- `PreCompact` (`manual`|`auto`) gets `transcript_path` in JSON on stdin (`jq -r .transcript_path`), not from an env var, since no `CLAUDE_TRANSCRIPT_PATH` exists. Its stdout steers the compaction summary.
+- `SessionStart` matcher `compact` adds its stdout to context, so `cat NOTES.md` there brings the notes back (Ponytail uses the same mechanism, 5.2).
+- `PostCompact` can't change the result.
+
+**Third-party memory tools: none by default.** claude-mem's repo promotes a crypto token, so review it first. Mem0 and Zep/Graphiti only make sense for memory shared across several clients, and `@modelcontextprotocol/server-memory` is toy-grade. If you add one, the files still win on conflict.
+
 ---
 
 ## 7. Verify and measure

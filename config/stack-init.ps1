@@ -922,10 +922,11 @@ function Install-Global {
 }
 
 # Per-repo skill deployment (`skills`). The global install deploys only the
-# project-agnostic skills (gauntlet-loop, opensrc, worktrunk, good-readme);
-# the repo's DOMAIN skills (architecture-blueprint, rust-type-driven,
+# project-agnostic skills (gauntlet-loop, opensrc, worktrunk, good-readme,
+# sdd-spec);
+# the repo's DOMAIN skills (architecture-blueprint, rust-style-guide,
 # rust-bevy-architecture, rust-wgpu-functional, macro-analyst,
-# security-vuln-gauntlet) stay out of
+# security-vuln-gauntlet, seo) stay out of
 # $ClaudeDir\skills on purpose: every skill there pays its description into
 # EVERY session's context, in every project, relevant or not. This deploys
 # them into the CURRENT repo's .claude\skills instead, where only sessions in
