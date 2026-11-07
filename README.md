@@ -42,6 +42,11 @@ Not vendored here; install them from upstream.
 | [`impeccable`](https://github.com/pbakaus/impeccable) | Design vocabulary and commands to shape, critique and audit UI, with a detector for AI-slop patterns. | `npx impeccable install` |
 | [`hallmark`](https://github.com/Nutlope/hallmark) | Design skill with themes and a `sloplint` checker so pages don't look AI-generated. | `npx skills add nutlope/hallmark -g` |
 | [`agent-browser`](https://github.com/vercel-labs/agent-browser) (Vercel) | Browser automation CLI for agents. Prefer Claude Code's `/chrome`; use this only where `/chrome` isn't available (headless, CI). | `npm install -g agent-browser && agent-browser install`, then `npx skills add vercel-labs/agent-browser` |
+| [`superpowers`](https://github.com/obra/superpowers) | Development methodology as skills: brainstorm, plan, TDD, review. | `/plugin install superpowers@claude-plugins-official` |
+| [`mattpocock/skills`](https://github.com/mattpocock/skills) | Matt Pocock's engineering and productivity skills. | `claude plugin install mattpocock-skills@claude-plugins-official` |
+| [`security-audit`](https://github.com/cloudflare/security-audit-skill) (Cloudflare) | Multi-phase codebase security audit with independently verified, machine-readable findings. | `npx skills add https://github.com/cloudflare/security-audit-skill --skill security-audit` |
+| [`rea`](https://github.com/morluto/rea) | Reverse engineering: an MCP server and workflows for native binaries, JS/Electron, .NET and websites; uses Ghidra, IDA or Hopper if installed. | `npx rea-agents setup` |
+| [`bla`](https://github.com/qybaihe/bla) | Defense against agent-driven reverse engineering: hardens shipped builds (binaries, Electron, JS, Python, WASM) with budgets and decoys, without changing behavior. | `npx bla-agents setup`, then `npx bla-agents harden .` |
 
 ## Docs
 
