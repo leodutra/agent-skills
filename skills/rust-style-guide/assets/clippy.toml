@@ -4,6 +4,10 @@
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+# Lints: public signatures are linted like private ones. In a workspace you rebuild, changing one is a
+# refactor, not a breaking release (as with #[non_exhaustive] under Behavior). A crate published to
+# users you don't rebuild leaves this line out.
+avoid-breaking-exported-api = false
 # `allow-invalid` keeps an entry quiet in a crate that does not depend on that library.
 disallowed-types = [
   # Errors: libraries return typed errors; anyhow and eyre stay at process boundaries.
@@ -20,6 +24,8 @@ disallowed-types = [
   { path = "std::sync::RwLock", reason = "domain types hold no interior mutability" },
 ]
 disallowed-methods = [
+  # Behavior: functions are total, so nothing relies on catching a panic (and panic=abort ignores it).
+  { path = "std::panic::catch_unwind", reason = "return a typed error; do not rely on catching panics" },
   # Behavior: time and randomness are parameters, which keeps domain tests deterministic. Domain crates only.
   { path = "std::time::SystemTime::now", reason = "pass the time in" },
   { path = "std::time::Instant::now", reason = "pass the time in" },

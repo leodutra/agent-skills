@@ -8,7 +8,6 @@ use std::{borrow::Borrow, fmt, str::FromStr};
 pub struct Email(String);
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[non_exhaustive]
 pub enum EmailError {
     #[error("email is empty")]
     Empty,

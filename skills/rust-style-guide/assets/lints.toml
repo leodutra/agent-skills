@@ -17,6 +17,8 @@ result_unit_err = "deny"
 # `pub` for a tag and private for a refinement; a mix leaks the refinement's invariant.
 partial_pub_fields = "deny"
 # A type deriving PartialEq that could derive Eq. Refinements and Errors: Eq wherever it holds.
+# Eq means reflexive (`a == a` for every value), which the compiler cannot check; this lint fires
+# only when every field is Eq, so the derive it asks for is reflexive by construction.
 derive_partial_eq_without_eq = "deny"
 # `.unwrap()` outside tests. Behavior: no unwrap outside tests; functions are total.
 unwrap_used = "deny"
@@ -30,7 +32,9 @@ todo = "deny"
 unimplemented = "deny"
 # `unreachable!()`. Behavior: prefer an exhaustive match, which the compiler checks.
 unreachable = "deny"
-# `_ =>` over several variants of your own enum. Behavior: match exhaustively, so a new variant breaks the build.
+# `_ =>` over several variants of an enum. Behavior: match exhaustively, so a new variant breaks the build.
+# On another crate's #[non_exhaustive] enum, list every known variant before `_`, or use `matches!`
+# or `if let` when only a few matter.
 wildcard_enum_match_arm = "deny"
 # `_ =>` standing for a single variant, which the lint above skips. Same rule.
 match_wildcard_for_single_variants = "deny"
@@ -42,8 +46,16 @@ await_holding_refcell_ref = "deny"
 future_not_send = "deny"
 # A parameter taken by value but never consumed. Lints: borrow inputs when ownership is not required.
 needless_pass_by_value = "deny"
+# A `&Option<T>` parameter. Lints: borrow the data, so take `Option<&T>` (clippy already flags
+# `&String`, `&Vec` and `&Box` by default).
+ref_option = "deny"
 # A clone whose original is never used again. Lints: borrow rather than clone when ownership stays.
 redundant_clone = "deny"
+# A glob import (`use foo::*`) other than `use super::*` in a test module or a prelude. Lints:
+# every name says where it comes from.
+wildcard_imports = "deny"
+# `.for_each(…)` where a `for` loop reads plainer. Lints: a loop over combinators that only hide it.
+needless_for_each = "deny"
 # A struct with more than three bools. Types: exclusive states are one enum, not bool flags.
 struct_excessive_bools = "deny"
 # A function with more than three bool parameters. Same rule, at the call site.
