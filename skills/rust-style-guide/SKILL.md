@@ -38,6 +38,9 @@ where it enters, into a domain type; from then on the type is the proof.
 - Illegal states MUST be unrepresentable: exclusive states are one enum, not `bool` flags,
   `Option`s or a string; fields that exist only together are one variant's data; a number that
   cannot be zero is `NonZero*`. State read from storage or the wire is an enum, not typestate.
+- `Option` means absence, `Result` means failure; neither stands in for the other (no `.ok()` that
+  drops an error). A lookup that can fail returns `Result<Option<T>, E>`: `Ok(None)` is not found,
+  `Err` is the store failing; an operation that needs the value makes its absence an error variant.
 - Absence is an `Option` with one meaning, or a variant; sentinels (`""`, `0`, `-1`) MUST NOT stand
   for it.
 - A value gets a newtype when it carries an invariant or could be swapped with another value of the
@@ -55,8 +58,8 @@ where it enters, into a domain type; from then on the type is the proof.
   exact inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>`
   and so on for one non-string source, `impl TryFrom<Dto>` for a payload.
 - The sole fallible constructor MUST be named `new` (as `NonZero::new`, `CString::new`); `try_new`
-  exists only beside an infallible `new`. It returns `Result`, never `Option` (which means
-  absence), with an error holding only the failures it can produce: a unit struct for one, an enum
+  exists only beside an infallible `new`. It returns `Result`, never `Option` (see Types),
+  with an error holding only the failures it can produce: a unit struct for one, an enum
   for several. `FromStr` wraps that error beside its own syntax failure.
 - The constructor normalizes first (trim, canonical case), so `Eq`/`Hash`/`Ord` compare canonical
   values, without collapsing a distinction the domain keeps.
@@ -74,8 +77,8 @@ where it enters, into a domain type; from then on the type is the proof.
   when the derives agree with `str`'s. `Eq` adds reflexivity (`a == a` for every value) to
   `PartialEq`'s symmetry and transitivity; the compiler cannot check it, so derive `Eq` (it compiles
   only when every field is `Eq`) and never hand-write it over a `PartialEq` that breaks it
-  (`f32`/`f64` are not `Eq`: `NaN != NaN`). A secret hand-writes a redacted `Debug`, with no `Display` and
-  no `Serialize`.
+  (`f32`/`f64` are not `Eq`: `NaN != NaN`). A secret hand-writes a redacted `Debug`, with no
+  `Display` and no `Serialize`.
 - A compile-time literal is `const fn literal(..) -> Self` that calls `new` and panics on its
   failure, called only in `const` items, under `#[expect(clippy::panic, reason = "…")]`.
 
@@ -91,9 +94,9 @@ pub enum OrderError {
 }
 ```
 
-- Library errors are typed (`thiserror` enums, or a unit struct for a single failure) implementing `Error + Send + Sync + 'static`, with
-  typed context; `String`, `&str` and `()` MUST NOT be errors or carry their context. `anyhow`/`eyre`
-  stay at process boundaries, with `.context(...)`.
+- Library errors are typed (`thiserror` enums, or a unit struct for a single failure) implementing
+  `Error + Send + Sync + 'static`, with typed context; `String`, `&str` and `()` MUST NOT be errors
+  or carry their context. `anyhow`/`eyre` stay at process boundaries, with `.context(...)`.
 - Derive `Clone, PartialEq, Eq` (reflexive, as under Refinements) unless a cause cannot
   (`io::Error`), so tests assert on variants.
 - Messages are lowercase, with no trailing period, say what is wrong, and never echo secret input.
@@ -110,7 +113,8 @@ pub enum OrderError {
 - Domain types hold no interior mutability; prefer `&mut self`, leaving sharing to the caller.
 - No `Service`, `Manager`, `Helper`, `Utils`, `Misc` names; traits name capabilities
   (`LoadOrders`), and a trait needs a second implementation or a test double to exist.
-- A macro is the last resort: a function, type or trait first, then `macro_rules!`, then a proc macro.
+- A macro is the last resort: a function, type or trait first, then `macro_rules!`, then a proc
+  macro.
 - A trait whose futures are spawned multithreaded declares `-> impl Future<Output = …> + Send`.
 - Async: no `std::sync::MutexGuard` across `.await`; no blocking calls on the runtime (use async APIs
   or `spawn_blocking`); every `.await` is a cancellation point, so money, inventory or external
@@ -148,10 +152,11 @@ entries its comments limit to other kinds of crate. Silence a misfire where it h
 
 In review, the lints hold what their comments name (wildcard arms, unwrap/expect/panic outside
 tests, unsafe, missing `Debug`/`Eq`, infallible `TryFrom`, mixed `pub` fields, non-`Send` futures,
-locks across `.await`, more than three bools, glob imports, `for_each`, `anyhow`/`eyre`,
-`Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clocks and `rand` calls, `catch_unwind`). Review every other rule above, plus what no lint bans
-(atomics, `OnceCell`, `Uuid::new_v4` in domain code; an unused dependency; a test that reaches a
-rejection without asserting its error).
+locks across `.await`, more than three bools, glob imports, `for_each`, `&Option` parameters,
+`anyhow`/`eyre`, `Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clocks and `rand` calls,
+`catch_unwind`). Review every other rule above, plus what no lint bans (atomics, `OnceCell`,
+`Uuid::new_v4` in domain code; an unused dependency; a test that reaches a rejection without
+asserting its error).
 
 `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and `cargo test`
 MUST pass before a task is done.
