@@ -23,6 +23,25 @@ In September 2026 the checks that a tool can make moved from prose to clippy and
 Prose works only when someone reads it and follows it. A lint runs on every change, whoever wrote
 it.
 
+## The same ideas, inverted
+
+Ask the opposite question: how would you write Rust that surely breaks in production? Each answer
+is something this guide bans, so the list doubles as a check on a rule you're unsure about. If
+dropping the rule lets one of these back in, the rule stays.
+
+| To guarantee failure | The guide's answer |
+| --- | --- |
+| Check a value in one place and trust it everywhere else | The check is the constructor, and the type is the proof (sections 2 to 4) |
+| Let a type hold states the domain forbids, and remember not to build them | The type can't hold them (section 5) |
+| Report "missing" and "broken" the same way | `Option` for absence, `Result` for failure (section 6) |
+| Throw away the cause of an error, or put it in a string | Typed errors that keep their source (section 7) |
+| Crash on input you didn't expect | Total functions, no panics outside tests (section 8) |
+| Add an enum variant and let old matches swallow it | No `_ =>` on your own enums (section 9) |
+| Clone until the borrow checker is quiet | Borrow unless ownership is needed (section 10) |
+| Read the clock or a random number wherever it's handy | Time and randomness are parameters (section 11) |
+| Block the runtime, or stop halfway through an effect | Async rules (section 12) |
+| Leave the rule to the reviewer's memory | A `deny` lint, on every build (next section) |
+
 ## How the lint configuration works
 
 Five decisions shape the whole setup.

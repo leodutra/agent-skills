@@ -223,9 +223,10 @@ non-`Send` futures, locks across `.await`, more than three bools, glob imports, 
 `Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clock, `rand` and `uuid` calls, `catch_unwind`, lossy
 `as` casts, `&s[a..b]` on a `str`.
 
-Review must also catch what no lint bans: atomics and `OnceCell` in domain code; an unused
-dependency; an `.ok()` whose `None` hides an error; a test that reaches a rejection without
-asserting its error in a form the lint misses; `split_at` on a `str`; overflowing arithmetic.
+Review must also catch what no lint bans: a `new` that returns `Result`; atomics and `OnceCell`
+in domain code; an unused dependency; an `.ok()` whose `None` hides an error; a test that reaches a
+rejection without asserting its error in a form the lint misses; `split_at` on a `str`;
+overflowing arithmetic.
 
 ## Allowed: not defects
 
