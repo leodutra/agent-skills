@@ -44,6 +44,27 @@ Rules override Rust defaults unless a documented project decision says otherwise
    defect, not even a nit.
 4. Report each problem with its line, the rule it breaks, why it matters and the fix.
 
+## Types
+
+- Illegal states MUST be unrepresentable: exclusive states are one enum, not `bool` flags, `Option`s
+  or a string; fields that exist only together are one variant's data; a number that cannot be zero
+  is `NonZero*`. State read from storage or the wire is an enum, not typestate.
+- `Option` means absence, `Result` means failure; neither stands in for the other (no `.ok()` that
+  drops an error). A lookup that can fail returns `Result<Option<T>, E>`: `Ok(None)` is not found,
+  `Err` the store failing. An operation that needs the value makes its absence an error variant. A
+  function that cannot fail returns a plain `Option` for "nothing here".
+- Absence is an `Option` with one meaning, or a variant; sentinels (`""`, `0`, `-1`) MUST NOT stand
+  for it.
+- A value gets a newtype when it carries an invariant or could be swapped with another value of the
+  same primitive. A **tag** (`UserId(u64)`) has no invariant: its field is `pub`, and `From` and
+  `#[serde(transparent)]` are fine. A **refinement** (`Email`, `Port`) has one: its fields MUST be
+  private.
+- A closed set is a `ValueEnum` (clap) or a `rename_all` enum (serde), not a refinement over a
+  string.
+- Data with more than one field has named fields: no tuples or tuple structs beyond a newtype.
+- Variant fields are public, so fields sharing an invariant (`start < end`) MUST sit in a
+  private-field struct with a validating constructor, which the variant wraps.
+
 ## Refinements: parse, don't validate
 
 A raw value becomes its refinement as soon as it is read; from then on the type is the proof. Every
@@ -99,7 +120,7 @@ pub const HTTP: Port = Port::literal(80);
   inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>` and so on
   for one non-string source, `impl TryFrom<Dto>` for a record, row or DTO deserialized as is.
 - The sole fallible constructor MUST be named `new` (as `NonZero::new`, `CString::new`); `try_new`
-  exists only beside an infallible `new`. It returns `Result` (see Types).
+  exists only beside an infallible `new`. It returns `Result`, never `Option`.
 - Its error holds only the failures that constructor can produce: a unit struct for one, an enum
   for several. Two constructors MUST NOT share an error enum when either can't produce all its
   variants (`Email::new` and `DisplayName::new` each get their own). `FromStr` wraps that error
@@ -124,27 +145,6 @@ pub const HTTP: Port = Port::literal(80);
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
 - `literal` (example above) calls `new`, never builds `Self` directly, and is `pub(crate)`; it is
   `pub` only when another crate needs the constants, then with a `# Panics` doc section.
-
-## Types
-
-- Illegal states MUST be unrepresentable: exclusive states are one enum, not `bool` flags, `Option`s
-  or a string; fields that exist only together are one variant's data; a number that cannot be zero
-  is `NonZero*`. State read from storage or the wire is an enum, not typestate.
-- `Option` means absence, `Result` means failure; neither stands in for the other (no `.ok()` that
-  drops an error). A lookup that can fail returns `Result<Option<T>, E>`: `Ok(None)` is not found,
-  `Err` the store failing. An operation that needs the value makes its absence an error variant. A
-  function that cannot fail returns a plain `Option` for "nothing here".
-- Absence is an `Option` with one meaning, or a variant; sentinels (`""`, `0`, `-1`) MUST NOT stand
-  for it.
-- A value gets a newtype when it carries an invariant or could be swapped with another value of the
-  same primitive. A **tag** (`UserId(u64)`) has no invariant: its field is `pub`, and `From` and
-  `#[serde(transparent)]` are fine. A **refinement** (`Email`, `Port`) has one: its fields MUST be
-  private.
-- A closed set is a `ValueEnum` (clap) or a `rename_all` enum (serde), not a refinement over a
-  string.
-- Data with more than one field has named fields: no tuples or tuple structs beyond a newtype.
-- Variant fields are public, so fields sharing an invariant (`start < end`) MUST sit in a
-  private-field struct with a validating constructor, which the variant wraps.
 
 ## Errors
 
@@ -209,21 +209,6 @@ pub const HTTP: Port = Port::literal(80);
 - Each forbidden state transition the types cannot rule out is tested. Integration tests in `tests/`
   use the public API.
 
-## Allowed: not defects
-
-These follow the rules above. In review, don't flag them, not even as nits:
-- A tag's `pub` field, `From` impl or `#[serde(transparent)]`.
-- `Result<Option<T>, E>` from a lookup; a plain `Option` from a function that cannot fail.
-- A unit-struct error for a constructor with one failure; `try_new` beside an infallible `new`.
-- An error without `Clone`/`PartialEq`/`Eq` because a cause lacks them (`io::Error`).
-- `#[non_exhaustive]` in a crate published to users you don't rebuild.
-- The panic in a `pub(crate) const fn literal` called in `const` items, under its `#[expect]`.
-- `expect()` with a clear message in `main.rs` for a startup failure of the environment, under its
-  `#[expect]`.
-- `unwrap()`, `expect()`, `panic!` in `#[test]` functions and `#[cfg(test)]` code.
-- `anyhow`/`eyre`, the clock, randomness and locks outside domain and library code (a binary's
-  `main`, infrastructure), where clippy.toml's comments exempt them.
-
 ## Lints
 
 What clippy can check, clippy checks. The test allowances cover `#[test]` functions and
@@ -239,3 +224,18 @@ non-`Send` futures, locks across `.await`, more than three bools, glob imports, 
 Review must also catch what no lint bans: atomics and `OnceCell` in domain code; an unused
 dependency; an `.ok()` whose `None` hides an error; a test that reaches a rejection without
 asserting its error in a form the lint misses; `split_at` on a `str`; overflowing arithmetic.
+
+## Allowed: not defects
+
+These follow the rules above. In review, don't flag them, not even as nits:
+- A tag's `pub` field, `From` impl or `#[serde(transparent)]`.
+- `Result<Option<T>, E>` from a lookup; a plain `Option` from a function that cannot fail.
+- A unit-struct error for a constructor with one failure; `try_new` beside an infallible `new`.
+- An error without `Clone`/`PartialEq`/`Eq` because a cause lacks them (`io::Error`).
+- `#[non_exhaustive]` in a crate published to users you don't rebuild.
+- The panic in a `pub(crate) const fn literal` called in `const` items, under its `#[expect]`.
+- `expect()` with a clear message in `main.rs` for a startup failure of the environment, under its
+  `#[expect]`.
+- `unwrap()`, `expect()`, `panic!` in `#[test]` functions and `#[cfg(test)]` code.
+- `anyhow`/`eyre`, the clock, randomness and locks outside domain and library code (a binary's
+  `main`, infrastructure), where clippy.toml's comments exempt them.
