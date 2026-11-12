@@ -36,7 +36,7 @@ impl Port {
         clippy::panic,
         reason = "a compile-time literal: an invalid value fails compilation"
     )]
-    pub const fn literal(n: u16) -> Self {
+    pub(crate) const fn literal(n: u16) -> Self {
         match Self::new(n) {
             Ok(port) => port,
             Err(ZeroPort) => panic!("port must be non-zero"),

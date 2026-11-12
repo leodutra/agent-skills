@@ -237,7 +237,9 @@ A refinement must not hand out a way around its constructor.
 - **A compile-time literal still calls `new`.** `const fn literal(n) -> Self` panics on failure,
   under an `#[expect(clippy::panic, reason = "…")]`, and is called only in `const` items. There, the
   panic happens at compile time, so an invalid literal fails the build:
-  `pub const HTTP: Port = Port::literal(80);`.
+  `pub const HTTP: Port = Port::literal(80);`. It is `pub(crate)`. Nothing stops another crate
+  from calling a `pub` one at run time with a value from its users, and then it panics there. When
+  another crate really needs the constants, make it `pub` with a `# Panics` doc section.
 
 ## 5. Types say what values mean
 
@@ -372,6 +374,8 @@ pub enum OrderError {
 | `todo`, `unimplemented` | placeholders that panic when reached |
 | `unreachable` | `unreachable!()` |
 | `disallowed-methods`: `catch_unwind` | catching a panic to recover from it |
+| `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap` | an `as` cast that truncates, drops the sign or wraps |
+| `string_slice` | `&s[a..b]` on a `str` |
 | clippy.toml: `allow-unwrap-in-tests`, `allow-expect-in-tests`, `allow-panic-in-tests` | lets tests do all of the above |
 
 A panic takes failure out of the type system. The caller can't see it in the signature, can't match
@@ -382,12 +386,27 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
 
 - `unwrap` and `expect` are panics with a shorter name. `expect` gets one exception: bootstrap in
   `main.rs`, where crashing with a clear message *is* the right thing to do. It sits under an
-  `#[expect]` that says so.
+  `#[expect]` that says so. Bootstrap means the environment failing at startup, such as a missing
+  config file or a port that won't bind. A user mistyping an argument is not bootstrap. A panic
+  prints `thread 'main' panicked at src/main.rs` and exits with code 101, where a user expects a
+  usage message and an error code, so CLI input is parsed and its error reported.
 - `todo!` and `unimplemented!` are panics that ship by accident.
 - `unreachable!` claims something the compiler doesn't check. An exhaustive `match`, or a type that
   can't hold the impossible case, makes the compiler check it.
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
   nothing when the binary is built with `panic = "abort"`.
+- **An `as` cast between integers never fails, so it gets the value wrong instead.** `300u64 as u8`
+  is `44`, `-1i64 as u64` is `18446744073709551615`, and `u64::MAX as i64` is `-1`. The three cast
+  lints catch those casts. Use `From` when the conversion can't lose anything, and `TryFrom` when
+  it can, so the error reaches the caller.
+- **Slicing a `str` at a byte offset panics** when the offset lands inside a multi-byte character:
+  `&"aé123"[..2]` panics, because `é` takes two bytes. `string_slice` catches `&s[a..b]`. Nothing
+  catches `split_at`, so review does. Use `split_once`, `char_indices` or `s.get(a..b)`, which
+  returns `None` instead of panicking.
+- **Arithmetic that can overflow panics in a debug build and wraps in release.** For money and
+  quantities, both are wrong: `cents * percent` can overflow on a large order. Use `checked_mul` and
+  friends and return an error. Clippy's lint for this, `arithmetic_side_effects`, flags every `+`
+  and `*`, which is too noisy to enable, so review catches it.
 
 In a test, a panic is how the test fails, so unwrapping there is the assertion. The three
 `allow-*-in-tests` settings let `#[test]` functions and `#[cfg(test)]` code do that. A helper file

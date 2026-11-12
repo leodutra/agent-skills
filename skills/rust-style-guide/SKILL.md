@@ -7,8 +7,9 @@ description: >
   cancellation safety, invariant tests. Use when writing, reviewing, refactoring or designing Rust
   that models a domain or business rules (HTTP/RPC handlers, config, CLI args, database rows, state
   machines, value objects, error types), on mentions of newtype, refinement type, parse don't
-  validate, validation, domain model, illegal states, typestate, thiserror, anyhow, TryFrom, FromStr,
-  NonZero, serde try_from or transparent, clap value types, sqlx decode, Result/Option design, tokio
+  validate, validation, domain model, illegal states, typestate, thiserror, anyhow, TryFrom,
+  FromStr, NonZero, serde try_from or transparent, clap value types, sqlx decode, Result/Option
+  design, tokio
   tasks, spawn_blocking, cancellation safety, proptest or clippy lints, and when Rust under review
   has raw String/i64/Uuid in signatures, `is_valid_*` or `validate` checks, stringly typed errors,
   `_ =>` on its own enums, or unwrap()/expect() outside tests. GPU/render code:
@@ -17,9 +18,9 @@ description: >
 
 # Rust style guide
 
-These rules override default Rust conventions; a documented project decision may override them.
-Read `MUST`, `SHOULD` and `MAY` literally. The reasons, for people, are in
-[references/fundamentals.md](references/fundamentals.md); don't load it to write or review code.
+Rules override Rust defaults unless a documented project decision says otherwise; `MUST`,
+`SHOULD` and `MAY` are literal. Reasons, for people:
+[references/fundamentals.md](references/fundamentals.md) (don't load it).
 
 ## Workflow
 
@@ -75,7 +76,7 @@ impl Port {
 
     #[must_use]
     #[expect(clippy::panic, reason = "a compile-time literal: an invalid value fails compilation")]
-    pub const fn literal(n: u16) -> Self { // const items only
+    pub(crate) const fn literal(n: u16) -> Self { // const items only
         match Self::new(n) {
             Ok(port) => port,
             Err(ZeroPort) => panic!("port must be non-zero"),
@@ -98,7 +99,7 @@ pub const HTTP: Port = Port::literal(80);
   inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>` and so on
   for one non-string source, `impl TryFrom<Dto>` for a record, row or DTO deserialized as is.
 - The sole fallible constructor MUST be named `new` (as `NonZero::new`, `CString::new`); `try_new`
-  exists only beside an infallible `new`. It returns `Result`, never `Option` (which means absence).
+  exists only beside an infallible `new`. It returns `Result` (see Types).
 - Its error holds only the failures that constructor can produce: a unit struct for one, an enum
   for several. Two constructors MUST NOT share an error enum when either can't produce all its
   variants (`Email::new` and `DisplayName::new` each get their own). `FromStr` wraps that error
@@ -108,7 +109,7 @@ pub const HTTP: Port = Port::literal(80);
   keeps the part before the `@` as typed.
 - No `Deref`/`DerefMut`, no `&mut` to the inner value; offer `as_str()`, `get()`, `AsRef` or
   `into_inner()`. A mutating method keeps the invariant or does not exist. No `Default` unless the
-  default is valid. Build on std's types where they hold the invariant.
+  default is valid.
 - serde: `#[serde(try_from = "String", into = "String")]` (or `"u16"`, …) backed by `TryFrom` and
   `From<Self> for Inner`. A derived `Deserialize`, `#[serde(transparent)]` or `#[sqlx(transparent)]`
   on a refinement skips the constructor and MUST NOT be used; a database `Decode`/`FromSql` decodes
@@ -121,9 +122,8 @@ pub const HTTP: Port = Port::literal(80);
   only when every field is `Eq`), never hand-write it over a `PartialEq` that breaks it (`f32`/`f64`
   are not `Eq`: `NaN != NaN`).
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
-- A compile-time literal is a `const fn literal` that calls `new` and panics on its failure, under
-  `#[expect(clippy::panic, reason = "…")]`, called only in `const` items. It never builds `Self`
-  directly.
+- `literal` (example above) calls `new`, never builds `Self` directly, and is `pub(crate)`; it is
+  `pub` only when another crate needs the constants, then with a `# Panics` doc section.
 
 ## Types
 
@@ -163,7 +163,13 @@ pub const HTTP: Port = Port::literal(80);
 
 - Functions are total; code MUST NOT panic on valid input or validate user input with `assert!`.
   `panic!`, `unwrap()` and `expect()` MUST NOT appear outside tests, except `expect()` with a clear
-  message in `main.rs` bootstrap under `#[expect(clippy::expect_used, reason = "…")]`.
+  message in `main.rs` bootstrap under `#[expect(clippy::expect_used, reason = "…")]`. Bootstrap is
+  the environment failing at startup (a config file, binding a port); user input, CLI arguments
+  included, is reported as an error with a usage message and exit code, never `expect()`ed.
+- Numbers: narrowing or sign-changing conversions use `TryFrom` (the cast lints hold `as`); money
+  and quantity arithmetic that can overflow uses `checked_*` and returns an error.
+- Strings are indexed by `char` boundaries: `split_once`, `char_indices`, `get(a..b)`; never
+  `split_at` or `&s[a..b]` at a byte offset that input can move.
 - Match exhaustively on your own enums: no `_ =>` arm, and no `#[non_exhaustive]` on them (it forces
   `_` arms in the workspace's other crates); it belongs only in a crate published to users you
   don't rebuild.
@@ -211,8 +217,9 @@ These follow the rules above. In review, don't flag them, not even as nits:
 - A unit-struct error for a constructor with one failure; `try_new` beside an infallible `new`.
 - An error without `Clone`/`PartialEq`/`Eq` because a cause lacks them (`io::Error`).
 - `#[non_exhaustive]` in a crate published to users you don't rebuild.
-- The panic in a `const fn literal` called in `const` items, under its `#[expect]`.
-- `expect()` with a clear message in `main.rs` bootstrap, under its `#[expect]`.
+- The panic in a `pub(crate) const fn literal` called in `const` items, under its `#[expect]`.
+- `expect()` with a clear message in `main.rs` for a startup failure of the environment, under its
+  `#[expect]`.
 - `unwrap()`, `expect()`, `panic!` in `#[test]` functions and `#[cfg(test)]` code.
 - `anyhow`/`eyre`, the clock, randomness and locks outside domain and library code (a binary's
   `main`, infrastructure), where clippy.toml's comments exempt them.
@@ -226,8 +233,9 @@ The lints hold: wildcard arms, unwrap/expect/panic outside tests, unsafe, missin
 infallible `TryFrom`, a `Result` that never fails, mixed `pub` fields, `Option<Option<T>>`,
 non-`Send` futures, locks across `.await`, more than three bools, glob imports, `for_each`,
 `&Option` parameters, `map_err(|_| …)`, a dropped `Result`, `assert!(r.is_err())`, `anyhow`/`eyre`,
-`Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clock, `rand` and `uuid` calls, `catch_unwind`.
+`Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clock, `rand` and `uuid` calls, `catch_unwind`, lossy
+`as` casts, `&s[a..b]` on a `str`.
 
 Review must also catch what no lint bans: atomics and `OnceCell` in domain code; an unused
 dependency; an `.ok()` whose `None` hides an error; a test that reaches a rejection without
-asserting its error in a form the lint misses.
+asserting its error in a form the lint misses; `split_at` on a `str`; overflowing arithmetic.

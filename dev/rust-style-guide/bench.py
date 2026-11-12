@@ -118,10 +118,12 @@ def grade(rid):
                 'and your reasoning>", "passed": true|false}, ...]}, one entry per assertion, in order. Write the '
                 'evidence first and set "passed" to what it concludes.')
     # A grader needs no coding-agent prompt: replacing it keeps the call to the grading text alone.
-    out = claude(prompt, d, "You grade an assistant's output against assertions and reply with JSON only.",
-                 replace_system=True)
-    m = re.search(r"\{.*\}", out.get("result", ""), re.S)
-    verdict = json.loads(m.group(0)) if m else {"expectations": [], "error": out.get("error", "no JSON")}
+    for _ in range(2):  # one retry: a call now and then comes back empty
+        out = claude(prompt, d, "You grade an assistant's output against assertions and reply with JSON only.",
+                     replace_system=True)
+        m = re.search(r"\{.*\}", out.get("result", ""), re.S)
+        if m: break
+    verdict = json.loads(m.group(0)) if m else {"expectations": [], "error": out.get("error") or "no JSON: " + json.dumps(out)[:1500]}
     json.dump({**verdict, "usage": out.get("usage", {})}, open(f"{d}/grading.json", "w"), indent=1)
     return rid
 
