@@ -4,13 +4,15 @@ description: >
   Type-driven Rust style for domain and backend code, with a clippy/rustc lint set that enforces
   much of it: refinement newtypes that parse instead of validate, illegal states unrepresentable,
   Option for absence and Result for failure, precise thiserror errors, total functions, async
-  cancellation safety, invariant tests. Use when writing, reviewing or refactoring Rust that models
-  data or business rules (handlers, config, CLI args, database rows, state machines, value objects,
-  error types), on mentions of newtype, parse don't validate, typestate, thiserror, anyhow, TryFrom,
-  FromStr, serde try_from, clap, sqlx, Result/Option design, tokio, proptest or clippy lints, and
-  when Rust under review has raw String/i64/Uuid in signatures, `is_valid_*` checks, string errors,
-  `_ =>` on its own enums, or unwrap()/expect() outside tests. GPU/render code: rust-wgpu-functional;
-  Bevy ECS: rust-bevy-architecture.
+  cancellation safety, invariant tests. Use when writing, reviewing, refactoring or designing Rust
+  that models a domain or business rules (HTTP/RPC handlers, config, CLI args, database rows, state
+  machines, value objects, error types), on mentions of newtype, refinement type, parse don't
+  validate, validation, domain model, illegal states, typestate, thiserror, anyhow, TryFrom, FromStr,
+  NonZero, serde try_from or transparent, clap value types, sqlx decode, Result/Option design, tokio
+  tasks, spawn_blocking, cancellation safety, proptest or clippy lints, and when Rust under review
+  has raw String/i64/Uuid in signatures, `is_valid_*` or `validate` checks, stringly typed errors,
+  `_ =>` on its own enums, or unwrap()/expect() outside tests. GPU/render code:
+  rust-wgpu-functional; Bevy ECS: rust-bevy-architecture.
 ---
 
 # Rust style guide
