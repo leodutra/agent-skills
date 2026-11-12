@@ -88,7 +88,7 @@ pub enum ParsePortError { // text adds a syntax failure in front of the construc
 }
 
 impl Port {
-    pub const fn new(n: u16) -> Result<Self, ZeroPort> { // the one validating constructor
+    pub const fn try_new(n: u16) -> Result<Self, ZeroPort> { // the one validating constructor
         match NonZeroU16::new(n) {
             Some(n) => Ok(Self(n)),
             None => Err(ZeroPort),
@@ -98,16 +98,16 @@ impl Port {
     #[must_use]
     #[expect(clippy::panic, reason = "a compile-time literal: an invalid value fails compilation")]
     pub(crate) const fn literal(n: u16) -> Self { // const items only
-        match Self::new(n) {
+        match Self::try_new(n) {
             Ok(port) => port,
             Err(ZeroPort) => panic!("port must be non-zero"),
         }
     }
 }
 
-impl TryFrom<u16> for Port { /* Self::new(n) */ }
+impl TryFrom<u16> for Port { /* Self::try_new(n) */ }
 impl From<Port> for u16 { /* port.0.get() */ }
-impl FromStr for Port { /* Ok(Self::new(s.parse()?)?) */ }
+impl FromStr for Port { /* Ok(Self::try_new(s.parse()?)?) */ }
 impl fmt::Display for Port { /* self.0.fmt(f): the exact inverse of FromStr */ }
 
 pub const HTTP: Port = Port::literal(80);
@@ -119,11 +119,13 @@ pub const HTTP: Port = Port::literal(80);
 - One validating constructor; every way in delegates to it: `FromStr` (with `Display` as its exact
   inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>` and so on
   for one non-string source, `impl TryFrom<Dto>` for a record, row or DTO deserialized as is.
-- The sole fallible constructor MUST be named `new` (as `NonZero::new`, `CString::new`); `try_new`
-  exists only beside an infallible `new`. It returns `Result`, never `Option`.
+- A constructor that returns `Result` MUST be named `try_new`; `new` is for one that cannot fail. It
+  returns `Result`, never `Option`. Other constructor names follow the Rust API
+  Guidelines (C-CTOR): a type that is an I/O resource uses the domain's verb (`File::open`,
+  `TcpStream::connect`, `UdpSocket::bind`), a conversion is `from_*`, a secondary one `with_*`.
 - Its error holds only the failures that constructor can produce: a unit struct for one, an enum
   for several. Two constructors MUST NOT share an error enum when either can't produce all its
-  variants (`Email::new` and `DisplayName::new` each get their own). `FromStr` wraps that error
+  variants (`Email::try_new` and `DisplayName::try_new` each get their own). `FromStr` wraps that error
   beside its own syntax failure.
 - The constructor normalizes first (trim, canonical case), so `Eq`/`Hash`/`Ord` compare canonical
   values, without collapsing a distinction the domain keeps: an email lowercases its domain and
@@ -143,7 +145,7 @@ pub const HTTP: Port = Port::literal(80);
   only when every field is `Eq`), never hand-write it over a `PartialEq` that breaks it (`f32`/`f64`
   are not `Eq`: `NaN != NaN`).
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
-- `literal` (example above) calls `new`, never builds `Self` directly, and is `pub(crate)`; it is
+- `literal` (example above) calls `try_new`, never builds `Self` directly, and is `pub(crate)`; it is
   `pub` only when another crate needs the constants, then with a `# Panics` doc section.
 
 ## Errors
@@ -191,7 +193,7 @@ pub const HTTP: Port = Port::literal(80);
 ## Tests
 
 - One accepted input per constructor, and every rejection reason in domain code reached by a test
-  that asserts its specific error (`assert_eq!(Port::new(0), Err(ZeroPort))`). No second example of
+  that asserts its specific error (`assert_eq!(Port::try_new(0), Err(ZeroPort))`). No second example of
   a rule already pinned, and no tests of derives, getters or what the compiler guarantees.
 - Where a law exists, a property test replaces examples; a type with `Display` and `FromStr` MUST
   have one that its `Display` parses back:
@@ -230,7 +232,9 @@ asserting its error in a form the lint misses; `split_at` on a `str`; overflowin
 These follow the rules above. In review, don't flag them, not even as nits:
 - A tag's `pub` field, `From` impl or `#[serde(transparent)]`.
 - `Result<Option<T>, E>` from a lookup; a plain `Option` from a function that cannot fail.
-- A unit-struct error for a constructor with one failure; `try_new` beside an infallible `new`.
+- A unit-struct error for a constructor with one failure.
+- A fallible constructor of an I/O resource named by its domain verb (`open`, `connect`, `bind`),
+  and fallible `from_*`/`with_*` constructors, instead of `try_new`.
 - An error without `Clone`/`PartialEq`/`Eq` because a cause lacks them (`io::Error`).
 - `#[non_exhaustive]` in a crate published to users you don't rebuild.
 - The panic in a `pub(crate) const fn literal` called in `const` items, under its `#[expect]`.

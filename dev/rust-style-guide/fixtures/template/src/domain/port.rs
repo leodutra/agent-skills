@@ -23,7 +23,7 @@ pub enum ParsePortError {
 
 impl Port {
     /// The one validating path. A failure is an error, not absence, so it returns Result.
-    pub const fn new(n: u16) -> Result<Self, ZeroPort> {
+    pub const fn try_new(n: u16) -> Result<Self, ZeroPort> {
         match NonZeroU16::new(n) {
             Some(n) => Ok(Self(n)),
             None => Err(ZeroPort),
@@ -37,7 +37,7 @@ impl Port {
         reason = "a compile-time literal: an invalid value fails compilation"
     )]
     pub(crate) const fn literal(n: u16) -> Self {
-        match Self::new(n) {
+        match Self::try_new(n) {
             Ok(port) => port,
             Err(ZeroPort) => panic!("port must be non-zero"),
         }
@@ -53,7 +53,7 @@ impl TryFrom<u16> for Port {
     type Error = ZeroPort;
 
     fn try_from(n: u16) -> Result<Self, Self::Error> {
-        Self::new(n)
+        Self::try_new(n)
     }
 }
 
@@ -67,7 +67,7 @@ impl FromStr for Port {
     type Err = ParsePortError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::new(s.parse()?)?)
+        Ok(Self::try_new(s.parse()?)?)
     }
 }
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn each_source_reports_only_its_own_failures() {
-        assert_eq!(Port::new(0), Err(ZeroPort));
+        assert_eq!(Port::try_new(0), Err(ZeroPort));
         assert_eq!("0".parse::<Port>(), Err(ParsePortError::Zero(ZeroPort)));
         assert!(matches!(
             "x".parse::<Port>(),

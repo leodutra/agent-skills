@@ -1,6 +1,6 @@
 use std::{borrow::Borrow, fmt, str::FromStr};
 
-// A refinement: the field is private, and serde goes through TryFrom<String>, so through new().
+// A refinement: the field is private, and serde goes through TryFrom<String>, so through try_new().
 #[derive(
     Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize,
 )]
@@ -21,7 +21,7 @@ impl Email {
     pub const MAX_LEN: usize = 254;
 
     /// The one validating path: FromStr, TryFrom<String>, serde and clap all come here.
-    pub fn new(raw: impl Into<String>) -> Result<Self, EmailError> {
+    pub fn try_new(raw: impl Into<String>) -> Result<Self, EmailError> {
         let raw = raw.into();
         // Normalized first, so Eq, Hash and Ord compare canonical values; an already trimmed String is kept.
         let value = if raw.trim().len() == raw.len() {
@@ -56,7 +56,7 @@ impl FromStr for Email {
     type Err = EmailError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Self::new(s)
+        Self::try_new(s)
     }
 }
 
@@ -64,7 +64,7 @@ impl TryFrom<String> for Email {
     type Error = EmailError;
 
     fn try_from(s: String) -> Result<Self, Self::Error> {
-        Self::new(s)
+        Self::try_new(s)
     }
 }
 

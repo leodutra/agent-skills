@@ -28,7 +28,7 @@ pub struct Sku(String);
 impl Sku {
     pub const MAX_LEN: usize = 12;
 
-    pub fn new(raw: &str) -> Result<Self, ValidationError> {
+    pub fn try_new(raw: &str) -> Result<Self, ValidationError> {
         if raw.is_empty() {
             return Err(ValidationError::Empty);
         }
@@ -55,7 +55,7 @@ impl Sku {
 pub struct Quantity(NonZeroU32);
 
 impl Quantity {
-    pub fn new(n: u32) -> Result<Self, ValidationError> {
+    pub fn try_new(n: u32) -> Result<Self, ValidationError> {
         NonZeroU32::new(n).map(Self).ok_or(ValidationError::Zero)
     }
 

@@ -13,7 +13,7 @@ pub struct Timestamp(pub u64);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Interval(NonZeroU32);
 
-/// `Interval::new`'s only failure.
+/// `Interval::try_new`'s only failure.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("interval must be non-zero")]
 pub struct ZeroInterval;
@@ -29,7 +29,7 @@ pub enum ParseIntervalError {
 }
 
 impl Interval {
-    pub const fn new(ms: u32) -> Result<Self, ZeroInterval> {
+    pub const fn try_new(ms: u32) -> Result<Self, ZeroInterval> {
         match NonZeroU32::new(ms) {
             Some(ms) => Ok(Self(ms)),
             None => Err(ZeroInterval),
@@ -43,7 +43,7 @@ impl Interval {
         reason = "a compile-time literal: an invalid value fails compilation"
     )]
     pub const fn literal(ms: u32) -> Self {
-        match Self::new(ms) {
+        match Self::try_new(ms) {
             Ok(interval) => interval,
             Err(ZeroInterval) => panic!("interval must be non-zero"),
         }
@@ -61,7 +61,7 @@ impl TryFrom<u32> for Interval {
     type Error = ZeroInterval;
 
     fn try_from(ms: u32) -> Result<Self, Self::Error> {
-        Self::new(ms)
+        Self::try_new(ms)
     }
 }
 
@@ -75,7 +75,7 @@ impl FromStr for Interval {
     type Err = ParseIntervalError;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        Ok(Self::new(s.parse()?)?)
+        Ok(Self::try_new(s.parse()?)?)
     }
 }
 
@@ -89,13 +89,13 @@ impl fmt::Display for Interval {
 #[derive(Clone)]
 pub struct UploadToken(String);
 
-/// `UploadToken::new`'s only failure.
+/// `UploadToken::try_new`'s only failure.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 #[error("invalid upload token {0:?}: expected 32 hex digits")]
 pub struct InvalidToken(String);
 
 impl UploadToken {
-    pub fn new(raw: &str) -> Result<Self, InvalidToken> {
+    pub fn try_new(raw: &str) -> Result<Self, InvalidToken> {
         let raw = raw.trim();
         if raw.len() == 32 && raw.bytes().all(|b| b.is_ascii_hexdigit()) {
             Ok(Self(raw.to_ascii_lowercase()))

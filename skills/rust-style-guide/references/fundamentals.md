@@ -74,7 +74,7 @@ fn send_invite(to: &str) { /* was `to` checked? The signature can't say. */ }
 
 // Parsing: the check returns the proof, and the signature demands it.
 impl Email {
-    pub fn new(raw: &str) -> Result<Self, InvalidEmail> { /* … */ }
+    pub fn try_new(raw: &str) -> Result<Self, InvalidEmail> { /* … */ }
 }
 fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 ```
@@ -96,7 +96,7 @@ newtype comes in one of two kinds, and its field's visibility says which.
 
 ```rust
 pub struct UserId(pub u64);   // a tag: any u64 is a valid id; it only stops mix-ups
-pub struct Email(String);     // a refinement: only Email::new can make one
+pub struct Email(String);     // a refinement: only Email::try_new can make one
 ```
 
 - A **tag** has no invariant. It exists so that `transfer(from: AccountId, to: AccountId)` can't be
@@ -136,7 +136,7 @@ pub struct Weight { grams: u64 }   // right: integer grams are Eq for real
 A domain value that can't be `Eq` usually points to a modeling bug. Money as `f64` should be integer
 cents or a decimal type.
 
-## 4. One constructor, named `new`, that says exactly how it fails
+## 4. One constructor, named `try_new`, that says exactly how it fails
 
 ```rust
 pub struct Port(NonZeroU16);
@@ -156,21 +156,30 @@ pub enum ParsePortError {
 }
 
 impl Port {
-    pub const fn new(n: u16) -> Result<Self, ZeroPort> { /* … */ }
+    pub const fn try_new(n: u16) -> Result<Self, ZeroPort> { /* … */ }
 }
-impl TryFrom<u16> for Port { /* calls Port::new */ }
-impl FromStr for Port { /* parses the u16, then calls Port::new */ }
+impl TryFrom<u16> for Port { /* calls Port::try_new */ }
+impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
 ```
 
 - **Every way in goes through one constructor.** `FromStr`, `TryFrom`, serde and the database
   decoder all call it. With two paths, the rule ends up checked in one and forgotten in the other.
-- **It's named `new`, as in std.** In std, when a type's only constructor can fail, it is called
-  `new`: `NonZero::new`, `CString::new`. The `try_` prefix marks the fallible twin of an infallible
-  version (`Box::new` and `Box::try_new`, `From` and `TryFrom`). When `new` is the only way in,
-  the `Result` and the `?` at the call site already say it can fail, so `try_new` adds nothing.
+- **It's named `try_new`, following Google's Rust guide:** "If the constructor returns a `Result`,
+  use `try_new()`." The name tells a reader at the call site that the call can fail, before they
+  look at the signature, and `new` then always means "cannot fail". Std is not consistent here
+  (`NonZero::new` and `CString::new` can fail, `Box::try_new` is a fallible twin), so the guide
+  picks the rule that needs no exception.
+  The other constructor names come from the
+  [Rust API Guidelines, C-CTOR](https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor).
+  A type that represents an I/O resource names its constructor in the domain's terms:
+  `File::open`, `Mmap::open`, `TcpStream::connect`, `UdpSocket::bind`. A conversion constructor is
+  prefixed `from_` (`String::from_utf8`), and a secondary constructor is suffixed `with_`
+  (`Vec::with_capacity`). These may return `Result` under their own names. One thing is not taken
+  from the API Guidelines or std: a constructor called `new` that returns `Result`. Here `new`
+  always means "cannot fail".
 - **It returns `Result`, never `Option`.** `Option` means "there is nothing here". A rejected input
   is a failure, and the caller should be told which one (see section 6).
-- **Its error holds only the failures it can produce.** `Port::new` can fail one way, so its error
+- **Its error holds only the failures it can produce.** `Port::try_new` can fail one way, so its error
   is a unit struct. A shared `ValidationError { Empty, TooLong, BadChar, Zero }` would make every
   caller handle three cases that can't happen, and nobody could tell from the type which ones are
   real. `FromStr` wraps the constructor's error beside its own syntax failure, as `ParsePortError`
@@ -196,7 +205,7 @@ difference the domain keeps.
 
 ```rust
 impl Email {
-    pub fn new(raw: &str) -> Result<Self, InvalidEmail> {
+    pub fn try_new(raw: &str) -> Result<Self, InvalidEmail> {
         let (local, domain) = raw.trim().split_once('@').ok_or(InvalidEmail)?;
         if local.is_empty() || domain.is_empty() {
             return Err(InvalidEmail);
@@ -234,7 +243,7 @@ A refinement must not hand out a way around its constructor.
   without calling the constructor. A database `Decode` or `FromSql` decodes the inner type and
   calls `try_from`. A clap field of the type parses through `FromStr`, with no custom
   `value_parser`.
-- **A compile-time literal still calls `new`.** `const fn literal(n) -> Self` panics on failure,
+- **A compile-time literal still calls `try_new`.** `const fn literal(n) -> Self` panics on failure,
   under an `#[expect(clippy::panic, reason = "…")]`, and is called only in `const` items. There, the
   panic happens at compile time, so an invalid literal fails the build:
   `pub const HTTP: Port = Port::literal(80);`. It is `pub(crate)`. Nothing stops another crate
@@ -282,7 +291,7 @@ Fields that share one go into a struct with private fields, which the variant wr
 ```rust
 pub enum Window { All, Between { start: Timestamp, end: Timestamp } }  // end < start compiles
 
-pub struct Span { start: Timestamp, end: Timestamp }  // Span::new rejects end <= start
+pub struct Span { start: Timestamp, end: Timestamp }  // Span::try_new rejects end <= start
 pub enum Window { All, Between(Span) }
 ```
 
@@ -568,8 +577,8 @@ fails for the wrong reason. Assert the specific error, which errors can do becau
 `PartialEq` (section 7):
 
 ```rust
-assert!(Port::new(0).is_err());            // passes even if new() fails for another reason
-assert_eq!(Port::new(0), Err(ZeroPort));   // passes only for the right reason
+assert!(Port::try_new(0).is_err());            // passes even if it fails for another reason
+assert_eq!(Port::try_new(0), Err(ZeroPort));   // passes only for the right reason
 ```
 
 Clippy suggests `r.unwrap_err()` instead, but that checks no more than the original, so don't take
@@ -615,6 +624,7 @@ threads, no async), and that part doesn't apply here.
 | Macros last | A function, type or trait before a macro (section 13) |
 | `#[non_exhaustive]` only where breakage can't be fixed in place | Never on your own enums inside a workspace (section 9) |
 | On someone else's non-exhaustive enum, list the known variants | Already what `wildcard_enum_match_arm` asks for (section 9) |
+| A constructor that returns `Result` is `try_new` | The same rule (section 4). Until November 2026 this guide used `new` |
 | `Eq` is a promise the compiler can't check | Reflexivity spelled out, and `Eq` only by derive (section 3) |
 
 The same review also adopted one point from a video walkthrough of Google's guide, the presenter's
@@ -628,10 +638,6 @@ type alias, pattern matching instead of check-then-unwrap, borrowing instead of 
 `SAFETY:` comment on `unsafe`, and a trait only for a second implementation or a test double.
 
 **Kept against Google, on purpose:**
-- **A fallible constructor is `new`, not `try_new`.** Google uses `try_new` for any constructor
-  that returns `Result`. That would turn every refinement into `Email::try_new` and
-  `Port::try_new`, with no `new` anywhere. This guide follows std, where `try_` marks the fallible
-  twin of an infallible version (section 4).
 - **`Eq` wherever it holds.** Google prefers `PartialEq` alone, because adding `Eq` to a published
   type is a promise that is hard to take back. Here, domain types need `Eq` to be map keys, and the
   derive can't be wrong (section 3). A crate published for others to depend on may drop the lint and
