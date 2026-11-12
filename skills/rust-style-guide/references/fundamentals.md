@@ -50,7 +50,7 @@ Five decisions shape the whole setup.
 ## 1. Memory safety stays the compiler's job
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `unsafe_code = "forbid"` | any `unsafe` |
 | `undocumented_unsafe_blocks` | an `unsafe` block with no `// SAFETY:` comment |
 
@@ -80,6 +80,7 @@ fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 ```
 
 **Rules, all checked in review:**
+
 - Raw input becomes its type as soon as it's read. Functions take `Email`, never the `&str` it came
   from, and code never checks the invariant again.
 - An `is_valid_x(&str) -> bool` or a `validate(&self)` over public fields becomes a constructor that
@@ -106,7 +107,7 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
   make one.
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `partial_pub_fields` | a struct with some `pub` and some private fields |
 | `missing_debug_implementations` | a public type without `Debug` |
 | `derive_partial_eq_without_eq` | `PartialEq` derived where `Eq` could be |
@@ -187,7 +188,7 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
   clap's `default_value_t` relies on this, and a property test pins it (section 12).
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `infallible_try_from` | a `TryFrom` whose error is `Infallible` |
 | `unnecessary_wraps` | a fn returning `Result` or `Option` that always returns `Ok` or `Some` |
 
@@ -222,6 +223,7 @@ same address twice.
 ### No back doors
 
 A refinement must not hand out a way around its constructor.
+
 - **No `Deref` to the inner type.** It turns every `String` method into an `Email` method. Offer
   `as_str()`, `get()`, `AsRef` or `into_inner()` instead.
 - **No `&mut` to the inner value.** A mutating method either keeps the invariant or doesn't exist.
@@ -252,7 +254,7 @@ A refinement must not hand out a way around its constructor.
 ## 5. Types say what values mean
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `option_option` | `Option<Option<T>>` |
 | `struct_excessive_bools` | a struct with more than three `bool`s |
 | `fn_params_excessive_bools` | a fn with more than three `bool` parameters |
@@ -323,7 +325,7 @@ fn find(&self, id: OrderId) -> Result<Option<Order>, StoreError> {
   plain `Option`.
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `unused_result_ok` | `r.ok();` used only to silence an unused `Result` |
 | `let_underscore_must_use` | `let _ = r;` on a `#[must_use]` value |
 | `ref_option` | a `&Option<T>` parameter (see section 9) |
@@ -349,7 +351,7 @@ pub enum OrderError {
 ```
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `result_unit_err` | a public fn returning `Result<_, ()>` |
 | `map_err_ignore` | `.map_err(\|_\| …)`, which throws the cause away |
 | `disallowed-types`: `anyhow::Error`, `anyhow::Result`, `eyre::Report`, `eyre::Result` | dynamic errors in library code |
@@ -376,7 +378,7 @@ pub enum OrderError {
 ## 8. Failure is a value, not a crash
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `unwrap_used`, `expect_used` | `.unwrap()`, `.expect()` outside tests |
 | `panic` | `panic!` outside tests |
 | `todo`, `unimplemented` | placeholders that panic when reached |
@@ -423,7 +425,7 @@ under `tests/` is neither, so it returns `Result` and uses `?`.
 ## 9. Matches keep up with enums
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `wildcard_enum_match_arm` | `_ =>` covering several variants of an enum |
 | `match_wildcard_for_single_variants` | `_ =>` covering exactly one variant |
 
@@ -452,7 +454,7 @@ before it, and the lint asks for exactly that. If only one or two matter, use `m
 ## 10. Ownership is borrowed unless it's needed
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `needless_pass_by_value` | a parameter taken by value but never consumed |
 | `ref_option` | a `&Option<T>` parameter |
 | `redundant_clone` | a clone whose original is never used again |
@@ -466,7 +468,7 @@ default. A clone whose original is never used again is pure cost: move the value
 **Domain values don't mutate behind your back.**
 
 | Entry in `disallowed-types` | Reason |
-|---|---|
+| --- | --- |
 | `std::cell::Cell`, `std::cell::RefCell` | "domain types hold no interior mutability" |
 | `std::sync::Mutex`, `std::sync::RwLock` | the same |
 
@@ -481,7 +483,7 @@ infrastructure code, such as connection pools and caches, legitimately needs loc
 ## 11. Hidden inputs are passed in
 
 | Entry in `disallowed-methods` | Reason |
-|---|---|
+| --- | --- |
 | `SystemTime::now`, `Instant::now`, `chrono::Utc::now` | "pass the time in" |
 | `rand::random`, `rand::rng`, `rand::thread_rng` | "pass the source of randomness in" |
 | `uuid::Uuid::new_v4`, `uuid::Uuid::now_v7` | "pass the id in" |
@@ -505,7 +507,7 @@ apply to domain crates.
 ## 12. Async code doesn't block, deadlock or lose `Send`
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `await_holding_lock` | a std `MutexGuard` held across `.await` |
 | `await_holding_refcell_ref` | a `RefCell` borrow held across `.await` |
 | `future_not_send` | an `async fn` whose future is not `Send` |
@@ -523,6 +525,7 @@ Each `.await` is a point where the task can pause while other tasks run.
   `-> impl Future<Output = …> + Send` for the same reason.
 
 **Review checks two more things:**
+
 - **Blocking calls stay off the runtime.** `std::fs`, a synchronous HTTP client or heavy CPU work
   inside an `async fn` stalls every task on that thread. Use the async API or `spawn_blocking`.
 - **Every `.await` is a cancellation point.** A timeout, a `select!` or a client disconnecting can
@@ -543,7 +546,7 @@ Each `.await` is a point where the task can pause while other tasks run.
 ## 13. Code says what it does, plainly
 
 | Lint | Catches |
-|---|---|
+| --- | --- |
 | `wildcard_imports` | `use foo::*` (except `use super::*` in tests, and preludes) |
 | `needless_for_each` | `.for_each(…)` where a `for` loop reads plainer |
 
@@ -553,6 +556,7 @@ clash with, one of yours, with no change in your file. A `for` loop says "loop" 
 awkward.
 
 **Review checks the rest:**
+
 - **Names say what something is or does.** `Service`, `Manager`, `Helper`, `Utils` and `Misc` say
   only that something exists. `CaptureService` could do anything, while `ChargeCard` or
   `LoadOrders` names the job.
@@ -584,6 +588,7 @@ Clippy suggests `r.unwrap_err()` instead, but that checks no more than the origi
 the suggestion.
 
 **Review checks the rest:**
+
 - **One accepted input per constructor, and every rejection reason reached by a test that asserts
   that error.** A rejection no test reaches can be deleted and nothing goes red.
 - **No second example of a rule already pinned, and no tests of derives, getters or anything else
@@ -614,7 +619,7 @@ threads, no async), and that part doesn't apply here.
 **Adopted:**
 
 | From Google | Here |
-|---|---|
+| --- | --- |
 | No glob imports | `wildcard_imports` (section 13) |
 | A `for` loop, not `for_each` | `needless_for_each` (section 13) |
 | Borrow flexibly: `Option<&T>`, not `&Option<T>` | `ref_option` (section 10), plus `avoid-breaking-exported-api = false` so it reaches public functions too |
@@ -637,6 +642,7 @@ type alias, pattern matching instead of check-then-unwrap, borrowing instead of 
 `SAFETY:` comment on `unsafe`, and a trait only for a second implementation or a test double.
 
 **Kept against Google, on purpose:**
+
 - **`Eq` wherever it holds.** Google prefers `PartialEq` alone, because adding `Eq` to a published
   type is a promise that is hard to take back. Here, domain types need `Eq` to be map keys, and the
   derive can't be wrong (section 3). A crate published for others to depend on may drop the lint and
