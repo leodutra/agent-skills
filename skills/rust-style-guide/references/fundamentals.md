@@ -165,18 +165,17 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
 - **Every way in goes through one constructor.** `FromStr`, `TryFrom`, serde and the database
   decoder all call it. With two paths, the rule ends up checked in one and forgotten in the other.
 - **It's named `try_new`, following Google's Rust guide:** "If the constructor returns a `Result`,
-  use `try_new()`." The name tells a reader at the call site that the call can fail, before they
-  look at the signature, and `new` then always means "cannot fail". Std is not consistent here
-  (`NonZero::new` and `CString::new` can fail, `Box::try_new` is a fallible twin), so the guide
-  picks the rule that needs no exception.
+  use `try_new()`." There are two reasons. In most languages `new` builds a value and that's all,
+  so a reader coming to the code expects it to succeed. And it reads better: `Email::try_new(raw)?`
+  says at the call site that this can fail, before anyone looks at the signature.
   The other constructor names come from the
   [Rust API Guidelines, C-CTOR](https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor).
   A type that represents an I/O resource names its constructor in the domain's terms:
   `File::open`, `Mmap::open`, `TcpStream::connect`, `UdpSocket::bind`. A conversion constructor is
   prefixed `from_` (`String::from_utf8`), and a secondary constructor is suffixed `with_`
-  (`Vec::with_capacity`). These may return `Result` under their own names. One thing is not taken
-  from the API Guidelines or std: a constructor called `new` that returns `Result`. Here `new`
-  always means "cannot fail".
+  (`Vec::with_capacity`). These may return `Result` under their own names. This guide departs
+  from the API Guidelines and std in one place, for the two reasons above: they allow a `new` that
+  returns `Result` (`NonZero::new`, `CString::new`), and here `new` always means "cannot fail".
 - **It returns `Result`, never `Option`.** `Option` means "there is nothing here". A rejected input
   is a failure, and the caller should be told which one (see section 6).
 - **Its error holds only the failures it can produce.** `Port::try_new` can fail one way, so its error
