@@ -24,8 +24,9 @@ Serena has never executed a tool on the reference machine (40 spawns, 0 calls,
 0 memories). [D57](DECISIONS.md#d57) retains it on the grounds that the install
 was never completed, so the question was never fairly put.
 
-**Evidence:** `stack-init verify` reports the count; the raw check is
-`grep -rl 'activate_project: .*session_id:' ~/.serena/logs/ | wc -l`.
+**Evidence:** `stack-init verify` reports real calls and sessions; the raw check is
+`grep -rl '_log_tool_application' ~/.serena/logs/ | wc -l` ([D62](DECISIONS.md#d62)).
+**Deadline:** 2026-12-09, the end of the D62 test period.
 
 **Done looks like:** after ~10 real sessions following a completed
 `stack-init global`, the count is read. Non-zero -> append a decision closing

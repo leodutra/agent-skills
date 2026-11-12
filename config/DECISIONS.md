@@ -66,13 +66,16 @@ with its correction next to it, is the point.
 | [D50](#d50) | Tool-search deferral is confounded with the latch; flag left on | 2.5 | Active — corrects the attribution in D49 |
 | [D51](#d51) | Headroom and RTK removed | 3.0 | Active — retires D13, D20, D25, D26, D29, D37, D40, D41, D44, D47, D49, D50 |
 | [D52](#d52) | graphify removed | 3.0 | Active — retires D5, D6, D7, D15, D21, D22, D24, D31, D35 |
-| [D53](#d53) | Serena descoped to per-session opt-in | 3.0 | Active — narrows D4, D11, D33, D34, D46; corrects D3's reason |
+| [D53](#d53) | Serena descoped to per-session opt-in | 3.0 | Suspended by D62 (test period) — narrows D4, D11, D33, D34, D46; corrects D3's reason |
 | [D54](#d54) | ponytail added, default-on | 3.0 | Active |
 | [D55](#d55) | Serena's manifest measured: ~5.8K tokens, not ~24K | 3.0 | Active — corrects the figure in D53; decision stands on narrower grounds |
 | [D56](#d56) | Anti-bypass rules deleted; the shell exclusion re-grounded | 3.0 | Active — completes D51's removal; re-grounds D3 |
-| [D57](#d57) | Serena retained behind a mechanical kill criterion | 3.0 | Active — gates D53; the gate D20 never had |
+| [D57](#d57) | Serena retained behind a mechanical kill criterion | 3.0 | Active — measure amended by D62 (real calls, not activations) |
 | [D58](#d58) | good-readme deploys globally; the criterion is project-agnosticism | 3.0 | Active — amends D48 |
 | [D59](#d59) | sdd-spec deploys globally; method-scope is not project-scope | 3.0 | Active — applies D58 |
+| [D60](#d60) | codegraph added; orientation stops being unowned, per checkout | 3.1 | Active — amends D52, narrows contract rule 6 |
+| [D61](#d61) | Serena trimmed to a fixed nine-tool set | 3.1 | Active — narrows D53, amends D55 |
+| [D62](#d62) | Serena test period: on, booted on demand, its own prompt fixed | 3.2 | Active — reassess 2026-12-09 |
 
 ---
 
@@ -1362,7 +1365,7 @@ quietly filled by telling the agent to grep more carefully.
 
 ## D53 — Serena descoped to per-session opt-in
 
-**Version:** 3.0 · **Status:** Active — narrows [D4](#d4), [D11](#d11),
+**Version:** 3.0 · **Status:** Suspended by [D62](#d62) until 2026-12-09 — narrows [D4](#d4), [D11](#d11),
 [D33](#d33), [D34](#d34), [D46](#d46); [D3](#d3)'s stated reason corrected.
 **Its ~24K manifest figure is corrected by [D55](#d55)** — the real number is
 ~5.8K and the decision now rests on different grounds.
@@ -1579,7 +1582,7 @@ sound boundary if the reason had been the only thing recorded.
 
 ## D57 — Serena retained behind a mechanical kill criterion
 
-**Version:** 3.0 · **Status:** Active — gates [D53](#d53); supplies the kind of
+**Version:** 3.0 · **Status:** Active — measure amended by [D62](#d62) (real calls); gates [D53](#d53); supplies the kind of
 gate [D20](#d20) lacked
 
 Serena stays. The reasons are narrower than they were, and the retention is
@@ -1840,3 +1843,109 @@ exposes no tool, on `claude` 2.1.265, via both `--settings` and
 `.claude/settings.json`. Cutting the trio on the strength of a feature that does
 not run would leave contract rule 2 unowned — the one thing this stack does not
 do. Phase 2 is three deleted lines, once B8 passes.
+
+<a id="d62"></a>
+
+## D62 — Serena test period: on, booted on demand, its own prompt fixed
+
+**Version:** 3.2 · **Status:** Active — suspends [D53](#d53); amends
+[D57](#d57)'s measure and [D61](#d61)'s activate_project rationale.
+**Reassess 2026-12-09.**
+
+D57's gate read zero, but the transcripts show the test was never fair.
+Measured 2026-11-09 over 100 retained sessions: 0 Serena calls, 0 ToolSearch
+loads of its tools, and 0 codegraph calls even in indexed cdl-rust. Against
+that, there were 1,754 Bash grep/rg calls in four code repos, ~358 of them
+searching for a symbol name. All four causes are on our side:
+
+- **Its tools are deferred.** A session sees only their names and must
+  ToolSearch them first. Nothing said to. Rule 1 said Serena was "usually OFF"
+  and to use native tools when its tools were "absent", and an unloaded name
+  looks absent.
+- **Its guidance never arrived.** Serena's connection prompt says only "call
+  `initial_instructions`". That tool delivers the claude-code context's prompt,
+  including "load the deferred tools now", and D61 dropped it. Every session
+  got an order it could not follow and none of the guidance.
+- **Every session needed `activate_project` first**, and none ever called it.
+- **D53's disable step was a no-op.** `claude mcp disable` no longer exists, so
+  Serena was connected everywhere: available, but unreachable in practice.
+
+**Decision.** For one month, Serena is on by default and made reachable:
+
+1. **Boot on demand.** Serena stays registered with no project, so it connects
+   idle, with no language server. When a task first reads, searches or edits
+   code, the agent boots it: one ToolSearch for the nine tools, then
+   `activate_project` with the repo root, which the autoinit hook names. That
+   call starts the language server, so docs- and config-only sessions never
+   start one. An earlier draft used `--project-from-cwd`, which started a
+   language server (rust-analyzer & co.) in every repo session, used or not.
+   Both installers migrate that registration back.
+2. `~/.serena/prompt_templates/system_prompt.yml` overrides only
+   `connection_prompt`, from `config/serena-connection-prompt.yml`. It gives
+   the boot sequence, with the exact ToolSearch line, and when to use each
+   tool. It reaches the session as MCP server instructions, with no extra turn.
+3. Contract rules 1–4 drop "when enabled": Serena is on, so boot it before the
+   first code read, and keep native tools for docs, config and plain text.
+   Rule 6 names codegraph's deferred load the same way.
+4. D57's measure becomes real symbol and diagnostics calls
+   (`_log_tool_application` lines) and the sessions that contain them.
+   `activate_project` is the boot, not use, so it is left out.
+
+**Cost.**
+- Idle sessions cost nothing: no tokens (deferred tools), no language server.
+- A coding session pays the boot: one ToolSearch round-trip plus the schemas
+  (about 5K tokens, D55), then one `activate_project` call. That call starts
+  the language server, which runs until the session ends.
+- Serena has no lazy language-server option. Activating a project starts the
+  server at once; the source was checked for one on 2026-11-09.
+- The ToolSearch list appears in three places:
+  `contract.md`, `contract-condensed.md` and `serena-connection-prompt.yml`.
+  It must match `SERENA_FIXED_TOOLS`, so change all four together.
+- Not exercised: `stack-init.ps1` (no pwsh here).
+
+**Worktrees.**
+- A worktrunk worktree opened as its own session gets its own Serena server.
+  The autoinit hook names the worktree's project (`<repo>@<branch>`), so the
+  boot activates the worktree, not the main checkout. Each booted worktree
+  runs its own language server, which is correct, since the files differ.
+- One session spanning trees is the hazard. Subagents share the session's
+  Serena, which has one active project. A worktree-isolated subagent that
+  activated its tree would redirect the parent's queries, and Serena edits
+  would land in the wrong checkout. Contract rule 1 therefore keeps such
+  subagents on native tools, and re-activates after EnterWorktree and
+  ExitWorktree.
+- Deleted worktrees stay in `serena_config.yml`'s `projects:` list. Serena
+  skips a missing path with a warning, so this is clutter, not breakage.
+
+**Transport: MCP stdio per session stays.** Checked against Serena 1.7.1 on
+2026-11-09:
+- There is no one-shot CLI: `serena tools` only lists and describes. Direct
+  calls would need a custom client, and every call would cold-start the
+  language server.
+- `start-project-server` is a shared HTTP daemon, but read-only. It backs
+  `query_project` for repos other than the active one, and cannot edit.
+- A per-session MCP server keeps the language server warm between calls and
+  is the only option that supports symbol edits. Boot-on-demand removes its
+  idle cost.
+- At reassessment, recheck whether Claude Code's native LSP tool (BACKLOG B8)
+  now runs. It could take over the read side.
+
+**Reassessment (2026-12-09).**
+- Read `stack-init verify`'s "serena used" row. It shows use, not benefit.
+- Re-run the transcript tally: Serena calls against symbol-shaped greps, per
+  code repo.
+- Compare turns and tokens per code-repo session against the 2026-11-09
+  baseline. Usage that adds turns is not a win. The baseline is rough (few,
+  long sessions), as median tool calls / tokens per session:
+
+  | Repo | Sessions | Tool calls | Tokens |
+  | --- | --- | --- | --- |
+  | cdl-rust | 2 | 196 | 113M |
+  | low-poly-local-render | 9 | 425 | 209M |
+  | amora-test | 3 | 251 | 124M |
+  | litz-site-src | 6 | 98 | 39M |
+
+- If calls are well above zero, symbol greps have fallen and sessions got no
+  costlier, close D57's gate and keep Serena.
+- If calls are still near zero, the reachability excuse is gone: remove Serena
+  per D57.

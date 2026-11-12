@@ -6,6 +6,16 @@ cite the decision they implement rather than restating it. Behavior is defined b
 
 Fix entries with no `D<n>` are defect repairs that changed no decision.
 
+## 3.2
+
+Serena test period: made reachable instead of opt-in ([D62](DECISIONS.md#d62)).
+
+- **Change** Serena boots on demand: idle (no language server) until a session that needs code tools calls `activate_project`. [D62](DECISIONS.md#d62)
+- **Add** `config/serena-connection-prompt.yml`, installed as Serena's connection-prompt override. [D62](DECISIONS.md#d62)
+- **Change** contract rules 1–4: Serena on, boot it before the first code read; rule 6 names codegraph's load. [D62](DECISIONS.md#d62)
+- **Remove** the `claude mcp disable serena` step (the subcommand no longer exists). [D62](DECISIONS.md#d62)
+- **Change** verify counts real symbol/diagnostics calls, not activations. [D62](DECISIONS.md#d62)
+
 ## 3.1
 
 Orientation gets an owner again — without anything sitting in a path — and Serena

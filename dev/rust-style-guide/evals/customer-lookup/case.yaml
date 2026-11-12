@@ -1,0 +1,5 @@
+schema_version: "1.1"
+name: customer-lookup
+expected_outcome: |
+  Targets the Option/Result and precise-error rules in writing. A cargo library where
+  find_by_email returns Result<Option<Customer>, _> (not found is Ok(None), a store failure Err), the email type normalizes only its domain part in its one constructor, a taken email is a typed error a test asserts, each constructor's error holds only its own failures, no test only exercises a derive or a getter, and the crate builds, tests and lints clean under the skill's current lint set.

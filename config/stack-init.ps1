@@ -12,10 +12,8 @@
                          Kills RETRIEVAL+EDIT cost - exact symbol defs, refs,
                          diagnostics and symbol-level edits instead of
                          whole-file dumps and grep walls.
-                         OPT-IN: registered but DISABLED. Its tool manifest is
-                         a fixed per-session tax and it loses on cheap lookups,
-                         so you turn it on with /mcp for refactor, test-writing
-                         and architecture work on bigger repos (D53).
+                         ON during the D62 test period (to 2026-12-09): idle
+                         until a session boots it with activate_project.
     ponytail  discipline Claude Code plugin (skill + SessionStart hook) that
                          injects a minimal-code ruleset. Default-on. Kills code
                          that never needed writing. Intercepts nothing - its
@@ -438,9 +436,10 @@ function Set-SerenaExcluded {
 # repaired one, or found a good one already there.
 function Send-Activation ($projPath, $projName, $extra) {
   Set-SerenaExcluded
-  $msg = "Serena project for this checkout: '$projName' at $projPath. Serena starts " +
-         "with NO active project - call activate_project with that path before the " +
-         "first symbol query, and whenever a tool answers 'No active project'."
+  $msg = "Serena project for this checkout: '$projName' at $projPath. Serena is idle; " +
+         "when this task first reads, searches or edits code, boot it: ToolSearch its tools, " +
+         "then activate_project with that path (this starts the language server - skip it " +
+         "for docs/config-only work)."
   if ($extra) { $msg = "$msg $extra" }
   @{ hookSpecificOutput = @{ hookEventName = 'SessionStart'; additionalContext = $msg } } |
     ConvertTo-Json -Compress
@@ -670,6 +669,19 @@ exit 0
   Say "  SessionStart contract-refresh hook installed (~\.claude\agents only; opt out: CLAUDE_STACK_NO_CONTRACT_REFRESH=1)"
 }
 
+# See stack-init.sh's set_serena_connection_prompt: overrides only Serena's
+# connection prompt, which otherwise points at initial_instructions (dropped by
+# D61). Overwrites only a file carrying the stack marker.
+function Set-SerenaConnectionPrompt {
+  $dst = Join-Path $env:USERPROFILE '.serena\prompt_templates\system_prompt.yml'
+  if ((Test-Path $dst) -and -not (Select-String -Path $dst -Pattern 'claude-context-stack' -Quiet)) {
+    Warn "$dst is a user override without the stack marker - left alone (D62)"; return
+  }
+  New-Item -ItemType Directory -Force -Path (Split-Path $dst) | Out-Null
+  Copy-Item -Force (Join-Path $PSScriptRoot 'serena-connection-prompt.yml') $dst
+  Say "  serena connection prompt installed (load deferred tools; D62)"
+}
+
 function Set-SerenaDashboardConfig {
   # Dashboards stay enabled (one per session, own port each) but no longer
   # auto-open a browser tab per Claude session; the global tray icon
@@ -706,8 +718,9 @@ function Set-SerenaDashboardConfig {
 # complete - anything absent is gone.
 #
 # activate_project and get_diagnostics_for_file are not symbol tools and are not
-# optional: Serena is registered without --project, so nothing could ever
-# activate a project without the first, and contract rule 3 points at the second.
+# optional: the first is the boot - Serena starts idle with no language server
+# until a session activates the checkout (D62) - and contract rule 3 points at
+# the second.
 # The retrieval trio stays until Claude Code's native LSP is verified live
 # (BACKLOG B8) - see D61.
 $SerenaFixedTools = @(
@@ -787,6 +800,13 @@ function Install-Global {
     Say "  removed uvx-based serena registration (rebuilt from git on every launch)"
     $serenaLine = ''
   }
+  elseif ($serenaLine -match '--project-from-cwd') {
+    # Briefly used during D62: it started a language server in EVERY repo
+    # session, used or not.
+    claude mcp remove --scope user serena 2>$null | Out-Null
+    Say "  re-registering serena without --project-from-cwd (D62: boot on demand)"
+    $serenaLine = ''
+  }
   if ($serenaLine) { Say "  serena already registered - skipped" }
   else {
     # --context claude-code is the current name of the old 'ide-assistant'
@@ -795,16 +815,15 @@ function Install-Global {
     # PERMISSION boundary, not a compression one (D56): Claude Code gates Bash
     # per command and MCP tools per tool, so an approved execute_shell_command
     # would be one blanket grant over every command it ever runs.
+    # No --project (D62): Serena starts idle, with no language server, until a
+    # session that needs code tools calls activate_project.
     claude mcp add --scope user serena -- serena start-mcp-server --context claude-code
-    Say "  serena registered at user scope (claude-code context: no shell/read tools)"
+    Say "  serena registered at user scope (claude-code context; boots on activate_project)"
   }
-  # Registered but NOT enabled (D53). Serena's tool manifest is a fixed
-  # per-session tax whether or not a symbol tool is ever called, and it loses on
-  # cheap lookups. Leaving it off makes enabling it a deliberate /mcp step.
-  claude mcp disable serena 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) { Say "  serena DISABLED by default - enable per session with /mcp (D53)" }
-  else { Warn "could not disable serena (older claude?) - it will load in every session" }
-  $global:LASTEXITCODE = 0
+  # Connected in every session during the D62 test period (D53's opt-in is
+  # suspended). Idle costs nothing: deferred tools, no project, no language
+  # server until a session calls activate_project.
+  Set-SerenaConnectionPrompt
   # Safety net for a genuinely cold first launch (uv tool run, LSP download):
   # Claude Code's default MCP startup timeout is 30s, which is not much.
   Set-GlobalEnvVar 'MCP_TIMEOUT' '120000'
@@ -1147,23 +1166,25 @@ function Invoke-Verify {
   $mcpOut = (claude mcp list 2>$null | Out-String)
   if ($mcpOut -match 'serena') { Write-Row 'serena (mcp)' 'OK (user scope)' }
   else { Write-Row 'serena (mcp)' 'NOT registered' }
-  # Registered-but-disabled is the INTENDED state (D53), so it reports OK and the
-  # enabled case is what gets flagged - the opposite of every other row here.
-  $serenaRow = (($mcpOut -split "`r?`n") | Where-Object { $_ -match 'serena' }) -join ' '
-  if ($serenaRow -match '(?i)disabled') { Write-Row 'serena state' 'OK (disabled by default - /mcp to enable per session)' }
-  else { Write-Row 'serena state' 'ENABLED globally - D53 expects it off' }
+  $serenaRow = (($mcpOut -split "`r?`n") | Where-Object { $_ -match '^serena' }) -join ' '
+  if ($serenaRow -match '--project-from-cwd') { Write-Row 'serena state' 'OLD registration (starts an LSP every session) - rerun global (D62)' }
+  else { Write-Row 'serena state' 'OK (on, idle until activate_project - D62 test period)' }
+  $serenaPrompt = Join-Path $env:USERPROFILE '.serena\prompt_templates\system_prompt.yml'
+  if ((Test-Path $serenaPrompt) -and (Select-String -Path $serenaPrompt -Pattern 'claude-context-stack' -Quiet)) {
+    Write-Row 'serena prompt' 'OK (connection prompt override - D62)' }
+  else { Write-Row 'serena prompt' 'MISSING - rerun global (agents get the stock initial_instructions line)' }
   if ((claude plugin list 2>$null | Out-String) -match '(?i)ponytail') { Write-Row 'ponytail' 'OK (plugin installed)' }
   else { Write-Row 'ponytail' 'NOT installed - run: claude plugin install ponytail@ponytail' }
-  # Serena retention gate (D57). serena/tools/tools_base.py logs
-  # "<tool>: {params}; session_id: <id>" on every execution, so the "; session_id:"
-  # suffix separates a REAL call from a startup manifest line. Reported on every
-  # verify so the gate collects itself (the defect that sank D20).
+  # Serena retention gate (D57, measure amended by D62): count REAL symbol and
+  # diagnostics calls via tools_base._log_tool_application; activate_project is
+  # the boot, not use, so it is left out.
   $serenaLogs = Join-Path $env:USERPROFILE '.serena\logs'
   if (Test-Path $serenaLogs) {
-    $sact = @(Get-ChildItem -Path $serenaLogs -Recurse -File -ErrorAction SilentlyContinue |
-      Where-Object { Select-String -Path $_.FullName -Pattern 'activate_project: .*session_id:' -Quiet }).Count
-    if ($sact -gt 0) { Write-Row 'serena used' "OK ($sact session(s) activated it - D57 gate satisfied)" }
-    else { Write-Row 'serena used' 'NEVER activated - if still 0 after ~10 sessions, remove it (D57, B7)' }
+    $logs = @(Get-ChildItem -Path $serenaLogs -Recurse -File -ErrorAction SilentlyContinue)
+    $hits = @($logs | Select-String -Pattern '_log_tool_application:[0-9]+ - ([a-z_]+symbol|get_)')
+    $sses = @($hits | Select-Object -ExpandProperty Path -Unique).Count
+    if ($sses -gt 0) { Write-Row 'serena used' "$($hits.Count) call(s) in $sses session(s) (D62 test period: reassess 2026-12-09)" }
+    else { Write-Row 'serena used' 'NEVER called - if still 0 at the D62 reassessment (2026-12-09), remove it (D57)' }
   }
   # ponytail's hooks are Node; without node the activation goes quiet rather than
   # erroring, so a broken install is invisible from inside a session.

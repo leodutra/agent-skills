@@ -1,6 +1,6 @@
 # Claude Code Context Stack
 
-A pre-configured setup for Claude Code, built on one rule: **eliminate waste at its source, never compress downstream.** Three components — **Serena** (LSP symbol tools via MCP, *opt-in per session*, trimmed to nine tools), **ponytail** (minimal-code discipline, default-on) and **codegraph** (orientation, one MCP tool, indexed per checkout) — plus a global routing contract. Install the global layer once; the only per-repo step is `stack-init codegraph`, and only where you want an index. 3.0 removed graphify, RTK and Headroom: the stack still intercepts nothing (D51, D52, D60, D61).
+A pre-configured setup for Claude Code, built on one rule: **eliminate waste at its source, never compress downstream.** Three components — **Serena** (LSP symbol tools via MCP, *on during the D62 test period*, trimmed to nine tools), **ponytail** (minimal-code discipline, default-on) and **codegraph** (orientation, one MCP tool, indexed per checkout) — plus a global routing contract. Install the global layer once; the only per-repo step is `stack-init codegraph`, and only where you want an index. 3.0 removed graphify, RTK and Headroom: the stack still intercepts nothing (D51, D52, D60, D61).
 
 No intent/docs layer: this stack is only the parts that move tokens, plus the global routing contract.
 
@@ -59,7 +59,7 @@ Escape hatches: `CLAUDE_STACK_NO_SERENA_INIT=1` (or a `.serena-skip` file in a r
 
 | Tool | Owns | Never used for |
 | --- | --- | --- |
-| Serena *(opt-in, 9 tools)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it; memory or onboarding — those tools are gone (D61) |
+| Serena *(9 tools; D62 test period)* | symbol definitions/references, diagnostics, symbol-level edits | running anything; sessions that don't need it; memory or onboarding — those tools are gone (D61) |
 | ponytail *(always on)* | minimal-code discipline, injected at session start | routing any question |
 | codegraph *(on; indexed per repo)* | orientation — what connects X to Y, blast radius, one call | current file content; unindexed checkouts, where it answers with guidance instead |
 

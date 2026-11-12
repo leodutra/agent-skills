@@ -34,4 +34,7 @@ disallowed-methods = [
   # rand 0.9 renamed thread_rng to rng; both are listed.
   { path = "rand::rng", reason = "pass the source of randomness in", allow-invalid = true },
   { path = "rand::thread_rng", reason = "pass the source of randomness in", allow-invalid = true },
+  # uuid's generators read the clock and randomness; new_v7(ts) takes its time as a parameter and stays.
+  { path = "uuid::Uuid::new_v4", reason = "pass the id in", allow-invalid = true },
+  { path = "uuid::Uuid::now_v7", reason = "pass the id in", allow-invalid = true },
 ]

@@ -2,7 +2,7 @@
 
 > **Version:** 3.1
 > **Status:** Active
-> **Scope:** Three components — **Serena** (LSP symbol tools, opt-in per session, trimmed to a fixed nine-tool set; D53, D61), **ponytail** (minimal-code discipline, default-on; D54) and **codegraph** (orientation, one MCP tool, indexed per checkout; D60) — plus the global routing contract. 3.0 removed graphify, RTK and Headroom (D51, D52); 3.1 gives orientation an owner again without giving anything a path to sit in. Tool-output noise stays explicitly unowned (§2.3). No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
+> **Scope:** Three components — **Serena** (LSP symbol tools, on during the D62 test period, trimmed to a fixed nine-tool set; D53, D61, D62), **ponytail** (minimal-code discipline, default-on; D54) and **codegraph** (orientation, one MCP tool, indexed per checkout; D60) — plus the global routing contract. 3.0 removed graphify, RTK and Headroom (D51, D52); 3.1 gives orientation an owner again without giving anything a path to sit in. Tool-output noise stays explicitly unowned (§2.3). No intent/docs layer. Targets Arch Linux and Windows; Rust/TypeScript/Python.
 > **Canonical executables:** `stack-init.sh` (Linux/macOS) and `stack-init.ps1` (Windows). They are self-documenting and self-installing, and they are the source of truth for **behavior** (D2). This document is the source of truth for **what the stack is and how to operate it**.
 > **Rationale lives elsewhere.** Every "why" is a numbered decision in [`DECISIONS.md`](DECISIONS.md), cited here as `D<n>` and never restated. What changed and when is one line per change in [`CHANGELOG.md`](CHANGELOG.md). Three files, three jobs — the split and its enforcement are D36.
 > **Audience:** Both the human installing it and the agent operating inside it. Sections marked `[AGENT]` are mirrored into the global routing contract.
@@ -35,7 +35,7 @@ What this stack deliberately does **not** do: manage intent (specs, ADRs, roadma
 
 ## 2. Component roles and hard boundaries
 
-### 2.1 Serena — the eyes and hands (symbols), opt-in
+### 2.1 Serena — the eyes and hands (symbols), opt-in (suspended by D62)
 
 **Answers:** "Where is symbol S defined?", "Who references S?", "What's in this file?", "Does this file have errors?", and performs symbol-precise edits — **in sessions that enable it.**
 
@@ -126,7 +126,7 @@ The global installer writes this contract into `~/.claude/CLAUDE.md` between sen
 
 The text itself is **not reproduced here**. It lives in [`contract.md`](contract.md) — the single file both installers read and `stack-init contract` prints — and the condensed form injected into agent files is [`contract-condensed.md`](contract-condensed.md). One copy is deliberate: a normative text quoted in three places drifts, and this one had already started to (the two installers disagreed on punctuation while claiming to write the same block).
 
-The six rules in brief — 1 Serena is opt-in and usually off, so check before routing to it, 2 symbols → Serena when enabled, 3 diagnostics → Serena when enabled, 4 symbol-level edits → Serena when enabled (and Serena carries nine tools, no more), 5 anything that executes → Bash, 6 orientation → codegraph in one narrow call, reading and searching where there is no index. Source of truth: the LSP when enabled; codegraph is derived (§5).
+The six rules in brief — 1 Serena is on during the D62 test period, so boot it (ToolSearch + activate_project) before the first code read, 2 symbols → Serena, 3 diagnostics → Serena, 4 symbol-level edits → Serena (and Serena carries nine tools, no more), 5 anything that executes → Bash, 6 orientation → codegraph in one narrow call, reading and searching where there is no index. Source of truth: the LSP when enabled; codegraph is derived (§5).
 
 A **second** managed block exists as of 3.1, and only per checkout: [`codegraph-block.md`](codegraph-block.md), written into an indexed repo's `CLAUDE.local.md` by `stack-init codegraph`. It carries the `codegraph` CLI surface for subagents and Bash, which never see the MCP server's initialize-time guidance. It is not part of the global contract and must not be — the CLI fails outright on an unindexed path (D60).
 

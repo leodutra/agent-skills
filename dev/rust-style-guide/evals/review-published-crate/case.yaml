@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: review-published-crate
+expected_outcome: |
+  A precision case: the crate follows the skill, including the exceptions it allows, so most
+  graders check that review.md does not flag them. Two real defects sit in rules no earlier case
+  reaches: InvalidToken echoes the secret it rejected, and Window::Between's public variant fields admit an inverted window. review.md does not flag #[non_exhaustive] on a published crate's error, StoreError's missing Clone/Eq (it wraps io::Error), the const literal's panic, latest's Result<Option<Reading>, StoreError>, main.rs's bootstrap expect() calls, or the unit-struct ZeroInterval.
+context:
+  scaffold_script: place-files.sh

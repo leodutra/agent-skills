@@ -1,0 +1,8 @@
+schema_version: "1.1"
+name: review-orders-store
+expected_outcome: |
+  Targets rules no earlier case reaches (b81b222 Option/Result, 7572521 precise errors and
+  #[non_exhaustive], Eq reflexivity). Every planted defect is review-only under the current lint
+  set, so the prompt's "CI is green" holds. review.md flags find's .ok().flatten() hiding store failures, the -1 discount sentinel, Sku's missing case normalization under derived Eq/Hash, Quantity::new's shared five-variant error, #[non_exhaustive] on an unpublished workspace enum, the hand-written Eq over an f64, and ParcelSize's unnamed tuple fields; it does not call next_page's Option or load's Result<Option<Order>, StoreError> defects.
+context:
+  scaffold_script: place-files.sh
