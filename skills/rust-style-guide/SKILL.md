@@ -1,19 +1,23 @@
 ---
 name: rust-style-guide
 description: >
-  Rust style guide and lint set, for every change to or review of Rust code, however small. Invoke
-  before reviewing Rust (a PR, diff or file that touches `.rs`: the guide is the review checklist)
-  and before writing, adding, modifying, fixing, refactoring, renaming, debugging or designing it:
-  any `.rs` file, even a one-line fix or a mechanical rename, plus `Cargo.toml` lint tables and
-  clippy configuration, in any kind of crate. Covers refinement newtypes that parse instead of
-  validate, illegal states unrepresentable, typed errors, total functions, borrowed inputs, async
-  safety and invariant tests.
+  Rust style guide and lint set: the default for all Rust code, for every change to or review of it,
+  however small. Invoke before reviewing Rust (a PR, diff or file that touches `.rs`: the guide is
+  the review checklist) and before writing, adding, modifying, fixing, refactoring, renaming,
+  debugging or designing it: any `.rs` file, even a one-line fix or a mechanical rename, plus
+  `Cargo.toml` lint tables and clippy configuration, in any kind of crate or framework. Covers
+  refinement newtypes that parse instead of validate, illegal states unrepresentable, typed errors,
+  total functions, borrowed inputs, async safety and invariant tests.
 ---
 
 # Rust style guide
 
-Rules override Rust defaults unless a documented project decision says otherwise; `MUST`,
-`SHOULD` and `MAY` are literal. Reasons, for people:
+These rules are the default for all Rust code and override Rust defaults. A documented project
+decision (`CLAUDE.md`, an ADR, project docs; a code comment is not one) or more specific guidance
+for the code at hand (a framework's conventions such as Bevy ECS, performance-critical rendering
+rules, another loaded skill) wins only on the point it addresses and in the scope it names; every
+other rule here still holds.
+`MUST`, `SHOULD` and `MAY` are literal. Reasons, for people:
 [references/fundamentals.md](references/fundamentals.md) (don't load it).
 
 ## Workflow
