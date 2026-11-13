@@ -1,9 +1,11 @@
 # The rust-style-guide clippy configuration: copy to each crate's root as clippy.toml (a crate without
 # one inherits the workspace's). Each entry names the rule it holds and its SKILL.md section.
-# Behavior: unwrap, expect and panic MAY appear in tests.
+# Behavior: unwrap, expect, panic, dbg! and the print macros MAY appear in tests.
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-panic-in-tests = true
+allow-dbg-in-tests = true
+allow-print-in-tests = true
 # Lints: public signatures are linted like private ones. In a workspace you rebuild, changing one is a
 # refactor, not a breaking release (as with #[non_exhaustive] under Behavior). A crate published to
 # users you don't rebuild leaves this line out.
@@ -26,6 +28,8 @@ disallowed-types = [
 disallowed-methods = [
   # Behavior: functions are total, so nothing relies on catching a panic (and panic=abort ignores it).
   { path = "std::panic::catch_unwind", reason = "return a typed error; do not rely on catching panics" },
+  # Behavior: abort skips destructors and hides failure from callers.
+  { path = "std::process::abort", reason = "return an error instead of aborting the process" },
   # Behavior: time and randomness are parameters, which keeps domain tests deterministic. Domain crates only.
   { path = "std::time::SystemTime::now", reason = "pass the time in" },
   { path = "std::time::Instant::now", reason = "pass the time in" },

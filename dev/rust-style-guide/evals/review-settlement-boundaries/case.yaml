@@ -1,0 +1,12 @@
+schema_version: "1.1"
+name: review-settlement-boundaries
+expected_outcome: |
+  Review finds the lossy cast, str slicing and split_at, slice indexing, unchecked sum and
+  possibly-zero divisor, float money, hash iteration order, discarded future and JoinHandle,
+  needless pass by value, boxed library error, bare allow, and library debug/print/exit calls.
+  It also finds private unit errors, a source-erasing map_err, an assertion on terminal input,
+  ignored Results, an underscore-named dropped future, and a private refinement missing Debug.
+  It does not flag the fallible Repository::open constructor or Result<Option<Price>, io::Error>
+  lookup shape.
+context:
+  scaffold_script: place-files.sh

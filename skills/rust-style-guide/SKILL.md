@@ -1,19 +1,12 @@
 ---
 name: rust-style-guide
 description: >
-  Type-driven Rust style for domain and backend code, with a clippy/rustc lint set that enforces
-  much of it: refinement newtypes that parse instead of validate, illegal states unrepresentable,
-  Option for absence and Result for failure, precise thiserror errors, total functions, async
-  cancellation safety, invariant tests. Use when writing, reviewing, refactoring or designing Rust
-  that models a domain or business rules (HTTP/RPC handlers, config, CLI args, database rows, state
-  machines, value objects, error types), on mentions of newtype, refinement type, parse don't
-  validate, validation, domain model, illegal states, typestate, thiserror, anyhow, TryFrom,
-  FromStr, NonZero, serde try_from or transparent, clap value types, sqlx decode, Result/Option
-  design, tokio
-  tasks, spawn_blocking, cancellation safety, proptest or clippy lints, and when Rust under review
-  has raw String/i64/Uuid in signatures, `is_valid_*` or `validate` checks, stringly typed errors,
-  `_ =>` on its own enums, or unwrap()/expect() outside tests. GPU/render code:
-  rust-wgpu-functional; Bevy ECS: rust-bevy-architecture.
+  Rust style guide and lint set, for every change to Rust code, however small. Invoke before
+  writing, adding, modifying, fixing, refactoring, renaming, debugging, reviewing or designing
+  Rust: any `.rs` file, even a one-line fix or a mechanical rename, plus `Cargo.toml` lint tables
+  and clippy configuration, in any kind of crate. Covers refinement newtypes that parse instead of
+  validate, illegal states unrepresentable, typed errors, total functions, borrowed inputs, async
+  safety and invariant tests.
 ---
 
 # Rust style guide
@@ -27,12 +20,12 @@ Rules override Rust defaults unless a documented project decision says otherwise
 **Writing code**
 1. Apply the lints first: paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml` (in a
    workspace, as `[workspace.lints.*]` with `lints.workspace = true` in each member) and copy
-   [assets/clippy.toml](assets/clippy.toml) to each crate's root, without the entries its comments
-   limit to other kinds of crate.
+   [assets/clippy.toml](assets/clippy.toml) to each crate's root. Follow each file's comments on
+   crate-specific lint entries; binary targets that print need a reasoned local `#[expect]`.
 2. Model the types before the functions: a refinement per value with an invariant, an enum per set
    of states, an error type per set of failures.
 3. Silence a lint misfire where it happens, with `#[expect(clippy::name, reason = "…")]`; never edit
-   the lint set to get a build through.
+   the lint set to get a build through. A bare `#[allow]` is a defect.
 4. Done when `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and
    `cargo test` pass.
 
@@ -67,8 +60,10 @@ Rules override Rust defaults unless a documented project decision says otherwise
 
 ## Refinements: parse, don't validate
 
-A raw value becomes its refinement as soon as it is read; from then on the type is the proof. Every
-refinement has this shape:
+Wherever external data enters (network, files, database, environment, CLI or terminal input, IPC,
+FFI, any deserialization; serde, clap and SQLx are examples, not the list), it is parsed into
+domain types before domain logic, and again on re-entry from storage or the wire. From then on the
+type is the proof. Every refinement has this shape:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
@@ -152,8 +147,8 @@ pub const HTTP: Port = Port::literal(80);
 
 - Library errors are typed (`thiserror` enums, or a unit struct for a single failure) implementing
   `Error + Send + Sync + 'static`, with typed context (`InvalidTransition { from, to }`); `String`,
-  `&str` and `()` MUST NOT be errors or carry their context. `anyhow`/`eyre` stay at process
-  boundaries, with `.context(...)`.
+  `&str`, `()` and `Box<dyn Error>` MUST NOT be library errors or carry their context.
+  `anyhow`/`eyre` stay at process boundaries, with `.context(...)`.
 - A public function's error MUST NOT be a dependency's error type raw: wrap it in a variant of your
   own and keep it as `#[source]`.
 - Derive `Clone, PartialEq, Eq` (reflexive, as above) unless a cause cannot (`io::Error`), so tests
@@ -168,15 +163,23 @@ pub const HTTP: Port = Port::literal(80);
   message in `main.rs` bootstrap under `#[expect(clippy::expect_used, reason = "…")]`. Bootstrap is
   the environment failing at startup (a config file, binding a port); user input, CLI arguments
   included, is reported as an error with a usage message and exit code, never `expect()`ed.
-- Numbers: narrowing or sign-changing conversions use `TryFrom` (the cast lints hold `as`); money
-  and quantity arithmetic that can overflow uses `checked_*` and returns an error.
-- Strings are indexed by `char` boundaries: `split_once`, `char_indices`, `get(a..b)`; never
+- Numbers: narrowing or sign-changing conversions use `TryFrom` (the cast lints hold `as`). Money
+  uses integer minor units or a decimal type, never `f64`/`f32`. Money and quantity arithmetic that
+  can overflow uses `checked_*` and returns an error; division and remainder check a possibly-zero
+  divisor before `/` or `%`.
+- Slice `str` only at character boundaries: `split_once`, `char_indices`, `get(a..b)`; never
   `split_at` or `&s[a..b]` at a byte offset that input can move.
+- Slice and `Vec` indexing with input-dependent bounds (`v[i]`, `&v[a..b]`) MUST use `get`/`get_mut`
+  and handle `None`, or check the bounds first.
 - Match exhaustively on your own enums: no `_ =>` arm, and no `#[non_exhaustive]` on them (it forces
   `_` arms in the workspace's other crates); it belongs only in a crate published to users you
   don't rebuild.
 - Time and randomness are parameters in domain logic, never ambient (`Utc::now()`, `rand`).
+- Domain output and decisions MUST NOT depend on `HashMap`/`HashSet` iteration order; use an ordered
+  collection or sort before order matters.
 - Domain types hold no interior mutability; prefer `&mut self`, leaving sharing to the caller.
+- Library code MUST NOT call `process::exit` or `process::abort`, or use `dbg!` or the print macros
+  (`println!`, `eprintln!`, …); it returns errors and logs.
 - No `Service`, `Manager`, `Helper`, `Utils`, `Misc` names; a trait is named for what it does
   (`LoadOrders`), and it needs a second implementation or a test double to exist.
 - A macro is the last resort: a function, type or trait first, then `macro_rules!`, then a proc
@@ -189,6 +192,15 @@ pub const HTTP: Port = Port::literal(80);
   clients, heavy CPU work): use async APIs or `spawn_blocking`.
 - Every `.await` is a cancellation point: a future dropped there MUST NOT leave an effect half done
   (a charge made but not recorded).
+- A future MUST be awaited, returned or spawned: `let _ = future` drops it unrun. A spawned task's
+  `JoinHandle` MUST be awaited or supervised, so its error and panic are observed; detached work
+  needs an owner and a failure path.
+
+## Ownership
+
+- Borrow inputs by default (`&str`, `&[T]`, `&T`, `Option<&T>`); take ownership when the function
+  stores, returns or consumes the value. No clone just to quiet the borrow checker: shorten the
+  borrow, move the value or change the API.
 
 ## Tests
 
@@ -202,7 +214,7 @@ pub const HTTP: Port = Port::literal(80);
   proptest! {
       #[test]
       fn port_display_parses_back(n in 1u16..) {
-          let port = Port::try_from(n)?;
+          let port = Port::try_from(n).expect("generated port is nonzero");
           prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
       }
   }
@@ -216,17 +228,28 @@ pub const HTTP: Port = Port::literal(80);
 What clippy can check, clippy checks. The test allowances cover `#[test]` functions and
 `#[cfg(test)]` code; a helper under `tests/` is neither, so it returns `Result` and uses `?`.
 
-The lints hold: wildcard arms, unwrap/expect/panic outside tests, unsafe, missing `Debug`/`Eq`,
-infallible `TryFrom`, a `Result` that never fails, mixed `pub` fields, `Option<Option<T>>`,
-non-`Send` futures, locks across `.await`, more than three bools, glob imports, `for_each`,
-`&Option` parameters, `map_err(|_| …)`, a dropped `Result`, `assert!(r.is_err())`, `anyhow`/`eyre`,
-`Cell`/`RefCell`/`Mutex`/`RwLock`, the banned clock, `rand` and `uuid` calls, `catch_unwind`, lossy
-`as` casts, `&s[a..b]` on a `str`.
+The lints hold: wildcard arms, unwrap/expect/panic and todo/unimplemented/unreachable outside
+tests, unsafe and undocumented unsafe blocks, public types missing `Debug`, a derived `PartialEq`
+that can also derive `Eq`, infallible `TryFrom`, public `Result<_, ()>`, a `Result` that never fails,
+mixed `pub` fields, `Option<Option<T>>`, non-`Send` futures, locks across `.await`, more than three
+bools, glob imports, `for_each`, needless pass by value, `&Option` parameters,
+redundant clones, `map_err(|_| …)`, a dropped `Result` or future, `assert!(r.is_err())`, bare
+`#[allow]` and missing lint reasons, `anyhow`/`eyre`, `Cell`/`RefCell`/`Mutex`/`RwLock`, the banned
+clock, `rand` and `uuid` calls, `catch_unwind`, `process::abort`, lossy `as` casts,
+`&s[a..b]` on a `str`, hash collection `for` loops, `process::exit`, debug and print macros.
 
-Review must also catch what no lint bans: a `new` that returns `Result`; atomics and `OnceCell`
-in domain code; an unused dependency; an `.ok()` whose `None` hides an error; a test that reaches a
-rejection without asserting its error in a form the lint misses; `split_at` on a `str`;
-overflowing arithmetic.
+Every rule above that this list does not name is review's. Review must also catch what slips past
+a lint that looks like it holds:
+
+- A `new` that returns `Result`; a private type missing `Debug`; a private `Result<_, ()>`; a
+  `map_err(|e| e.to_string())`, which names the cause and still loses its type; an `.ok()` whose
+  `None` hides an error.
+- A `Result` or future bound to `_name` or passed to `drop`; `split_at` on a `str`; overflowing
+  arithmetic; a hash iterator chain (`map.keys().collect()`) whose order matters.
+- Time or randomness calls absent from `clippy.toml`; atomics, `OnceCell` and other
+  interior-mutability wrappers in domain code.
+- An unused dependency; a test that reaches a rejection without asserting its error in a form the
+  lint misses.
 
 ## Allowed: not defects
 
@@ -244,3 +267,5 @@ These follow the rules above. In review, don't flag them, not even as nits:
 - `unwrap()`, `expect()`, `panic!` in `#[test]` functions and `#[cfg(test)]` code.
 - `anyhow`/`eyre`, the clock, randomness and locks outside domain and library code (a binary's
   `main`, infrastructure), where clippy.toml's comments exempt them.
+- A non-`Send` future deliberately run only on a local executor, with a reasoned
+  `#[expect(clippy::future_not_send, reason = "…")]`.

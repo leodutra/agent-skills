@@ -49,8 +49,9 @@ Five decisions shape the whole setup.
 - **The machine checks what a machine can check.** You can't argue a lint out of a verdict, and it
   doesn't get tired. A reviewer, human or model, can be argued with and does get tired. So every
   rule that clippy or rustc can hold is handed to them, and review covers only the rest.
-- **Every lint is `deny`, not `warn`.** Warnings pile up until nobody reads them. A lint that matters
-  fails the build, and a lint that doesn't matter isn't on the list.
+- **Every Clippy lint is `deny`, not `warn`.** The rustc `unsafe_code` lint is `forbid` by default.
+  Warnings pile up until nobody reads them. A lint that matters fails the build, and a lint that
+  doesn't matter isn't on the list. Rustc's `missing_debug_implementations` is also `deny`.
 - **Exceptions are written down where they happen.** A lint is never turned off for a whole crate
   because one place needs an exception. That place gets `#[expect(clippy::name, reason = "…")]`,
   and the `reason` tells the next reader why. `expect`, unlike `allow`, fails once the lint stops
@@ -60,7 +61,7 @@ Five decisions shape the whole setup.
   Clippy normally leaves public signatures alone so that it doesn't push a breaking release. In a
   workspace you rebuild, changing a public signature is a refactor, not a release. A crate published
   to outside users drops this line, and for the same reason it may use `#[non_exhaustive]` (see
-  section 7).
+  section 9).
 - **Default lints are still listed.** Six entries (`infallible_try_from`, `result_unit_err`,
   `await_holding_lock`, `await_holding_refcell_ref`, `disallowed_types`, `disallowed_methods`) are
   already on in clippy by default. They are listed anyway, so that the file states every rule it
@@ -100,8 +101,13 @@ fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 
 **Rules, all checked in review:**
 
-- Raw input becomes its type as soon as it's read. Functions take `Email`, never the `&str` it came
-  from, and code never checks the invariant again.
+- At each inbound boundary, parse external data from network messages, files and other I/O,
+  database rows, environment variables, CLI arguments, terminal input, IPC, FFI and any
+  deserialization into domain types before domain logic. Use a raw transport type when the format
+  needs one. Serde, clap and SQLx are examples of adapters; the boundary exists wherever external
+  data enters. Functions take `Email`, never the `&str` it came from, and code never checks the
+  invariant again. Reloading from storage or the wire is a new boundary and parses again.
+  Outbound serialization starts from valid domain values and must not reveal secrets.
 - An `is_valid_x(&str) -> bool` or a `validate(&self)` over public fields becomes a constructor that
   returns the type.
 - A record, row or DTO is deserialized as is, with plain fields, and then converted with
@@ -134,7 +140,8 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
 A struct with both `pub` and private fields is half open, and the `pub` half lets callers break the
 invariant the private half guards. `Debug` is how a value shows up in a failing `assert_eq!`, in a
 log and in a debugger, so a public type without it is a dead end. Secrets still implement `Debug`,
-by hand and redacted, and they have no `Display` or `Serialize` that could leak them.
+by hand and redacted, and they have no `Display` or `Serialize` that could leak them. The rustc
+`missing_debug_implementations` lint covers public types only; review checks private domain types.
 
 ### `Eq` and reflexivity
 
@@ -204,7 +211,7 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
   real. `FromStr` wraps the constructor's error beside its own syntax failure, as `ParsePortError`
   does.
 - **`Display` is `FromStr`'s exact inverse.** A value printed and parsed back gives the same value.
-  clap's `default_value_t` relies on this, and a property test pins it (section 12).
+  clap's `default_value_t` relies on this, and a property test pins it (section 14).
 
 | Lint | Catches |
 | --- | --- |
@@ -347,12 +354,13 @@ fn find(&self, id: OrderId) -> Result<Option<Order>, StoreError> {
 | --- | --- |
 | `unused_result_ok` | `r.ok();` used only to silence an unused `Result` |
 | `let_underscore_must_use` | `let _ = r;` on a `#[must_use]` value |
-| `ref_option` | a `&Option<T>` parameter (see section 9) |
+| `ref_option` | a `&Option<T>` parameter (see section 10) |
 
 `r.ok();` and `let _ = r;` both drop an error silently. `let _` is also clippy's own suggested fix
 for `unused_result_ok`, which is why it's banned too. Sometimes dropping is right, such as a send
 whose receiver may already be gone. Then say so with an `#[expect]`. An `.ok()` used as a value, as
-in `find` above, slips past both lints, so review catches that one.
+in `find` above, slips past both lints, so review catches that one. `let _ignored = r` and `drop(r)`
+also evade these lints; review checks whether the error is deliberately discarded.
 
 ## 7. Errors carry their cause
 
@@ -377,11 +385,15 @@ pub enum OrderError {
 
 - **Errors are typed.** `Err(())` says *that* something failed but not *what*, and it doesn't
   implement `std::error::Error`, so it composes with nothing. A `String` error can only be printed,
-  not matched on.
+  not matched on. `Box<dyn Error>` also erases which failures a library function can return;
+  use a typed error with variants for its possible failures.
+- `result_unit_err` checks public functions only. Private helpers returning `Result<_, ()>` still
+  lose the failure's meaning and require review.
 - **The cause is kept.** `map_err(|_| …)` replaces the real cause (an `io::Error`, a parse error)
   with your own error and throws the original away. Wrap it with `#[source]` or `#[from]` so the
   chain survives. A public function's error never exposes a dependency's error type directly,
-  because then every caller depends on that library too.
+  because then every caller depends on that library too. The lint misses a named cause converted to
+  text, such as `map_err(|e| e.to_string())`; review checks that the source remains typed.
 - **`anyhow` and `eyre` stay where errors only get printed:** `main`, a CLI command, a test. In a
   library, they hide the error's type, so callers can print it but can't match on it. The `Result`
   aliases are listed separately because banning `anyhow::Error` doesn't catch `anyhow::Result<T>`. A
@@ -402,10 +414,11 @@ pub enum OrderError {
 | `panic` | `panic!` outside tests |
 | `todo`, `unimplemented` | placeholders that panic when reached |
 | `unreachable` | `unreachable!()` |
-| `disallowed-methods`: `catch_unwind` | catching a panic to recover from it |
+| `disallowed-methods`: `catch_unwind`, `process::abort` | catching a panic or aborting the process |
 | `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap` | an `as` cast that truncates, drops the sign or wraps |
 | `string_slice` | `&s[a..b]` on a `str` |
-| clippy.toml: `allow-unwrap-in-tests`, `allow-expect-in-tests`, `allow-panic-in-tests` | lets tests do all of the above |
+| `exit`, `dbg_macro`, `print_stdout`, `print_stderr` | process exit, debug and print macros |
+| clippy.toml: `allow-unwrap-in-tests`, `allow-expect-in-tests`, `allow-panic-in-tests`, `allow-dbg-in-tests`, `allow-print-in-tests` | lets tests do all of the above |
 
 A panic takes failure out of the type system. The caller can't see it in the signature, can't match
 on it and can't recover from it. In a server, it kills the request's task or, under
@@ -424,6 +437,10 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   can't hold the impossible case, makes the compiler check it.
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
   nothing when the binary is built with `panic = "abort"`.
+- `process::abort` also stops the process without running destructors. `process::exit` is caught by
+  its own lint outside `main`. Neither belongs in a library.
+- The `panic` lint does not catch `assert!` on external input. Review checks assertions against
+  values that can arrive from users or I/O.
 - **An `as` cast between integers never fails, so it gets the value wrong instead.** `300u64 as u8`
   is `44`, `-1i64 as u64` is `18446744073709551615`, and `u64::MAX as i64` is `-1`. The three cast
   lints catch those casts. Use `From` when the conversion can't lose anything, and `TryFrom` when
@@ -432,12 +449,21 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   `&"aé123"[..2]` panics, because `é` takes two bytes. `string_slice` catches `&s[a..b]`. Nothing
   catches `split_at`, so review does. Use `split_once`, `char_indices` or `s.get(a..b)`, which
   returns `None` instead of panicking.
+- **Indexing a slice or `Vec` at input-dependent bounds can panic.** Use `get` or `get_mut` and
+  handle the missing element or range. `indexing_slicing` is too noisy for this lint set, so review
+  checks it.
 - **Arithmetic that can overflow panics in a debug build and wraps in release.** For money and
   quantities, both are wrong: `cents * percent` can overflow on a large order. Use `checked_mul` and
   friends and return an error. Clippy's lint for this, `arithmetic_side_effects`, flags every `+`
   and `*`, which is too noisy to enable, so review catches it.
+- **Division and remainder by zero panic in all builds.** When a divisor can be zero, check it or
+  use `checked_div`/`checked_rem` and return an error. Money uses integer minor units or a decimal
+  type; binary floats can round amounts and are not suitable for exact accounting.
+- **Library code returns failures to its caller.** `process::exit` skips destructors and stops the
+  process. `dbg!` and print macros leak debugging or write output the caller did not request;
+  use structured logging when observation is needed. Binary entry points may print deliberately.
 
-In a test, a panic is how the test fails, so unwrapping there is the assertion. The three
+In a test, a panic is how the test fails, so unwrapping there is the assertion. The
 `allow-*-in-tests` settings let `#[test]` functions and `#[cfg(test)]` code do that. A helper file
 under `tests/` is neither, so it returns `Result` and uses `?`.
 
@@ -479,10 +505,12 @@ before it, and the lint asks for exactly that. If only one or two matter, use `m
 | `redundant_clone` | a clone whose original is never used again |
 
 This is the second idea in practice. A signature that takes ownership forces callers to give theirs
-up or to clone. Asking for more than the function uses costs every caller. So take `&T` when you
-only read, and `Option<&T>` rather than `&Option<T>`, which any caller can produce, even one that
-holds a `T` and no `Option`. Clippy already flags `&String`, `&Vec` and `&Box` parameters by
-default. A clone whose original is never used again is pure cost: move the value instead.
+up or to clone. Asking for more than the function uses costs every caller. So take `&T`, `&str` or
+`&[T]` when you only read, and `Option<&T>` rather than `&Option<T>`, which any caller can produce,
+even one that holds a `T` and no `Option`. Take ownership when storing, returning or consuming the
+value. Clippy already flags `&String`, `&Vec` and `&Box` parameters by default. A clone whose
+original is never used again is pure cost: move the value instead. If a clone only quiets a borrow
+error, shorten the borrow or change the API to make the needed ownership clear.
 
 **Domain values don't mutate behind your back.**
 
@@ -507,6 +535,11 @@ infrastructure code, such as connection pools and caches, legitimately needs loc
 | `rand::random`, `rand::rng`, `rand::thread_rng` | "pass the source of randomness in" |
 | `uuid::Uuid::new_v4`, `uuid::Uuid::now_v7` | "pass the id in" |
 
+`iter_over_hash_type` flags `for` loops over a `HashMap` or `HashSet`, but not iterator chains such
+as `map.keys().collect()`. Review checks those chains and whether order can affect domain output or
+decisions. When it does, use an ordered collection or sort before using the items. When a flagged
+loop's order cannot matter, explain the exception with `#[expect]`.
+
 If a function reads the clock or a random generator inside, its signature lies. It looks like the
 same inputs always give the same output, but they don't.
 
@@ -530,6 +563,7 @@ apply to domain crates.
 | `await_holding_lock` | a std `MutexGuard` held across `.await` |
 | `await_holding_refcell_ref` | a `RefCell` borrow held across `.await` |
 | `future_not_send` | an `async fn` whose future is not `Send` |
+| `let_underscore_future` | `let _ = future` discarding an unpolled future |
 
 Each `.await` is a point where the task can pause while other tasks run.
 
@@ -542,8 +576,14 @@ Each `.await` is a point where the task can pause while other tasks run.
   `Rc` or guard that caused it, with a long message. This lint reports it at the function that
   creates the future, where the fix is. A trait whose futures get spawned declares
   `-> impl Future<Output = …> + Send` for the same reason.
+- `future_not_send` also flags a future intended only for a local executor. Such a future is valid;
+  document that exception with a reasoned `#[expect]`.
+- An async operation is lazy: `let _ = send()` drops its future without running it. Await, return
+  or deliberately spawn it. A spawned task's `JoinHandle` must be awaited or supervised so its
+  error and panic are observed; detached work needs an owner and a failure path. The lint misses
+  `let _future = send()`, which also leaves it unpolled, so review catches it.
 
-**Review checks two more things:**
+**Review checks blocking, cancellation and spawned task ownership:**
 
 - **Blocking calls stay off the runtime.** `std::fs`, a synchronous HTTP client or heavy CPU work
   inside an `async fn` stalls every task on that thread. Use the async API or `spawn_blocking`.
@@ -619,7 +659,7 @@ the suggestion.
   proptest! {
       #[test]
       fn port_display_parses_back(n in 1u16..) {
-          let port = Port::try_from(n)?;
+          let port = Port::try_from(n).expect("generated port is nonzero");
           prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
       }
   }

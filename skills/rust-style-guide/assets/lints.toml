@@ -62,6 +62,8 @@ await_holding_lock = "deny"
 await_holding_refcell_ref = "deny"
 # A future that is not `Send`. Behavior: a future spawned multithreaded must be Send.
 future_not_send = "deny"
+# `let _ = future` discards an unpolled future. Async: await, return or spawn it deliberately.
+let_underscore_future = "deny"
 # `x as u32` from a wider integer, which silently truncates. Behavior: functions are total, so a
 # narrowing conversion is `u32::try_from(x)` with its error handled (widening is `From`).
 cast_possible_truncation = "deny"
@@ -72,6 +74,9 @@ cast_possible_wrap = "deny"
 # `&s[a..b]` on a `str`, which panics when an index falls inside a UTF-8 character. Behavior:
 # functions are total; use `split_once`, `char_indices` or `get(a..b)`. `split_at` is review's.
 string_slice = "deny"
+# `for` loops over a hash collection. Behavior: domain decisions and output need stable order.
+# Iterator chains such as `map.keys().collect()` are still a review check.
+iter_over_hash_type = "deny"
 # A parameter taken by value but never consumed. Lints: borrow inputs when ownership is not required.
 needless_pass_by_value = "deny"
 # A `&Option<T>` parameter. Lints: borrow the data, so take `Option<&T>` (clippy already flags
@@ -92,8 +97,15 @@ struct_excessive_bools = "deny"
 fn_params_excessive_bools = "deny"
 # The types clippy.toml bans. Errors (no anyhow or eyre in libraries); Behavior (no interior mutability).
 disallowed_types = "deny"
-# The functions clippy.toml bans. Behavior: time and randomness are parameters in domain logic.
+# The functions clippy.toml bans. Behavior: no abort; time and randomness are domain inputs.
 disallowed_methods = "deny"
+# Library code never terminates its caller; `exit` permits calls in `main` only.
+exit = "deny"
+# Debug and print macros do not belong in library code. Binary and build-script targets that
+# deliberately print use a reasoned #[expect] at the printing site.
+dbg_macro = "deny"
+print_stdout = "deny"
+print_stderr = "deny"
 # An `unsafe` block without a `// SAFETY:` comment. Lints: every unsafe block documents its invariants.
 undocumented_unsafe_blocks = "deny"
 # A bare `#[allow]`. Lints: silence with `#[expect]`, which fails once the lint no longer fires.
