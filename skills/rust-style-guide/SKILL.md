@@ -1,10 +1,11 @@
 ---
 name: rust-style-guide
 description: >
-  Rust style guide and lint set, for every change to Rust code, however small. Invoke before
-  writing, adding, modifying, fixing, refactoring, renaming, debugging, reviewing or designing
-  Rust: any `.rs` file, even a one-line fix or a mechanical rename, plus `Cargo.toml` lint tables
-  and clippy configuration, in any kind of crate. Covers refinement newtypes that parse instead of
+  Rust style guide and lint set, for every change to or review of Rust code, however small. Invoke
+  before reviewing Rust (a PR, diff or file that touches `.rs`: the guide is the review checklist)
+  and before writing, adding, modifying, fixing, refactoring, renaming, debugging or designing it:
+  any `.rs` file, even a one-line fix or a mechanical rename, plus `Cargo.toml` lint tables and
+  clippy configuration, in any kind of crate. Covers refinement newtypes that parse instead of
   validate, illegal states unrepresentable, typed errors, total functions, borrowed inputs, async
   safety and invariant tests.
 ---
