@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-conversion-traits
+expected_outcome: |
+  Tests the conversion rule: the source type decides. A source that is the value goes through a std trait; an ambiguity (a unit), a chosen format or an extraction keeps a name. review.md asks for FromStr on Priority in place of parse_priority, FromStr on Sku as its canonical parser (its TryFrom<&str>/TryFrom<String> may stay, delegating), and TryFrom<u32> for Quantity's from_u32. It leaves Weight::from_grams(u32) (a unit the u32 can't carry, named where the number enters), Ticket::from_json (a chosen format; Ticket deserializes straight into Sku and Priority, so no primitive crosses the boundary) and parse_header (an extraction returning the rest of the form) named.
+context:
+  scaffold_script: place-files.sh

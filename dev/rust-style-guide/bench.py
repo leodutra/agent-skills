@@ -119,7 +119,7 @@ def run(rid):
 
 def grade(rid):
     case, d = mapping[rid]["case"], f"{W}/runs/{rid}"
-    gs = sorted(os.listdir(f"{EVALS}/{case}/graders"))
+    gs = sorted(g for g in os.listdir(f"{EVALS}/{case}/graders") if not g.startswith("."))
     if not is_review(case):
         if not a.dry_run:
             c = subprocess.run([sys.executable, "-I", f"{HERE}/grade_cargo.py", d], capture_output=True, text=True)

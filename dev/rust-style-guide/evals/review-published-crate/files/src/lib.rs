@@ -111,6 +111,14 @@ impl UploadToken {
     }
 }
 
+impl FromStr for UploadToken {
+    type Err = InvalidToken;
+
+    fn from_str(raw: &str) -> Result<Self, Self::Err> {
+        Self::try_new(raw)
+    }
+}
+
 impl fmt::Debug for UploadToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("UploadToken(..)")
