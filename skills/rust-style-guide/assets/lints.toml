@@ -56,11 +56,11 @@ assertions_on_result_states = "deny"
 wildcard_enum_match_arm = "deny"
 # `_ =>` standing for a single variant, which the lint above skips. Same rule.
 match_wildcard_for_single_variants = "deny"
-# A std `MutexGuard` held across `.await`. Behavior: never hold one across an await.
+# A std `MutexGuard` held across `.await`. Async: never hold one across an await.
 await_holding_lock = "deny"
-# A `RefCell` borrow held across `.await`. Behavior: the same hazard, and no interior mutability.
+# A `RefCell` borrow held across `.await`. Async: the same hazard, and no interior mutability.
 await_holding_refcell_ref = "deny"
-# A future that is not `Send`. Behavior: a future spawned multithreaded must be Send.
+# A future that is not `Send`. Async: a future spawned multithreaded must be Send.
 future_not_send = "deny"
 # `let _ = future` discards an unpolled future. Async: await, return or spawn it deliberately.
 let_underscore_future = "deny"
@@ -77,14 +77,14 @@ string_slice = "deny"
 # `for` loops over a hash collection. Behavior: domain decisions and output need stable order.
 # Iterator chains such as `map.keys().collect()` are still a review check.
 iter_over_hash_type = "deny"
-# A parameter taken by value but never consumed. Lints: borrow inputs when ownership is not required.
+# A parameter taken by value but never consumed. Behavior: borrow inputs when ownership is not required.
 needless_pass_by_value = "deny"
-# A `&Option<T>` parameter. Lints: borrow the data, so take `Option<&T>` (clippy already flags
+# A `&Option<T>` parameter. Behavior: borrow the data, so take `Option<&T>` (clippy already flags
 # `&String`, `&Vec` and `&Box` by default).
 ref_option = "deny"
 # `Option<Option<T>>`. Types: absence is an `Option` with one meaning, or a variant that names each.
 option_option = "deny"
-# A clone whose original is never used again. Lints: borrow rather than clone when ownership stays.
+# A clone whose original is never used again. Behavior: borrow rather than clone when ownership stays.
 redundant_clone = "deny"
 # A glob import (`use foo::*`) other than `use super::*` in a test module or a prelude. Lints:
 # every name says where it comes from.

@@ -8,79 +8,126 @@ description: >
   `Cargo.toml` lint tables and clippy configuration, in any kind of crate or framework. Covers
   refinement newtypes that parse instead of validate, illegal states unrepresentable, typed errors,
   total functions, borrowed inputs, async safety and invariant tests.
+argument-hint: "[review [path|PR|diff] · audit · lint [path|crate] · <task>]"
 ---
 
 # Rust style guide
 
-These rules are the default for all Rust code and override Rust defaults. A documented project
-decision (`CLAUDE.md`, an ADR, project docs; a code comment is not one) or more specific guidance
-for the code at hand (a framework's conventions such as Bevy ECS, performance-critical rendering
-rules, another loaded skill) wins only on the point it addresses and in the scope it names; every
-other rule here still holds.
-`MUST`, `SHOULD` and `MAY` are literal. Reasons, for people:
-[references/fundamentals.md](references/fundamentals.md) (don't load it).
+Default for all Rust, over Rust's own defaults. A documented project decision (`CLAUDE.md`, ADR,
+project docs; never a code comment) or more specific guidance for the code at hand (a framework's
+conventions, another loaded skill) wins only on the point and scope it names. `MUST`/`SHOULD`/`MAY`
+are literal. Reasons, for people: [references/fundamentals.md](references/fundamentals.md) (don't
+load).
+
+**When rules pull apart**, the first wins: memory and type safety; domain invariants; semantic
+clarity (an obvious API over a conforming one); std-trait interoperability; simplicity;
+performance; style. A documented project requirement (a hard deadline, a stable public API) MAY
+override a convention, never safety or an invariant. Performance overrides a convention only with
+a measurement or a stated system constraint, documented where the code deviates.
+
+**Proportionality**: a newtype, trait, error variant, layer or generic parameter exists only when it
+enforces an invariant, prevents a real misuse, names a domain concept or measurably eases
+maintenance; never for uniformity. These rules say how such a thing is built, not that every value
+needs one.
+
+**Terms**
+- **Boundary**: anywhere data from outside the program enters, or re-enters from storage or the
+  wire.
+- **Domain code**: library and domain logic; not a binary's `main` or infrastructure.
+- **Tag**: a newtype with no invariant; every value of its primitive is valid. **Refinement**: any
+  type with an invariant, one field or several (`Email`; a `Span` whose `start < end`).
 
 ## Workflow
 
-**Writing code**
-1. Apply the lints first: paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml` (in a
-   workspace, as `[workspace.lints.*]` with `lints.workspace = true` in each member) and copy
-   [assets/clippy.toml](assets/clippy.toml) to each crate's root. Follow each file's comments on
-   crate-specific lint entries; binary targets that print need a reasoned local `#[expect]`.
-2. Model the types before the functions: a refinement per value with an invariant, an enum per set
-   of states, an error type per set of failures.
-3. Silence a lint misfire where it happens, with `#[expect(clippy::name, reason = "…")]`; never edit
-   the lint set to get a build through. A bare `#[allow]` is a defect.
-4. Done when `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings` and
+- `review [target]` → **Review** (default: the current diff).
+- `audit` → **Review** of the whole codebase, findings grouped by rule, most severe first.
+- `lint [target]` (code or crates; default: the workspace) → **Write** step 1 for the owning crates
+  if missing, then clippy with `-D warnings` on them, each finding inside the target fixed by step 3.
+- Other text, or none → the task, via **Write**.
+
+**Write**
+1. Lints: paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml` (workspace:
+   `[workspace.lints.*]` + `lints.workspace = true` per member), copy
+   [assets/clippy.toml](assets/clippy.toml) to each crate root, follow both files' comments. A
+   binary that prints needs a reasoned local `#[expect]`.
+2. Types before functions: a refinement per value with an invariant, an enum per set of states, an
+   error type per set of failures.
+3. A lint misfire gets `#[expect(clippy::name, reason = "…")]` where it happens; never edit the lint
+   set to get a build through. A bare `#[allow]` is a defect.
+4. Done: `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
    `cargo test` pass.
 
-**Reviewing code**
-1. If CI runs this lint set, don't report what the lints hold (see [Lints](#lints)); otherwise
-   report those too.
-2. Check every rule below against the code.
-3. Check each finding against [Allowed](#allowed-not-defects): what is listed there is not a
-   defect, not even a nit.
-4. Report each problem with its line, the rule it breaks, why it matters and the fix.
+**Review**: skip what [the lints hold](#lints) if CI runs them, else report it too; check every
+rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why, fix.
 
 ## Types
 
-- Illegal states MUST be unrepresentable: exclusive states are one enum, not `bool` flags, `Option`s
-  or a string; fields that exist only together are one variant's data; a number that cannot be zero
-  is `NonZero*`. State read from storage or the wire is an enum, not typestate.
-- `Option` means absence, `Result` means failure; neither stands in for the other (no `.ok()` that
-  drops an error). A lookup that can fail returns `Result<Option<T>, E>`: `Ok(None)` is not found,
-  `Err` the store failing. An operation that needs the value makes its absence an error variant. A
-  function that cannot fail returns a plain `Option` for "nothing here".
-- Absence is an `Option` with one meaning, or a variant; sentinels (`""`, `0`, `-1`) MUST NOT stand
-  for it.
-- A value gets a newtype when it carries an invariant or could be swapped with another value of the
-  same primitive. A **tag** (`UserId(u64)`) has no invariant: its field is `pub`, and `From` and
-  `#[serde(transparent)]` are fine. A **refinement** (`Email`, `Port`) has one: its fields MUST be
-  private.
-- A closed set is a `ValueEnum` (clap) or a `rename_all` enum (serde), not a refinement over a
-  string.
-- Data with more than one field has named fields: no tuples or tuple structs beyond a newtype.
-- Variant fields are public, so fields sharing an invariant (`start < end`) MUST sit in a
-  private-field struct with a validating constructor, which the variant wraps.
+- Illegal states MUST be unrepresentable: exclusive states are one enum (not `bool`s, `Option`s, a
+  string); fields that exist only together are one variant's data; never-zero is `NonZero*`. State
+  from storage or the wire is an enum, not typestate.
+- `Option` is absence, `Result` failure; neither stands in for the other (no `.ok()` dropping an
+  error). A fallible lookup returns `Result<Option<T>, E>` (`Ok(None)` not found, `Err` the store
+  failing); an operation that needs the value makes absence an error variant; a lookup that can't
+  fail returns `Option`. One meaning per `Option`; sentinels (`""`, `0`, `-1`) MUST NOT stand for
+  absence.
+- A value with an invariant, or swappable with another of the same primitive, gets a newtype. A
+  refinement's fields MUST be private to its defining module (not `pub(crate)`). A tag's field is
+  `pub`, with `From` and `#[serde(transparent)]` fine where the two types make the meaning obvious
+  (`From<u64> for UserId`, `From<u32> for Grams`), never where the primitive carries a unit or
+  scale the target doesn't name (`From<u64> for Timestamp`).
+- A closed set is an enum, not a refinement over a string. Its `ValueEnum` (clap) or `rename_all`
+  (serde) names are its canonical text; code that parses that text itself does so in a `FromStr`
+  that accepts the same names.
+- More than one field means named fields: no tuples or tuple structs beyond a newtype.
+- Variant fields are public, so fields sharing an invariant MUST sit in a refinement the variant
+  wraps.
+
+**Making a value from another** (every type): what the source is decides.
+- **Conversion**: one typed value becomes unambiguously the same value in another type, with
+  nothing lost, rounded or chosen; wrapping a primitive without a check (a tag) counts. `From` when
+  it can't fail, `TryFrom` when it fails rather than lose anything (into a refinement, narrowing a
+  number; never `as`). A primitive whose type doesn't carry its unit is ambiguous, so no trait: a
+  named constructor says the unit where the raw number enters (`from_grams`); once quantities
+  travel through the domain where units could be swapped, they get a unit type (the newtype rule)
+  and convert by these rules (`From<Grams>`). A conversion that would surprise a reader of
+  `.into()` is never a trait: a named function says what it does. A constructor taking several
+  values is not a conversion.
+- **Parsing**: interpreting a text or byte representation by a grammar or encoding. Complete text
+  with one unambiguous interpretation as an owned value MUST parse through `FromStr`, whatever else
+  the type offers; it may accept several spellings, while `Display` prints one. `TryFrom<&str>` and
+  `TryFrom<String>` MAY sit beside it with the same semantics (an owned `TryFrom<String>` MAY keep
+  its allocation), never replace it. A type that borrows its input uses `TryFrom<&'a str>` or a
+  named parser. Complete bytes with one context-free interpretation MAY use `TryFrom<&[u8]>`;
+  otherwise (byte order, version, policy, borrowing, streaming) a named decoder.
+- A parse that extracts (part of the input, or many values) is a named function that says what it
+  takes (`parse_query`), or a collection type with `FromStr` when the whole input is one
+  collection. A parse that chooses among formats, policies or interpretations is a named function
+  that says the choice (`from_json`).
+- For an unambiguous conversion or a complete text parse, a name MUST NOT replace the trait
+  (`Foo::from_u16` with no `TryFrom<u16>` is a defect); it MAY sit beside it. Where the trait would
+  hide a loss, a rounding, an ambiguity or a policy, the named function says so in its doc comment;
+  merely describing the input is not a reason.
 
 ## Refinements: parse, don't validate
 
-Wherever external data enters (network, files, database, environment, CLI or terminal input, IPC,
-FFI, any deserialization; serde, clap and SQLx are examples, not the list), it is parsed into
-domain types before domain logic, and again on re-entry from storage or the wire. From then on the
-type is the proof. Every refinement has this shape:
+At every boundary, data is parsed into domain types before domain logic; from then on the type is
+the proof. The boundary type is itself built from domain types: a request, row or DTO field whose
+value has a refinement or tag MUST use it, so deserializing runs its constructor, and no primitive
+travels past the boundary. A separate DTO, still built from domain types, exists only when the
+wire's shape differs, or as the mirror serde needs to reach a cross-field constructor
+(`#[serde(try_from = "Raw")]`); its `TryFrom` calls the domain type's constructor.
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, serde::Serialize, serde::Deserialize)]
 #[serde(try_from = "u16", into = "u16")] // deserializing goes through the constructor
-pub struct Port(NonZeroU16); // private field, built on std's NonZeroU16
+pub struct Port(NonZeroU16); // private field
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
 #[error("port must be non-zero")]
-pub struct ZeroPort; // the constructor's only failure, so a unit struct
+pub struct ZeroPort; // the only failure: a unit struct
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-pub enum ParsePortError { // text adds a syntax failure in front of the constructor's own
+pub enum ParsePortError { // text adds a syntax failure before the constructor's
     #[error("invalid port number: {0}")]
     Syntax(#[from] ParseIntError),
     #[error(transparent)]
@@ -108,169 +155,154 @@ impl Port {
 impl TryFrom<u16> for Port { /* Self::try_new(n) */ }
 impl From<Port> for u16 { /* port.0.get() */ }
 impl FromStr for Port { /* Ok(Self::try_new(s.parse()?)?) */ }
-impl fmt::Display for Port { /* self.0.fmt(f): the exact inverse of FromStr */ }
+impl fmt::Display for Port { /* self.0.fmt(f): FromStr parses it back */ }
 
 pub const HTTP: Port = Port::literal(80);
 ```
 
-- Code MUST NOT re-check the invariant, and functions MUST take the refinement (`Email`), never
-  the primitive it came from (`&str`). A yes/no check (`is_valid_x(&str) -> bool`, `validate(&self)`
-  over public fields) MUST become the refinement's constructor.
-- One validating constructor; every way in delegates to it: `FromStr` (with `Display` as its exact
-  inverse) for text, `TryFrom<String>` too when the value keeps the string, `TryFrom<u16>` and so on
-  for one non-string source, `impl TryFrom<Dto>` for a record, row or DTO deserialized as is.
-- A constructor that returns `Result` MUST be named `try_new`; `new` is for one that cannot fail. It
-  returns `Result`, never `Option`. Other constructor names follow the Rust API
-  Guidelines (C-CTOR): a type that is an I/O resource uses the domain's verb (`File::open`,
-  `TcpStream::connect`, `UdpSocket::bind`), a conversion is `from_*`, a secondary one `with_*`.
-- Its error holds only the failures that constructor can produce: a unit struct for one, an enum
-  for several. Two constructors MUST NOT share an error enum when either can't produce all its
-  variants (`Email::try_new` and `DisplayName::try_new` each get their own). `FromStr` wraps that error
-  beside its own syntax failure.
-- The constructor normalizes first (trim, canonical case), so `Eq`/`Hash`/`Ord` compare canonical
-  values, without collapsing a distinction the domain keeps: an email lowercases its domain and
-  keeps the part before the `@` as typed.
-- No `Deref`/`DerefMut`, no `&mut` to the inner value; offer `as_str()`, `get()`, `AsRef` or
-  `into_inner()`. A mutating method keeps the invariant or does not exist. No `Default` unless the
-  default is valid.
-- serde: `#[serde(try_from = "String", into = "String")]` (or `"u16"`, …) backed by `TryFrom` and
+- Code MUST NOT re-check the invariant; functions MUST take the refinement, never its primitive. A
+  yes/no check (`is_valid_x(&str) -> bool`, `validate(&self)` over public fields) MUST become the
+  constructor.
+- No value of the type exists that breaks its invariant. One validation, and every way in runs it:
+  `FromStr` (its output printed back by `Display`), text and primitive `TryFrom`, serde, database
+  decoders. A cross-field rule lives there, never only in a DTO's `TryFrom`. Every other
+  way to obtain a value (`Default`, mutation, operators, feature-gated or test-only APIs) keeps the
+  invariant.
+- An inherent fallible constructor MUST be `try_new`, returning `Result`, never `Option`; `new`
+  can't fail. Other names follow C-CTOR: an I/O resource's domain verb (`open`, `connect`,
+  `bind`), `with_*` for a secondary constructor, `from_*` only for a parse that chooses; a
+  conversion is the trait, and a name only sits beside it.
+- Its error holds only the failures it can produce: a unit struct for one, an enum for several.
+  Constructors MUST NOT share an enum that either can't fully produce. `FromStr`'s error wraps it
+  beside the syntax failure.
+- Normalize first (trim, canonical case) so `Eq`/`Hash`/`Ord` compare canonical values, keeping
+  every distinction the domain keeps (an email lowercases its domain, not its local part).
+- No `Deref`/`DerefMut`, no `&mut` to the inner value: `as_str()`, `get()`, `AsRef`, `into_inner()`.
+  A mutating method keeps the invariant or doesn't exist. `Default` only if the default is valid.
+- serde: `#[serde(try_from = "String", into = "String")]` (or `"u16"`, …) via `TryFrom` and
   `From<Self> for Inner`. A derived `Deserialize`, `#[serde(transparent)]` or `#[sqlx(transparent)]`
-  on a refinement skips the constructor and MUST NOT be used; a database `Decode`/`FromSql` decodes
-  the inner type and calls `try_from`.
-- clap: a refinement field parses through `FromStr`, with no custom `value_parser`;
-  `default_value_t = CONST` prints with `Display` and parses back, so the round trip must hold.
-- Derive `Debug, Clone, PartialEq, Eq, Hash` (`Copy` when the inner type is); `Borrow<str>` only
-  when the derives agree with `str`'s. `Eq` adds reflexivity (`a == a` for every value) to
-  `PartialEq`'s symmetry and transitivity; the compiler cannot check it, so derive `Eq` (it compiles
-  only when every field is `Eq`), never hand-write it over a `PartialEq` that breaks it (`f32`/`f64`
-  are not `Eq`: `NaN != NaN`).
+  skips the constructor and MUST NOT be used; `Decode`/`FromSql` decodes the inner type, then
+  `try_from`.
+- clap: a refinement parses through `FromStr`, a closed set through `ValueEnum`; a custom
+  `value_parser` needs a stated reason. `default_value_t = CONST` relies on the `Display`/`FromStr`
+  round trip.
+- Derive `Debug, Clone, PartialEq`, and `Copy`, `Eq`, `Hash`, `Ord` wherever the fields allow and
+  the contract holds; `Borrow<str>` only if those agree with `str`'s. `Eq` adds reflexivity (`a == a`
+  for every value), which the compiler can't check: derive it (it compiles only when every field is
+  `Eq`), and hand-write it only where the invariant guarantees it (a finite-float refinement has no
+  `NaN`), never over a `PartialEq` that breaks it (`f32`/`f64` aren't `Eq`: `NaN != NaN`).
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
-- `literal` (example above) calls `try_new`, never builds `Self` directly, and is `pub(crate)`; it is
-  `pub` only when another crate needs the constants, then with a `# Panics` doc section.
+- `literal` calls `try_new`, never builds `Self`, and is `pub(crate)`; `pub` only when another crate
+  needs the constants, then with a `# Panics` section.
 
 ## Errors
 
-- Library errors are typed (`thiserror` enums, or a unit struct for a single failure) implementing
+- Library errors are typed (`thiserror` enum, or a unit struct for one failure) and implement
   `Error + Send + Sync + 'static`, with typed context (`InvalidTransition { from, to }`); `String`,
-  `&str`, `()` and `Box<dyn Error>` MUST NOT be library errors or carry their context.
-  `anyhow`/`eyre` stay at process boundaries, with `.context(...)`.
-- A public function's error MUST NOT be a dependency's error type raw: wrap it in a variant of your
-  own and keep it as `#[source]`.
-- Derive `Clone, PartialEq, Eq` (reflexive, as above) unless a cause cannot (`io::Error`), so tests
-  assert on variants.
-- Messages are lowercase, with no trailing period, say what is wrong, and never echo secret input
-  (an `InvalidToken` does not hold the token).
+  `&str`, `()` and `Box<dyn Error>` MUST NOT be the error or carry its context. `anyhow`/`eyre` only
+  outside domain code (`main`, infrastructure), with `.context(…)`.
+- A domain or library API MUST NOT return a dependency's error raw: wrap it in a variant of your
+  own, kept as `#[source]`. An infrastructure adapter whose natural contract is std's error
+  (`io::Result`) MAY return it.
+- Derive `Clone, PartialEq, Eq` (reflexive, as above) unless a cause can't (`io::Error`), so tests
+  assert variants.
+- Messages: lowercase, no trailing period, say what is wrong, never echo secret input.
 
 ## Behavior
 
-- Functions are total; code MUST NOT panic on valid input or validate user input with `assert!`.
-  `panic!`, `unwrap()` and `expect()` MUST NOT appear outside tests, except `expect()` with a clear
-  message in `main.rs` bootstrap under `#[expect(clippy::expect_used, reason = "…")]`. Bootstrap is
-  the environment failing at startup (a config file, binding a port); user input, CLI arguments
-  included, is reported as an error with a usage message and exit code, never `expect()`ed.
-- Numbers: narrowing or sign-changing conversions use `TryFrom` (the cast lints hold `as`). Money
-  uses integer minor units or a decimal type, never `f64`/`f32`. Money and quantity arithmetic that
-  can overflow uses `checked_*` and returns an error; division and remainder check a possibly-zero
-  divisor before `/` or `%`.
-- Slice `str` only at character boundaries: `split_once`, `char_indices`, `get(a..b)`; never
-  `split_at` or `&s[a..b]` at a byte offset that input can move.
-- Slice and `Vec` indexing with input-dependent bounds (`v[i]`, `&v[a..b]`) MUST use `get`/`get_mut`
-  and handle `None`, or check the bounds first.
-- Match exhaustively on your own enums: no `_ =>` arm, and no `#[non_exhaustive]` on them (it forces
-  `_` arms in the workspace's other crates); it belongs only in a crate published to users you
-  don't rebuild.
-- Time and randomness are parameters in domain logic, never ambient (`Utc::now()`, `rand`).
-- Domain output and decisions MUST NOT depend on `HashMap`/`HashSet` iteration order; use an ordered
-  collection or sort before order matters.
-- Domain types hold no interior mutability; prefer `&mut self`, leaving sharing to the caller.
-- Library code MUST NOT call `process::exit` or `process::abort`, or use `dbg!` or the print macros
-  (`println!`, `eprintln!`, …); it returns errors and logs.
-- No `Service`, `Manager`, `Helper`, `Utils`, `Misc` names; a trait is named for what it does
-  (`LoadOrders`), and it needs a second implementation or a test double to exist.
-- A macro is the last resort: a function, type or trait first, then `macro_rules!`, then a proc
-  macro.
+- Functions are total: code MUST NOT panic on valid input or `assert!` on user input. `panic!`,
+  `unwrap()`, `expect()` MUST NOT appear outside tests, except `expect()` with a clear message for
+  `main.rs` bootstrap (the environment failing at startup: a config file, binding a port) under
+  `#[expect(clippy::expect_used, reason = "…")]`. User input, CLI arguments included, is an error
+  with a usage message and exit code, never `expect()`ed.
+- A bug is neither an error variant nor a silent fallback (`unwrap_or_default()` over a state that
+  can't happen): make the state unrepresentable; where types can't, a reasoned
+  `#[expect(clippy::unreachable, …)]` marks the claim.
+- Money: integer minor units or a decimal type, never `f32`/`f64`. Money and quantity arithmetic
+  that can overflow uses `checked_*` and returns an error; check a possibly-zero divisor before `/`
+  or `%`.
+- Slice a `str` only at char boundaries (`split_once`, `char_indices`, `get(a..b)`), never
+  `split_at`/`&s[a..b]` at an offset input can move. Input-dependent indexing MUST use
+  `get`/`get_mut` and handle `None`, or check bounds first.
+- Match your own enums exhaustively: no `_ =>`, no `#[non_exhaustive]` (it forces `_` arms on the
+  workspace's other crates; only a crate published to users you don't rebuild uses it).
+- Domain code: time and randomness are parameters, never ambient; output and decisions MUST NOT
+  depend on `HashMap`/`HashSet` order (an ordered collection, or sort); no interior mutability
+  (`&mut self`; the caller shares).
+- Library code MUST NOT call `process::exit`/`abort`, `dbg!` or print macros; it returns errors and
+  logs.
+- A name says what the thing does, never a catch-all (`Manager`, `Utils`). A trait exists only for a
+  real abstraction need: a second implementation, a test double, outside implementors or a generic
+  algorithm; never for flexibility nobody uses yet.
+- Macros last: a function, type or trait; then `macro_rules!`; then a proc macro.
+- Borrow inputs (`&str`, `&[T]`, `&T`, `Option<&T>`); own only to store, return or consume. No clone
+  to quiet the borrow checker: shorten the borrow, move the value or change the API.
 
 ## Async
 
-- A trait whose futures are spawned multithreaded declares `-> impl Future<Output = …> + Send`.
-- No `std::sync::MutexGuard` across `.await`; no blocking calls on the runtime (`std::fs`, sync
-  clients, heavy CPU work): use async APIs or `spawn_blocking`.
-- Every `.await` is a cancellation point: a future dropped there MUST NOT leave an effect half done
-  (a charge made but not recorded).
-- A future MUST be awaited, returned or spawned: `let _ = future` drops it unrun. A spawned task's
-  `JoinHandle` MUST be awaited or supervised, so its error and panic are observed; detached work
-  needs an owner and a failure path.
-
-## Ownership
-
-- Borrow inputs by default (`&str`, `&[T]`, `&T`, `Option<&T>`); take ownership when the function
-  stores, returns or consumes the value. No clone just to quiet the borrow checker: shorten the
-  borrow, move the value or change the API.
+- A trait whose futures are spawned multithreaded returns `impl Future<Output = …> + Send`.
+- No `std::sync::MutexGuard` across `.await`; no blocking on the runtime (`std::fs`, sync clients,
+  heavy CPU): async APIs or `spawn_blocking`.
+- Each `.await` can cancel. A future dropped there MUST NOT break a domain invariant or silently
+  lose progress the application needs; where an operation can leave a partial effect (a partial
+  write, a charge without its record), the caller preserves, recovers, compensates or explicitly
+  accepts it.
+- A future MUST be awaited, returned or spawned; a `JoinHandle` MUST be awaited or supervised, so
+  its error and panic surface; detached work needs an owner and a failure path.
 
 ## Tests
 
-- One accepted input per constructor, and every rejection reason in domain code reached by a test
-  that asserts its specific error (`assert_eq!(Port::try_new(0), Err(ZeroPort))`). No second example of
-  a rule already pinned, and no tests of derives, getters or what the compiler guarantees.
-- Where a law exists, a property test replaces examples; a type with `Display` and `FromStr` MUST
-  have one that its `Display` parses back:
-
-  ```rust
-  proptest! {
-      #[test]
-      fn port_display_parses_back(n in 1u16..) {
-          let port = Port::try_from(n).expect("generated port is nonzero");
-          prop_assert_eq!(port.to_string().parse::<Port>(), Ok(port));
-      }
-  }
-  ```
-
-- Each forbidden state transition the types cannot rule out is tested. Integration tests in `tests/`
-  use the public API.
+- Per constructor: one accepted input, and every domain rejection reached by a test asserting its
+  exact error (`assert_eq!(Port::try_new(0), Err(ZeroPort))`). No second example of a pinned rule;
+  no tests of derives, getters or compiler guarantees.
+- A law gets a property test instead of examples; where `Display` is the type's canonical text,
+  a round-trip one MUST pin it: `prop_assert_eq!(v.to_string().parse(), Ok(v))` over generated
+  values.
+- Every forbidden transition the types allow is tested. `tests/` uses the public API.
 
 ## Lints
 
-What clippy can check, clippy checks. The test allowances cover `#[test]` functions and
-`#[cfg(test)]` code; a helper under `tests/` is neither, so it returns `Result` and uses `?`.
+What clippy can check, clippy checks. Test allowances cover `#[test]` and `#[cfg(test)]`; a `tests/`
+helper is neither (it returns `Result`, uses `?`). The lints hold: wildcard arms;
+unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe and undocumented unsafe;
+public types missing `Debug`; `PartialEq` that could be `Eq`; infallible `TryFrom`; public
+`Result<_, ()>`; never-failing `Result`; mixed `pub` fields; `Option<Option<T>>`; non-`Send`
+futures; locks across `.await`; >3 bools; glob imports; `for_each`; needless pass by value;
+`&Option` params; redundant clones; `map_err(|_| …)`; dropped `Result` or future;
+`assert!(r.is_err())`; bare `#[allow]`, missing reasons; `anyhow`/`eyre`;
+`Cell`/`RefCell`/`Mutex`/`RwLock`; banned clock/`rand`/`uuid` calls; `catch_unwind`;
+`process::abort`/`exit`; lossy `as`; `&s[a..b]` on `str`; hash `for` loops; debug and print macros.
 
-The lints hold: wildcard arms, unwrap/expect/panic and todo/unimplemented/unreachable outside
-tests, unsafe and undocumented unsafe blocks, public types missing `Debug`, a derived `PartialEq`
-that can also derive `Eq`, infallible `TryFrom`, public `Result<_, ()>`, a `Result` that never fails,
-mixed `pub` fields, `Option<Option<T>>`, non-`Send` futures, locks across `.await`, more than three
-bools, glob imports, `for_each`, needless pass by value, `&Option` parameters,
-redundant clones, `map_err(|_| …)`, a dropped `Result` or future, `assert!(r.is_err())`, bare
-`#[allow]` and missing lint reasons, `anyhow`/`eyre`, `Cell`/`RefCell`/`Mutex`/`RwLock`, the banned
-clock, `rand` and `uuid` calls, `catch_unwind`, `process::abort`, lossy `as` casts,
-`&s[a..b]` on a `str`, hash collection `for` loops, `process::exit`, debug and print macros.
+Review every other rule, and what slips past a lint that looks like it holds:
+- `new` returning `Result`; private type missing `Debug`; private `Result<_, ()>`;
+  `map_err(|e| e.to_string())` (names the cause, loses its type); `.ok()` hiding an error.
+- `Result`/future bound to `_name` or `drop`ped; `split_at` on `str`; overflowing arithmetic; hash
+  iterator chains (`map.keys().collect()`) whose order matters.
+- Time or randomness missing from `clippy.toml`; atomics, `OnceCell`, other interior mutability in
+  domain code.
+- Unused dependencies; a rejection test asserting its error in a form the lint misses, not exactly.
+- An unambiguous conversion or complete text parse without its trait: such text parsed by
+  anything but `FromStr` (`TryFrom<&str>`/`<String>` alone included), or a named function in the
+  trait's place whose doc comment doesn't say what the trait would hide (`should_implement_trait`
+  only sees a method named `from_str`).
 
-Every rule above that this list does not name is review's. Review must also catch what slips past
-a lint that looks like it holds:
+## Allowed
 
-- A `new` that returns `Result`; a private type missing `Debug`; a private `Result<_, ()>`; a
-  `map_err(|e| e.to_string())`, which names the cause and still loses its type; an `.ok()` whose
-  `None` hides an error.
-- A `Result` or future bound to `_name` or passed to `drop`; `split_at` on a `str`; overflowing
-  arithmetic; a hash iterator chain (`map.keys().collect()`) whose order matters.
-- Time or randomness calls absent from `clippy.toml`; atomics, `OnceCell` and other
-  interior-mutability wrappers in domain code.
-- An unused dependency; a test that reaches a rejection without asserting its error in a form the
-  lint misses.
-
-## Allowed: not defects
-
-These follow the rules above. In review, don't flag them, not even as nits:
-- A tag's `pub` field, `From` impl or `#[serde(transparent)]`.
-- `Result<Option<T>, E>` from a lookup; a plain `Option` from a function that cannot fail.
+Not defects, not even nits:
+- A tag's `pub` field, `#[serde(transparent)]`, and `From` where the types make the meaning obvious.
+- `Result<Option<T>, E>` from a lookup; `Option` from a function that can't fail.
 - A unit-struct error for a constructor with one failure.
-- A fallible constructor of an I/O resource named by its domain verb (`open`, `connect`, `bind`),
-  and fallible `from_*`/`with_*` constructors, instead of `try_new`.
-- An error without `Clone`/`PartialEq`/`Eq` because a cause lacks them (`io::Error`).
+- Instead of `try_new`: an I/O resource's fallible `open`/`connect`/`bind`, a fallible `with_*`,
+  and a `from_*` that chooses or that sits beside the trait a conversion requires.
+- An error lacking `Clone`/`PartialEq`/`Eq` because a cause does (`io::Error`).
 - `#[non_exhaustive]` in a crate published to users you don't rebuild.
-- The panic in a `pub(crate) const fn literal` called in `const` items, under its `#[expect]`.
-- `expect()` with a clear message in `main.rs` for a startup failure of the environment, under its
+- `literal`'s panic in `const` items, under its `#[expect]`.
+- `main.rs` `expect()` with a clear message for an environment startup failure, under its
   `#[expect]`.
-- `unwrap()`, `expect()`, `panic!` in `#[test]` functions and `#[cfg(test)]` code.
-- `anyhow`/`eyre`, the clock, randomness and locks outside domain and library code (a binary's
-  `main`, infrastructure), where clippy.toml's comments exempt them.
+- `unwrap()`, `expect()`, `panic!` in `#[test]` and `#[cfg(test)]` code.
+- `anyhow`/`eyre`, the clock, randomness and locks outside domain code, where clippy.toml's comments
+  exempt them.
 - A non-`Send` future deliberately run only on a local executor, with a reasoned
   `#[expect(clippy::future_not_send, reason = "…")]`.
+- A named parser or decoder for a parse that extracts or chooses, beside the type's `FromStr` where
+  complete text has one interpretation.

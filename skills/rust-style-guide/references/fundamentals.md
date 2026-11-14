@@ -35,12 +35,43 @@ dropping the rule lets one of these back in, the rule stays.
 | Let a type hold states the domain forbids, and remember not to build them | The type can't hold them (section 5) |
 | Report "missing" and "broken" the same way | `Option` for absence, `Result` for failure (section 6) |
 | Throw away the cause of an error, or put it in a string | Typed errors that keep their source (section 7) |
+| Hide a lossy or ambiguous conversion behind `.into()` | A trait impl only for an obvious conversion (section 4) |
 | Crash on input you didn't expect | Total functions, no panics outside tests (section 8) |
+| Turn a bug into a default value, so the data is wrong later | A bug is fixed in the types, never papered over (section 8) |
 | Add an enum variant and let old matches swallow it | No `_ =>` on your own enums (section 9) |
 | Clone until the borrow checker is quiet | Borrow unless ownership is needed (section 10) |
 | Read the clock or a random number wherever it's handy | Time and randomness are parameters (section 11) |
 | Block the runtime, or stop halfway through an effect | Async rules (section 12) |
-| Leave the rule to the reviewer's memory | A `deny` lint, on every build (next section) |
+| Leave the rule to the reviewer's memory | A `deny` lint, on every build (lint section) |
+| Apply every rule everywhere, wrapping every value and abstracting every call | Proportionality: an abstraction pays for itself (next section) |
+
+## When rules pull apart, and how much of them to apply
+
+Good rules still conflict. A conversion rule says "implement `From`", and an obviousness rule says
+"not if it surprises the caller". Without an order, two careful readers pick differently. So the
+guide ranks them, and the first wins: memory and type safety, then domain invariants, then semantic
+clarity, then std-trait interoperability, then simplicity, then performance, then style. Safety and
+invariants come first because a breach there corrupts data or memory, and no amount of clarity
+repairs that. Clarity comes before conformity, because a trait impl that misleads is worse than a
+named function that doesn't fit a pattern.
+
+Two kinds of reason may override a convention, and both are written down. A documented project
+requirement, such as a hard real-time deadline or a stable public API, can bend a convention, never
+safety or an invariant. It wins only on the point and in the scope it names, and it lives where
+decisions are made and found (`CLAUDE.md`, an ADR, the project's docs). A code comment doesn't
+count: it explains one spot, and nobody looks for a project's rules inside it. Performance can
+override a convention only with evidence: a measurement or a stated system constraint, recorded
+where the code deviates. "This might be slow" is not evidence, and most of what the guide asks for
+(newtypes, borrowing, enums) costs nothing at run time.
+
+**Proportionality** is the other half. Every abstraction here earns its place by doing a job: a
+newtype enforces an invariant or stops two values being swapped, a trait serves a real abstraction
+need, an error variant is a failure a caller can act on. Applied to a value with no
+invariant and no confusable twin, the same tools only add names and indirection. So a newtype,
+trait, error variant, layer or generic parameter exists only when it enforces an invariant,
+prevents a real misuse, names a domain concept or measurably eases maintenance. The rules say how
+such a thing is built once it is needed, never that every value needs one. A guide that makes code
+heavier than the problem has failed as surely as one that lets bugs through.
 
 ## How the lint configuration works
 
@@ -96,29 +127,35 @@ fn send_invite(to: &str) { /* was `to` checked? The signature can't say. */ }
 impl Email {
     pub fn try_new(raw: &str) -> Result<Self, InvalidEmail> { /* … */ }
 }
+impl FromStr for Email { /* calls Email::try_new: the text entry callers reach with .parse() */ }
 fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 ```
 
 **Rules, all checked in review:**
 
-- At each inbound boundary, parse external data from network messages, files and other I/O,
-  database rows, environment variables, CLI arguments, terminal input, IPC, FFI and any
-  deserialization into domain types before domain logic. Use a raw transport type when the format
-  needs one. Serde, clap and SQLx are examples of adapters; the boundary exists wherever external
-  data enters. Functions take `Email`, never the `&str` it came from, and code never checks the
-  invariant again. Reloading from storage or the wire is a new boundary and parses again.
-  Outbound serialization starts from valid domain values and must not reveal secrets.
+- At each inbound boundary, parse external data from network messages, files and other I/O, database
+  rows, environment variables, CLI arguments, terminal input, IPC, FFI and any deserialization into
+  domain types before domain logic. Serde, clap and SQLx are examples of adapters; the boundary
+  exists wherever external data enters. Functions take `Email`, never the `&str` it came from, and
+  code never checks the invariant again. Reloading from storage or the wire is a new boundary and
+  parses again. Outbound serialization starts from valid domain values and must not reveal secrets.
 - An `is_valid_x(&str) -> bool` or a `validate(&self)` over public fields becomes a constructor that
   returns the type.
-- A record, row or DTO is deserialized as is, with plain fields, and then converted with
-  `impl TryFrom<Dto> for Domain`. Deserializing straight into the domain type would mix the format
-  with the rules.
+- A request, row or DTO is built from domain types: each field whose value has a refinement or tag
+  uses it, and deserializing runs that type's constructor. The rules stay in the constructors and
+  the format only touches shape. A primitive field lets the unparsed value travel past the
+  boundary, where it can be forgotten or checked twice. A separate DTO, still built from domain
+  types, exists only when the wire's shape differs from the domain's (names, nesting, flattening),
+  or as the mirror serde needs to reach a cross-field constructor
+  (`#[serde(try_from = "Raw")]`). Its `TryFrom` calls the domain type's constructor, so a rule
+  that spans fields lives in one place and holds however the value is built.
 
 ## 3. Newtypes: tags and refinements
 
 A newtype wraps a primitive so that the compiler can tell values apart. A value gets one when it
-carries an invariant, or when it could be swapped with another value of the same primitive. A
-newtype comes in one of two kinds, and its field's visibility says which.
+carries an invariant, or when it could be swapped with another value of the same primitive, and
+not otherwise: a local count or a one-off label with neither gains only a name (proportionality,
+above). A newtype comes in one of two kinds, and its field's visibility says which.
 
 ```rust
 pub struct UserId(pub u64);   // a tag: any u64 is a valid id; it only stops mix-ups
@@ -126,10 +163,13 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
 ```
 
 - A **tag** has no invariant. It exists so that `transfer(from: AccountId, to: AccountId)` can't be
-  called with a `UserId`. Its field is `pub`, and `From<u64>` and `#[serde(transparent)]` are fine,
-  since there is nothing to check.
-- A **refinement** has an invariant. Its fields are private, so the constructor is the only way to
-  make one.
+  called with a `UserId`. Its field is `pub`, and `#[serde(transparent)]` is fine, since there is
+  nothing to check. `From` is fine where the two types make the meaning obvious (`From<u64> for
+  UserId`). Where the primitive carries a unit or scale the target doesn't name, as in
+  `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4).
+- A **refinement** is any type with an invariant, whether it wraps one value or holds several (a
+  `Span` whose `start < end`). Its fields are private to its module, not `pub(crate)`, so the
+  constructor is the only way to make one; same-crate code can't slip past it either.
 
 | Lint | Catches |
 | --- | --- |
@@ -161,9 +201,11 @@ pub struct Weight { grams: u64 }   // right: integer grams are Eq for real
 ```
 
 A domain value that can't be `Eq` usually points to a modeling bug. Money as `f64` should be integer
-cents or a decimal type.
+cents or a decimal type. The one honest hand-written `Eq` is on a refinement whose invariant rules
+out `NaN`, such as a finite-float type: its constructor makes reflexivity true, so the promise
+holds. `Hash` and `Ord` follow the same test, wherever the fields allow and the contract holds.
 
-## 4. One constructor, named `try_new`, that says exactly how it fails
+## 4. One validating constructor, reached through std's traits
 
 ```rust
 pub struct Port(NonZeroU16);
@@ -189,8 +231,10 @@ impl TryFrom<u16> for Port { /* calls Port::try_new */ }
 impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
 ```
 
-- **Every way in goes through one constructor.** `FromStr`, `TryFrom`, serde and the database
-  decoder all call it. With two paths, the rule ends up checked in one and forgotten in the other.
+- **Every way in runs one validation.** `FromStr`, `TryFrom`, serde and the database decoder all
+  run the same check, usually by calling the constructor; an owned `TryFrom<String>` may share
+  the check and keep its allocation instead. With two checks, the rule ends up updated in one and
+  forgotten in the other.
 - **It's named `try_new`, following Google's Rust guide:** "If the constructor returns a `Result`,
   use `try_new()`." There are two reasons. In most languages `new` builds a value and that's all,
   so a reader coming to the code expects it to succeed. And it reads better: `Email::try_new(raw)?`
@@ -198,9 +242,10 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
   The other constructor names come from the
   [Rust API Guidelines, C-CTOR](https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor).
   A type that represents an I/O resource names its constructor in the domain's terms:
-  `File::open`, `Mmap::open`, `TcpStream::connect`, `UdpSocket::bind`. A conversion constructor is
-  prefixed `from_` (`String::from_utf8`), and a secondary constructor is suffixed `with_`
-  (`Vec::with_capacity`). These may return `Result` under their own names. This guide departs
+  `File::open`, `Mmap::open`, `TcpStream::connect`, `UdpSocket::bind`. A secondary constructor is
+  prefixed `with_` (`Vec::with_capacity`), and a `from_` name marks a parse that chooses among
+  forms (`Config::from_json`). These may return `Result` under their own names. A conversion is
+  the trait itself: a `from_*` may sit beside it, never stand in for it (below). This guide departs
   from the API Guidelines and std in one place, for the two reasons above: they allow a `new` that
   returns `Result` (`NonZero::new`, `CString::new`), and here `new` always means "cannot fail".
 - **It returns `Result`, never `Option`.** `Option` means "there is nothing here". A rejected input
@@ -210,8 +255,10 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
   caller handle three cases that can't happen, and nobody could tell from the type which ones are
   real. `FromStr` wraps the constructor's error beside its own syntax failure, as `ParsePortError`
   does.
-- **`Display` is `FromStr`'s exact inverse.** A value printed and parsed back gives the same value.
-  clap's `default_value_t` relies on this, and a property test pins it (section 14).
+- **`Display` prints what `FromStr` parses back.** A value printed and parsed back gives the same
+  value. The reverse need not hold when `FromStr` accepts several spellings: `"HIGH"` parses, and
+  prints back as `high`. clap's `default_value_t` relies on the round trip, and a property test
+  pins it (section 14).
 
 | Lint | Catches |
 | --- | --- |
@@ -240,15 +287,25 @@ impl Email {
         Ok(Self(format!("{local}@{}", domain.to_lowercase())))
     }
 }
-// Ann@Example.com == Ann@example.com, but Ann@example.com != ann@example.com
+// FromStr and TryFrom<String> call this; Ann@Example.com == Ann@example.com,
+// but Ann@example.com != ann@example.com
 ```
 
 Normalize anywhere else and two equal values can compare unequal, so a `HashSet<Email>` holds the
-same address twice.
+same address twice. The same reasoning limits `Borrow<str>`: a `HashMap<Email, _>` looked up with a
+`&str` hashes and compares the `str`, so `Borrow` is honest only when `Eq`, `Hash` and `Ord` on the
+type agree with those on its text. After a normalization such as the email's, they don't, and a
+lookup by the raw string misses an entry that is there.
 
 ### No back doors
 
-A refinement must not hand out a way around its constructor.
+The real promise is stronger than "there is a validating constructor": no value of the type can
+exist that breaks its invariant, however it was obtained. One unchecked path undoes every check on
+the others, so each path is closed or routed through the constructor.
+
+- **Every other way to obtain a value keeps the invariant**: operators (an `Add` on a bounded
+  quantity), mutating methods, and APIs behind a feature flag or `#[cfg(test)]` that a build can
+  switch on.
 
 - **No `Deref` to the inner type.** It turns every `String` method into an `Email` method. Offer
   `as_str()`, `get()`, `AsRef` or `into_inner()` instead.
@@ -268,14 +325,68 @@ A refinement must not hand out a way around its constructor.
 
   A derived `Deserialize`, `#[serde(transparent)]` and `#[sqlx(transparent)]` all build the value
   without calling the constructor. A database `Decode` or `FromSql` decodes the inner type and
-  calls `try_from`. A clap field of the type parses through `FromStr`, with no custom
-  `value_parser`.
+  calls `try_from`. A clap field of the type parses through `FromStr`; a closed set uses
+  `ValueEnum`, which lists the choices in `--help`. A custom `value_parser` is a second way in,
+  so it needs a stated reason.
 - **A compile-time literal still calls `try_new`.** `const fn literal(n) -> Self` panics on failure,
   under an `#[expect(clippy::panic, reason = "…")]`, and is called only in `const` items. There, the
   panic happens at compile time, so an invalid literal fails the build:
   `pub const HTTP: Port = Port::literal(80);`. It is `pub(crate)`. Nothing stops another crate
   from calling a `pub` one at run time with a value from its users, and then it panics there. When
   another crate really needs the constants, make it `pub` with a `# Panics` doc section.
+
+### Making a value from another, for every type
+
+What the source is decides how the code is written. This holds for records, enums and tags as much
+as for refinements.
+
+- **A conversion turns a typed value into the same value in another type**, so it is a std trait:
+  `From` when it can't fail, `TryFrom` when it fails instead of losing anything. Wrapping a
+  primitive without a check, as a tag does, is a conversion too. Generic code, `.into()` and
+  `.try_into()` find the trait; nobody finds an inherent `from_u16`. Such a method may stay beside
+  the trait, but can't stand in for it. A name kept instead must say in its doc comment what the
+  trait would hide: a loss, a rounding, an ambiguity or a choice. Merely describing the input is
+  no reason. A constructor taking several values is not a conversion at all.
+- **A trait impl promises an obvious conversion.** Std's `From` docs describe a strong convention,
+  not a language rule: the conversion is lossless, value-preserving and obvious (std itself bends
+  it where the difference is representational, as with `f32` to `f64`). This guide adopts the
+  convention as policy, and `TryFrom` makes the same promise except that it fails instead of
+  losing anything. Generic code calls `.into()` without reading a name, so an impl that rounds,
+  truncates or picks one meaning among several surprises every caller. Such a conversion is a
+  named function, whatever else the rules say: obviousness outranks trait conformity.
+- **A unit the primitive doesn't carry is named, and typed once it travels.** A `u32` can't say
+  "grams", so `From<u32> for Weight` would hide the unit and is ambiguous. Where the raw number
+  enters, a named constructor says it, as `Weight::from_grams(u32)` and `Duration::from_secs`
+  do; that is explicit, and a unit type there would be ceremony. Once bare quantities travel
+  through the domain, though, grams and kilograms sit side by side in one primitive, and nothing
+  stops one being passed for the other. Then the newtype rule of section 3 applies: give the unit
+  a type, the conversion becomes obvious again (`impl From<Grams> for Weight`), and the mix-up no
+  longer compiles.
+- **A parse interprets a representation.** Text or bytes are read by a grammar or an encoding
+  into a typed value. That is what separates it from a conversion: `Percentage::try_from(150u8)`
+  checks a value but interprets nothing, so it is a conversion.
+- **Complete text with one interpretation parses through `FromStr`**, which `.parse()`, clap and
+  generic code reach for. A `parse_priority(&str)` or a `TryFrom<&str>` on its own leaves the type
+  unreachable from all of them. What matters is one unambiguous interpretation, not one accepted
+  spelling: `"HIGH"`, `"high"` and `"High"` may all parse, while `Display` prints one canonical
+  form, so printing and parsing back still round-trip. A closed set's `ValueEnum` or serde names
+  are its canonical text, and a `FromStr` for it accepts the same names.
+- **Text `TryFrom` sits beside `FromStr`, with the same semantics.** It doesn't have to go through
+  `FromStr`: `FromStr` receives `&str` and must allocate for an owned value, while a
+  `TryFrom<String>` can run the same check and keep the caller's allocation. The rule is one
+  validation and identical results, not one call path. `FromStr` returns an owned value, so a type
+  that borrows from its input uses `TryFrom<&'a str>` or a named parser.
+- **Bytes have no `FromStr`, and often no obvious trait either.** A complete, self-contained byte
+  representation with one context-free interpretation may use `TryFrom<&[u8]>`. Most binary
+  formats need more: a byte order, a protocol version, a decoding policy, a borrowed result or a
+  stream. Those are named decoders, because the trait would hide the choice.
+- **A parse that does more than read one value is a named function.** When it cuts the value out of
+  a larger input (a URL's query string, a header before a body) or yields many values, a `parse_*`
+  name says what it takes out. When the whole input is one collection, a collection type with its
+  own `FromStr` is the better home, since the list then has a name and a trait. When it must choose
+  something the input can't say (one format among several, a lossy or strict policy, extra context),
+  a `from_*` name says the choice, as in `Config::from_json` or `String::from_utf8_lossy`. No trait
+  can carry that information, so here the name is the right interface, not a way around one.
 
 ## 5. Types say what values mean
 
@@ -386,18 +497,23 @@ pub enum OrderError {
 - **Errors are typed.** `Err(())` says *that* something failed but not *what*, and it doesn't
   implement `std::error::Error`, so it composes with nothing. A `String` error can only be printed,
   not matched on. `Box<dyn Error>` also erases which failures a library function can return;
-  use a typed error with variants for its possible failures.
+  use a typed error with variants for its possible failures. It implements
+  `Error + Send + Sync + 'static` so it can cross threads and tasks, be returned from a spawned
+  task, and be wrapped as a `#[source]` or boxed into `anyhow` at the edge without a wrapper.
 - `result_unit_err` checks public functions only. Private helpers returning `Result<_, ()>` still
   lose the failure's meaning and require review.
 - **The cause is kept.** `map_err(|_| …)` replaces the real cause (an `io::Error`, a parse error)
   with your own error and throws the original away. Wrap it with `#[source]` or `#[from]` so the
-  chain survives. A public function's error never exposes a dependency's error type directly,
-  because then every caller depends on that library too. The lint misses a named cause converted to
-  text, such as `map_err(|e| e.to_string())`; review checks that the source remains typed.
+  chain survives. A domain or library API never exposes a dependency's error type directly,
+  because then every caller depends on that library too. An infrastructure adapter whose natural
+  contract is std's own error, such as a file store returning `io::Result`, is the exception: the
+  type is already the shared vocabulary, as std itself shows. The lint misses a named cause
+  converted to text, such as `map_err(|e| e.to_string())`; review checks that the source remains
+  typed.
 - **`anyhow` and `eyre` stay where errors only get printed:** `main`, a CLI command, a test. In a
   library, they hide the error's type, so callers can print it but can't match on it. The `Result`
   aliases are listed separately because banning `anyhow::Error` doesn't catch `anyhow::Result<T>`. A
-  binary crate's own `clippy.toml` leaves these four entries out. At the process boundary, add
+  binary crate's own `clippy.toml` leaves these four entries out. Where `anyhow` is used, add
   `.context(...)` so the printed chain says what was being attempted.
 - **Errors derive `Clone, PartialEq, Eq`** so tests can `assert_eq!` on them, unless a cause can't
   (`io::Error` has none of them).
@@ -435,6 +551,13 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
 - `todo!` and `unimplemented!` are panics that ship by accident.
 - `unreachable!` claims something the compiler doesn't check. An exhaustive `match`, or a type that
   can't hold the impossible case, makes the compiler check it.
+- **A bug is not an error, and not a default either.** Banning panics must not push code into
+  pretending. `Result` is for failures a caller can act on: bad input, an unavailable store. A
+  broken precondition or an impossible state is a bug. Dressing it up as an error variant gives
+  callers a case they can't handle, and papering over it with a fallback (`unwrap_or_default()`)
+  hides it until the data is wrong. Fix the API or the types so the state can't arise. When even
+  an exhaustive match or a type can't express it, the narrow exception is a reasoned
+  `#[expect(clippy::unreachable, reason = "…")]` at that spot, where every reader sees the claim.
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
   nothing when the binary is built with `panic = "abort"`.
 - `process::abort` also stops the process without running destructors. `process::exit` is caught by
@@ -598,7 +721,11 @@ Each `.await` is a point where the task can pause while other tasks run.
   }
   ```
 
-  A future dropped at an `.await` must not leave an effect half done. How to make it safe, by
+  Not every partial effect is a bug: Tokio documents `write_all` as not cancellation-safe, and a
+  partial write is often fine. The requirement is that cancellation never breaks a domain
+  invariant or silently loses progress the application needs. Where an operation can stop
+  halfway, the caller decides on purpose: preserve the progress, recover, compensate, or accept
+  the partial outcome and say so. A charge without its record fails that test; how to fix it, by
   ordering the steps or making a retry harmless, is a design decision. The Rust fact is that the
   drop can happen at any `.await`.
 
@@ -619,11 +746,11 @@ awkward.
 - **Names say what something is or does.** `Service`, `Manager`, `Helper`, `Utils` and `Misc` say
   only that something exists. `CaptureService` could do anything, while `ChargeCard` or
   `LoadOrders` names the job.
-- **A trait needs a second implementation or a test double.** A trait with one implementation adds
+- **A trait needs a real abstraction need.** A trait with one implementation and no other use adds
   a name and an indirection that every reader has to step through, and it hides which code
-  actually runs, all for flexibility nobody uses yet. Write the concrete type first. Extract the
-  trait when a second implementation, or a test double standing in for the network, disk or
-  clock, actually needs it.
+  actually runs, all for flexibility nobody uses yet. Write the concrete type first. A trait earns
+  its place with a second implementation, a test double standing in for the network, disk or
+  clock, implementors outside the crate, or a generic algorithm written against it.
 - **A macro is the last resort.** Macros hide control flow, give worse error messages and confuse
   tooling. Try a function, a type or a trait first, then `macro_rules!`, and a proc macro only
   after that.
@@ -652,8 +779,10 @@ the suggestion.
   that error.** A rejection no test reaches can be deleted and nothing goes red.
 - **No second example of a rule already pinned, and no tests of derives, getters or anything else
   the compiler guarantees.** They cost upkeep and prove nothing.
-- **Where a law exists, a property test replaces examples.** A type with `Display` and `FromStr` has
-  one that its printed form parses back:
+- **Where a law exists, a property test replaces examples.** Where `Display` is the type's
+  canonical text, the one `FromStr` reads, a property test pins that its printed form parses back.
+  Rust doesn't promise `Display` is lossless or machine-readable, so a type whose `Display` is
+  only for people needs no such test:
 
   ```rust
   proptest! {
@@ -688,7 +817,7 @@ threads, no async), and that part doesn't apply here.
 | `#[non_exhaustive]` only where breakage can't be fixed in place | Never on your own enums inside a workspace (section 9) |
 | On someone else's non-exhaustive enum, list the known variants | Already what `wildcard_enum_match_arm` asks for (section 9) |
 | A constructor that returns `Result` is `try_new` | The same rule (section 4). Until November 2026 this guide used `new` |
-| `Eq` is a promise the compiler can't check | Reflexivity spelled out, and `Eq` only by derive (section 3) |
+| `Eq` is a promise the compiler can't check | Reflexivity spelled out; `Eq` by derive, by hand only where the invariant guarantees it (section 3) |
 
 The same review also adopted one point from a video walkthrough of Google's guide, the presenter's
 own preference rather than Google's rule: `Option` means absence and `Result` means failure. A
@@ -698,7 +827,7 @@ self-evident failure.
 
 **Already here, often more strictly:** an enum instead of a bool parameter, a newtype instead of a
 type alias, pattern matching instead of check-then-unwrap, borrowing instead of cloning, a
-`SAFETY:` comment on `unsafe`, and a trait only for a second implementation or a test double.
+`SAFETY:` comment on `unsafe`, and a trait only for a real abstraction need.
 
 **Kept against Google, on purpose:**
 
