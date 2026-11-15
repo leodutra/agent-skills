@@ -90,7 +90,8 @@ rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why,
   number; never `as`). A primitive whose type doesn't carry its unit is ambiguous, so no trait: a
   named constructor says the unit where the raw number enters (`from_grams`); once quantities
   travel through the domain where units could be swapped, they get a unit type (the newtype rule)
-  and convert by these rules (`From<Grams>`). A conversion that would surprise a reader of
+  and convert by these rules (`From<Grams> for Weight`); a unit change that rounds (grams to whole
+  ounces) is a named method (`Grams::to_whole_ounces`). A conversion that would surprise a reader of
   `.into()` is never a trait: a named function says what it does. A constructor taking several
   values is not a conversion.
 - **Parsing**: interpreting a text or byte representation by a grammar or encoding. Complete text
@@ -246,7 +247,7 @@ pub const HTTP: Port = Port::literal(80);
   in an order it shows, and handles the errors.
 - A poisoned lock means a panic interrupted an update: its data is never read again
   (`PoisonError::into_inner`); the poisoning is an error.
-- A name says what the thing does, never a catch-all (`Manager`, `Utils`) or an abbreviation a
+- A name says what the thing does, never a catch-all (`Manager`, `Service`, `Utils`) or an abbreviation a
   newcomer wouldn't know; a single-letter lifetime or generic parameter only where one letter is
   unambiguous. Accessors follow std: `foo()`, `foo_mut()`, `set_foo()`, `take_foo()`,
   `replace_foo()`, never `get_foo()`.
@@ -258,6 +259,9 @@ pub const HTTP: Port = Port::literal(80);
 - Macros last: a function, type or trait; then `macro_rules!`; then a proc macro.
 - Borrow inputs (`&str`, `&[T]`, `&T`, `Option<&T>`); own only to store, return or consume. No clone
   to quiet the borrow checker: shorten the borrow, move the value or change the API.
+- Shared ownership (`Rc`/`Arc`) only where the lifetime really is shared (state that spawned tasks
+  or handlers hold), never to escape a borrow; `Weak` breaks a cycle. A handle already shared
+  inside (sqlx `Pool`, reqwest `Client`) is cloned, not wrapped in another `Arc`.
 
 ## Async
 

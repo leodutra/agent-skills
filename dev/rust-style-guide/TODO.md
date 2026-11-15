@@ -93,7 +93,10 @@ Sonnet's safety filter and one review came back empty.
   conversion (parcel-weights); main flagged the finite-float `Eq` on Kilometres
   (route-distances), missed `TryFrom` on Quantity (conversion-traits) and the JSON DTO
   (cli-json-recipients); both arms missed the `CaptureService` name and called a real input error
-  in match-roster a bug.
+  in match-roster a bug. That workspace's grading.json files were later overwritten with empty
+  placeholders by a `--regrade --dry-run` (a bug, since fixed: `--dry-run` now refuses an existing
+  workspace); the scores above stand, the runs and reviews are intact, and 40 grading calls would
+  restore the per-assertion evidence.
 - [ ] Watch the rounding-conversion miss: SKILL.md already says a conversion that rounds is no
   trait; see whether a second sample repeats it before rewording.
 

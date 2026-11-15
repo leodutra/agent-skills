@@ -13,7 +13,9 @@ coding-agent one. --ref must name a commit whose skill differs from the working 
 refuses to compare a skill with itself. --new-only runs the same cases and graders for the current
 skill, without a baseline arm; use the default A/B when comparing versions. A call that fails is
 retried once, then skipped with its error printed; --resume WORKSPACE finishes only the runs and
-gradings still missing. --no-skill adds an arm
+gradings still missing. --samples N runs each case and arm N times and prints each sample's
+total per arm, so a small gap can be read against the spread. A grading call the safety filter
+refuses is retried once with --grade-fallback (default opus), recorded as graded_by. --no-skill adds an arm
 with no skill loaded (same task, no system prompt added), so a case shows what the skill itself buys. Workspace:
 .bench/rsg-<time>/ (git-excluded); --regrade re-grades one without new runs. It spends your
 claude.ai usage: the default four cases make 8 runs and 8 grading calls, about 400k input tokens
@@ -34,6 +36,8 @@ selection = ap.add_mutually_exclusive_group()
 selection.add_argument("--cases")
 selection.add_argument("--all", action="store_true", help="run every case, not the default four")
 ap.add_argument("--model", default="sonnet")
+ap.add_argument("--samples", type=int, default=1, help="runs per case and arm")
+ap.add_argument("--grade-fallback", default="opus", help="grading model when the safety filter refuses a grading call")
 ap.add_argument("-j", type=int, default=4)
 ap.add_argument("--dry-run", action="store_true")
 ap.add_argument("--new-only", action="store_true", help="grade the current skill without a baseline arm")
@@ -41,6 +45,9 @@ ap.add_argument("--no-skill", action="store_true", help="add an arm with no skil
 ap.add_argument("--regrade", metavar="WORKSPACE", help="grade an earlier workspace again; no new runs")
 ap.add_argument("--resume", metavar="WORKSPACE", help="finish the missing runs and gradings of a workspace")
 a = ap.parse_args()
+if a.dry_run and (a.regrade or a.resume):
+    # A dry run writes placeholder results; in an existing workspace they would overwrite the real ones.
+    sys.exit("--dry-run only makes a new workspace; it can't be combined with --regrade or --resume")
 if a.cases:
     cases = a.cases.split(",")
 elif a.all:
@@ -68,16 +75,16 @@ else:
             shutil.rmtree(W)
             sys.exit(f"the working tree's skill is identical to {a.ref}'s: nothing to compare (pass --ref <older commit>)")
     arms = (("new",) if a.new_only else ("new", "old")) + (("none",) if a.no_skill else ())
-    plan = [(c, arm) for c in cases for arm in arms]
+    plan = [(c, arm, k) for c in cases for arm in arms for k in range(a.samples)]
     ids = [f"r{n:02d}" for n in range(1, len(plan) + 1)]
     random.shuffle(ids)
-    mapping = {rid: {"case": c, "arm": arm} for rid, (c, arm) in zip(ids, plan)}
+    mapping = {rid: {"case": c, "arm": arm, "sample": k} for rid, (c, arm, k) in zip(ids, plan)}
     json.dump(mapping, open(f"{W}/mapping.json", "w"), indent=1)
 
 
-def claude(prompt, cwd, system=None, tools="", extra=(), replace_system=False):
+def claude(prompt, cwd, system=None, tools="", extra=(), replace_system=False, model=None):
     cmd = ["claude", "-p", prompt, "--tools", tools, "--setting-sources", "", "--strict-mcp-config",
-           "--no-session-persistence", "--model", a.model, "--output-format", "json", *extra]
+           "--no-session-persistence", "--model", model or a.model, "--output-format", "json", *extra]
     if system: cmd += ["--system-prompt" if replace_system else "--append-system-prompt", system]
     if a.dry_run: return {"result": "", "usage": {}, "dry_run": " ".join(cmd[:2] + cmd[3:])[:300]}
     p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=1800)
@@ -146,9 +153,17 @@ def grade(rid):
                 'and your reasoning>", "passed": true|false}, ...]}, one entry per assertion, in order. Write the '
                 'evidence first and set "passed" to what it concludes.')
     # A grader needs no coding-agent prompt: replacing it keeps the call to the grading text alone.
+    graded_by = a.model
     for _ in range(2):  # one retry: a call now and then comes back empty
-        out = claude(prompt, d, "You grade an assistant's output against assertions and reply with JSON only.",
-                     replace_system=True)
+        try:
+            out = claude(prompt, d, "You grade an assistant's output against assertions and reply with JSON only.",
+                         replace_system=True, model=graded_by)
+        except RuntimeError as exc:
+            # The safety filter sometimes refuses a harmless grading call, and refuses it again on retry
+            # with the same model; another model grades it instead, and the file says which.
+            if "safeguards flagged" not in str(exc) or graded_by == a.grade_fallback: raise
+            graded_by = a.grade_fallback
+            continue
         m = re.search(r"\{.*\}", out.get("result", ""), re.S)
         if m: break
     if not m and not a.dry_run:
@@ -157,7 +172,7 @@ def grade(rid):
     if not a.dry_run and (len(verdict.get("expectations", [])) != len(gs)
                           or any(not isinstance(e.get("passed"), bool) for e in verdict["expectations"])):
         raise RuntimeError(f"{case}: grader returned incomplete assertions")
-    json.dump({**verdict, "usage": out.get("usage", {})}, open(f"{d}/grading.json", "w"), indent=1)
+    json.dump({**verdict, "graded_by": graded_by, "usage": out.get("usage", {})}, open(f"{d}/grading.json", "w"), indent=1)
     return rid
 
 
@@ -183,7 +198,7 @@ to_grade = sorted(r for r in mapping if (not a.cases or mapping[r]["case"] in a.
 with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(grade), to_grade))
 
 # Unblind: score per case and arm, and the tokens every call reported.
-score, tokens = {}, 0
+score, tokens, per_sample = {}, 0, {}
 missing = sorted(r for r in mapping if not done(r, "grading.json"))
 for rid in missing:
     print(f"MISSING {rid} {mapping[rid]['case']} {mapping[rid]['arm']}: not scored (rerun with --resume {W})")
@@ -201,7 +216,10 @@ for rid, m in sorted(mapping.items()):
         u = json.load(open(f"{d}/{f}")).get("usage", {})
         tokens += sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
     tokens += sum(g.get("usage", {}).get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
-    score.setdefault(m["case"], {})[m["arm"]] = (p, n, fails)
+    sp, sn, sf = score.setdefault(m["case"], {}).get(m["arm"], (0, 0, []))
+    score[m["case"]][m["arm"]] = (sp + p, sn + n, sf + fails)
+    per_sample.setdefault(m["arm"], {}).setdefault(m.get("sample", 0), [0, 0])
+    per_sample[m["arm"]][m.get("sample", 0)][0] += p; per_sample[m["arm"]][m.get("sample", 0)][1] += n
 label = {"new": "new", "old": a.ref, "none": "no-skill"}
 present = [arm for arm in label if any(arm in s for s in score.values())]
 for c, s in score.items():
@@ -210,4 +228,7 @@ for c, s in score.items():
         for f in s[arm][2]: print(f"    {label[arm]} FAIL: {f}")
 summary = "total " + "   ".join(f"{label[arm]} {sum(s[arm][0] for s in score.values() if arm in s)}/"
                                 f"{sum(s[arm][1] for s in score.values() if arm in s)}" for arm in present)
+if any(len(v) > 1 for v in per_sample.values()):
+    print("per sample " + "   ".join(f"{label[arm]} " + ", ".join(f"{p}/{n}" for _, (p, n) in sorted(per_sample[arm].items()))
+                                     for arm in present))
 print(f"{summary}   input tokens {tokens:,}   workspace {W}")

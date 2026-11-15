@@ -463,7 +463,9 @@ as for refinements.
   through the domain, though, grams and kilograms sit side by side in one primitive, and nothing
   stops one being passed for the other. Then the newtype rule of section 3 applies: give the unit
   a type, the conversion becomes obvious again (`impl From<Grams> for Weight`), and the mix-up no
-  longer compiles.
+  longer compiles. A change of unit is a conversion only when nothing is lost: grams to whole
+  ounces rounds, so it is a named method (`Grams::to_whole_ounces`), never `From<Grams> for
+  Ounces`, whose `.into()` would round silently in every caller.
 - **A parse interprets a representation.** Text or bytes are read by a grammar or an encoding
   into a typed value. That is what separates it from a conversion: `Percentage::try_from(150u8)`
   checks a value but interprets nothing, so it is a conversion.
@@ -758,6 +760,16 @@ value. Clippy already flags `&String`, `&Vec` and `&Box` parameters by default. 
 original is never used again is pure cost: move the value instead. If a clone only quiets a borrow
 error, shorten the borrow or change the API to make the needed ownership clear.
 
+**Shared ownership is for shared lifetimes.** `Rc` and `Arc` keep a value alive until the last
+clone is dropped, wherever that is, so ownership stops being visible: nobody can say when the value
+goes, a cycle of them never goes at all (break it with `Weak`), and each clone and drop of an
+`Arc` updates an atomic counter. That is the right price where the lifetime really is shared:
+`tokio::spawn` needs `'static` futures, so state that spawned tasks or request handlers hold is an
+`Arc`, and frameworks such as axum ask for `Clone + 'static` state. It is the wrong price for
+escaping a borrow error, which is the clone-to-quiet-the-borrow-checker case above in another
+form. Many handles are already an `Arc` inside (sqlx's `Pool`, reqwest's `Client`); clone those
+directly instead of wrapping them in a second `Arc`.
+
 **Domain values don't mutate behind your back.**
 
 | Entry in `disallowed-types` | Reason |
@@ -1013,8 +1025,12 @@ argument-free `new` (`new_without_default`), and `&T` over `&Box<T>`, `&[T]` ove
   add `Eq` only where it means to promise it.
 - **No `panic!` for broken invariants.** Google allows it. This guide makes functions total
   (section 8), which Google itself notes some codebases do.
-- **`Arc` is fine.** Google's "avoid `Rc` and `Arc`" fits Chromium's threading model. An async
-  backend shares state across tasks with `Arc`.
+- **`Arc` where the lifetime is shared.** Google says to avoid `Rc` and `Arc` unless the
+  alternative is unreasonably complex, which fits Chromium, where async is banned and work runs
+  on sequences. An async backend can't follow it: a spawned task can't borrow from its spawner,
+  so state the tasks share is an `Arc`. What carries over is the reason behind Google's rule:
+  shared ownership hides when a value goes, so it is used only where the lifetime really is
+  shared, never to escape a borrow (section 10).
 
 **Not taken:** required `#[must_use]` (`Result` is already must-use, and the lint is noisy), required
 doc comments (too noisy for application code), extra type annotations, and `format!` instead of
