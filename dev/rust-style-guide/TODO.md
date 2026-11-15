@@ -100,6 +100,27 @@ Sonnet's safety filter and one review came back empty.
 - [ ] Watch the rounding-conversion miss: SKILL.md already says a conversion that rounds is no
   trait; see whether a second sample repeats it before rewording.
 
+## Discriminating run (2026-11-15, Sonnet, 2 samples, b1fa458's skill)
+
+`bench.py --new-only --no-skill --samples 2` on the 2 new code cases and the 8 hardened review
+cases (`.bench/rsg-20261115-064514-hqh1zgag`): skill 101/101, no skill 93/106 (per sample: skill
+53/53 and 48/48, no skill 45/53 and 48/53). One skill-arm grading of review-match-roster is
+refused by the safety filter under both Sonnet and Opus, so it is unscored.
+
+- What separates the arms: the code cases (rate-limit-config 14 vs 7: validate-after-deserialize,
+  shared error enum, public fields; ticket-reassign 14 vs 10: no FromStr round-trip proptest,
+  clippy under the lint set) and review-ledger-writer's error messages (10 vs 8).
+- The other seven hardening traps don't: Sonnet without the skill flags them too. Review cases
+  with planted defects stay near the ceiling; writing tasks expose the defaults.
+- route-distances grader 01 was too strict once the serde trap existed (the review rightly said
+  the bypass undermines Eq, and asked to derive the hand-written PartialEq): fixed and regraded.
+
+- [ ] More code cases, fewer review cases: the next ones should exercise today's additions (an
+  unsafe FFI wrapper, a type whose Default or Ord tempts a hand-written impl, shared state across
+  spawned tasks), since no current case tests them.
+- [ ] Only then the A/B against the skill before the Google additions (0e5d632): on today's cases
+  both skill versions sit at the ceiling, so a tie would say nothing about the additions.
+
 ## 5. Commit
 
 - [ ] Commit `bench.py`, the eight cases and this file; then the benchmark results, if they
