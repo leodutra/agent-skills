@@ -169,7 +169,7 @@ def retried(step):
             try:
                 return step(rid)
             except Exception as exc:
-                if n == 2:
+                if n == 2 or "usage_limit_reached" in str(exc):  # retrying a spent limit only spends nothing twice
                     print(f"SKIPPED {step.__name__} {rid} {mapping[rid]}: {str(exc)[:300]}", file=sys.stderr)
     return attempt
 

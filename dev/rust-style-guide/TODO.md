@@ -85,7 +85,11 @@ Sonnet's safety filter and one review came back empty.
   (`reasoning_extraction`); try rewording the grading prompt, or grade it with another model.
 - [ ] Watch the two misses on a second sample before changing anything: private-type `Debug`
   and catch-all names.
-- [ ] Re-run the benchmark on the skill with the unsafe, derive and ctor additions.
+- [ ] Re-run the benchmark on the skill with the unsafe, derive and ctor additions. Started
+  2026-11-15 as `bench.py --all --ref main` (all 20 cases, 72bfa04's skill): the claude.ai usage
+  limit ran out after 27 of 40 runs, before any grading. Once it resets, finish it without
+  repeating the 27: `python3 dev/rust-style-guide/bench.py --ref main --resume
+  .bench/rsg-20261115-000044-ia3ulb76` (13 runs + 40 grading calls).
 
 ## 5. Commit
 
