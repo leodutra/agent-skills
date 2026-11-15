@@ -1,0 +1,6 @@
+02-the-project-passes-cargo-clippy.md
+03-the-route-limit-and-window.md
+04-deserializing-runs-the-validation.md
+05-the-burst-rule-lives-in.md
+06-each-constructors-error-holds-only.md
+07-every-rejection-reason-is-asserted.md

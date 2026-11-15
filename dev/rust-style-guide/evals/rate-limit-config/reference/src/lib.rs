@@ -188,15 +188,26 @@ mod tests {
         assert_eq!(rules[0].burst(), Some(n(5)));
     }
 
+    fn load_failure(json: &str) -> String {
+        let err = load(json).unwrap_err();
+        std::error::Error::source(&err).unwrap().to_string()
+    }
+
     #[test]
     fn load_rejects_a_zero_limit() {
-        assert!(matches!(load(r#"[{"route": "/api", "limit": 0, "window": 60}]"#), Err(LoadError(_))));
+        let cause = load_failure(r#"[{"route": "/api", "limit": 0, "window": 60}]"#);
+        assert!(cause.contains("expected a nonzero u32"), "{cause}");
+    }
+
+    #[test]
+    fn load_rejects_a_zero_burst() {
+        let cause = load_failure(r#"[{"route": "/api", "limit": 10, "window": 60, "burst": 0}]"#);
+        assert!(cause.contains("expected a nonzero u32"), "{cause}");
     }
 
     #[test]
     fn load_runs_the_burst_rule() {
-        let rules = r#"[{"route": "/api", "limit": 10, "window": 60, "burst": 11}]"#;
-        let err = load(rules).unwrap_err();
-        assert!(std::error::Error::source(&err).unwrap().to_string().contains("burst 11 exceeds the limit 10"));
+        let cause = load_failure(r#"[{"route": "/api", "limit": 10, "window": 60, "burst": 11}]"#);
+        assert!(cause.contains("burst 11 exceeds the limit 10"), "{cause}");
     }
 }

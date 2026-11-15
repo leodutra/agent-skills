@@ -1,5 +1,6 @@
 ---
 type: llm
+kind: correctness
 focus: trace
 weight: 1
 ---

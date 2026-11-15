@@ -15,12 +15,25 @@ skill, without a baseline arm; use the default A/B when comparing versions. A ca
 retried once, then skipped with its error printed; --resume WORKSPACE finishes only the runs and
 gradings still missing. --samples N runs each case and arm N times and prints each sample's
 total per arm, so a small gap can be read against the spread. A grading call the safety filter
-refuses is retried once with --grade-fallback (default opus), recorded as graded_by. --no-skill adds an arm
+refuses is retried once with --grade-fallback (default opus), recorded as graded_by.
+
+Validity. Each grader's front matter says its kind: `correctness` (a defect any competent Rust
+reviewer would call a bug: a panic, a wrong result, lost data, a leaked secret, an invariant
+input can break) or `convention` (this skill's own rule, which another guide may not share). The
+table reports the two apart; only the correctness total can show better code, the convention
+total shows the skill is followed. Graders are frozen per workspace: --resume and --regrade refuse
+a case whose graders changed since the run, unless --grader-change "<reason>" is given, which
+regrades that case in every arm and logs the change in grader-changes.md. --report WORKSPACE
+prints a workspace's table with no calls. --validate grades each case's reference/ (a correct
+answer: every assertion must pass) and mainstream/ (the common answer: it must fail the graders
+named in mainstream/expected-fails), so a grader is trusted only once it tells them apart.
+
+--no-skill adds an arm
 with no skill loaded (same task, no system prompt added), so a case shows what the skill itself buys. Workspace:
 .bench/rsg-<time>/ (git-excluded); --regrade re-grades one without new runs. It spends your
 claude.ai usage: the default four cases make 8 runs and 8 grading calls, about 400k input tokens
 with Sonnet (2026-11-12); --all runs every case."""
-import argparse, json, os, random, re, shutil, subprocess, sys, tempfile, time
+import argparse, hashlib, json, os, random, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -44,26 +57,58 @@ ap.add_argument("--new-only", action="store_true", help="grade the current skill
 ap.add_argument("--no-skill", action="store_true", help="add an arm with no skill loaded")
 ap.add_argument("--regrade", metavar="WORKSPACE", help="grade an earlier workspace again; no new runs")
 ap.add_argument("--resume", metavar="WORKSPACE", help="finish the missing runs and gradings of a workspace")
+ap.add_argument("--report", metavar="WORKSPACE", help="print a workspace's table; no calls")
+ap.add_argument("--grader-change", metavar="REASON", help="accept changed graders: regrade those cases in every arm, log why")
+ap.add_argument("--validate", action="store_true", help="grade each case's reference/ and mainstream/ answers")
 a = ap.parse_args()
-if a.dry_run and (a.regrade or a.resume):
+existing = a.regrade or a.resume or a.report
+if a.dry_run and existing:
     # A dry run writes placeholder results; in an existing workspace they would overwrite the real ones.
     sys.exit("--dry-run only makes a new workspace; it can't be combined with --regrade or --resume")
 if a.cases:
     cases = a.cases.split(",")
-elif a.all:
+elif a.all or a.validate:
     cases = sorted(c for c in os.listdir(EVALS) if os.path.exists(f"{EVALS}/{c}/prompt.md"))
 else:
     cases = DEFAULT
 
-if a.regrade or a.resume:
-    W = os.path.abspath(a.regrade or a.resume)
+if a.validate:
+    cases = [c for c in cases if os.path.isdir(f"{EVALS}/{c}/reference")]
+if existing:
+    W = os.path.abspath(existing)
 else:
     bench_root = os.path.join(REPO, ".bench")
     os.makedirs(bench_root, exist_ok=True)
     W = tempfile.mkdtemp(prefix="rsg-" + time.strftime("%Y%m%d-%H%M%S") + "-", dir=bench_root)
 skills = {"new": f"{W}/s1/rust-style-guide", "old": f"{W}/s2/rust-style-guide"}
 is_review = lambda c: os.path.exists(f"{EVALS}/{c}/place-files.sh")
-if a.regrade or a.resume:
+
+
+def graders(case):
+    """(file, kind, assertion) per LLM grader of a case, in order; a code case's 01/02 are grade_cargo's."""
+    out = []
+    for g in sorted(g for g in os.listdir(f"{EVALS}/{case}/graders") if not g.startswith(".")):
+        if not is_review(case) and g.startswith(("01-", "02-")): continue
+        text = open(f"{EVALS}/{case}/graders/{g}").read()
+        kind = re.search(r"(?m)^kind: (\w+)$", text)
+        out.append((g, kind.group(1) if kind else "untagged", strip(text)))
+    return out
+
+
+fingerprint = lambda case: hashlib.sha256(json.dumps([(g, t) for g, _, t in graders(case)]).encode()).hexdigest()[:16]
+if a.validate:
+    W = tempfile.mkdtemp(prefix="rsg-validate-" + time.strftime("%Y%m%d-%H%M%S") + "-", dir=os.path.join(REPO, ".bench"))
+    mapping = {}
+    for c in cases:
+        for arm in ("reference", "mainstream"):
+            src = f"{EVALS}/{c}/{arm}"
+            if not os.path.isdir(src): continue
+            rid = f"r{len(mapping) + 1:02d}"
+            shutil.copytree(src, f"{W}/runs/{rid}", ignore=shutil.ignore_patterns("expected-fails", "target"))
+            json.dump({}, open(f"{W}/runs/{rid}/claude.json", "w"))
+            mapping[rid] = {"case": c, "arm": arm, "sample": 0}
+    json.dump(mapping, open(f"{W}/mapping.json", "w"), indent=1)
+elif existing:
     mapping = json.load(open(f"{W}/mapping.json"))
 else:
     shutil.copytree(f"{REPO}/skills/rust-style-guide", skills["new"], ignore=shutil.ignore_patterns(".*"))
@@ -80,6 +125,25 @@ else:
     random.shuffle(ids)
     mapping = {rid: {"case": c, "arm": arm, "sample": k} for rid, (c, arm, k) in zip(ids, plan)}
     json.dump(mapping, open(f"{W}/mapping.json", "w"), indent=1)
+if not existing:
+    json.dump({c: fingerprint(c) for c in {m["case"] for m in mapping.values()}}, open(f"{W}/graders.json", "w"), indent=1)
+    changed = []
+else:
+    # Graders are frozen per workspace: a verdict only counts against the graders it was given.
+    frozen = json.load(open(f"{W}/graders.json")) if os.path.exists(f"{W}/graders.json") else {}
+    if not frozen:
+        print(f"note: {W} predates frozen graders" + ("" if a.report else "; freezing the current ones now"), file=sys.stderr)
+    changed = sorted(c for c in {m["case"] for m in mapping.values()} if frozen and frozen.get(c) != fingerprint(c))
+    if changed and a.report:
+        print(f"warning: graders changed since grading for {', '.join(changed)}; their verdicts are stale", file=sys.stderr)
+    elif changed and not a.grader_change:
+        sys.exit(f"graders changed since this workspace was graded: {', '.join(changed)}. Pass --grader-change "
+                 '"<reason>" to regrade those cases in every arm and log the change.')
+    elif changed:
+        with open(f"{HERE}/grader-changes.md", "a") as log:
+            log.write(f"- {time.strftime('%Y-%m-%d')} {os.path.basename(W)}: {', '.join(changed)} — {a.grader_change}\n")
+    if not a.report:
+        json.dump({c: fingerprint(c) for c in {m["case"] for m in mapping.values()}}, open(f"{W}/graders.json", "w"), indent=1)
 
 
 def claude(prompt, cwd, system=None, tools="", extra=(), replace_system=False, model=None):
@@ -132,18 +196,17 @@ def run(rid):
 
 def grade(rid):
     case, d = mapping[rid]["case"], f"{W}/runs/{rid}"
-    gs = sorted(g for g in os.listdir(f"{EVALS}/{case}/graders") if not g.startswith("."))
+    gs = graders(case)
     if not is_review(case):
         if not a.dry_run:
             c = subprocess.run([sys.executable, "-I", f"{HERE}/grade_cargo.py", d], capture_output=True, text=True)
             open(f"{d}/cargo.json", "w").write(c.stdout)
-        gs = [g for g in gs if not g.startswith(("01-", "02-"))]
         hidden = lambda r: any(p == "target" or p.startswith(".") for p in os.path.relpath(r, d).split(os.sep) if p != ".")
         files = [os.path.join(r, f) for r, _, fs in os.walk(d) if not hidden(r) for f in fs if f.endswith((".rs", ".toml"))]
         output = "\n\n".join(f"`{os.path.relpath(f, d)}`:\n```\n{open(f).read()}```" for f in sorted(files))
     else:
         output = f"The input files:\n\n{inputs(case)}\n\nreview.md:\n\n{open(f'{d}/review.md').read()}"
-    asserts = [strip(open(f"{EVALS}/{case}/graders/{g}").read()) for g in gs]
+    asserts = [t for _, _, t in gs]
     prompt = ("Grade one assistant output against assertions. PASS needs clear evidence; when unsure, FAIL. An "
               "assertion that says review.md \"does not\" call something a defect passes only if review.md never "
               "calls it a defect or asks to change it, not even as a nit or a \"consider\".\n\nThe task:\n\n"
@@ -172,7 +235,8 @@ def grade(rid):
     if not a.dry_run and (len(verdict.get("expectations", [])) != len(gs)
                           or any(not isinstance(e.get("passed"), bool) for e in verdict["expectations"])):
         raise RuntimeError(f"{case}: grader returned incomplete assertions")
-    json.dump({**verdict, "graded_by": graded_by, "usage": out.get("usage", {})}, open(f"{d}/grading.json", "w"), indent=1)
+    json.dump({**verdict, "kinds": [k for _, k, _ in gs], "graded_by": graded_by, "usage": out.get("usage", {})},
+              open(f"{d}/grading.json", "w"), indent=1)
     return rid
 
 
@@ -190,15 +254,41 @@ def retried(step):
 
 
 done = lambda rid, f: os.path.exists(f"{W}/runs/{rid}/{f}")
-if not a.regrade:
+if not (a.regrade or a.report or a.validate):
     to_run = sorted(r for r in mapping if not (a.resume and done(r, "claude.json")))
     with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(run), to_run))
-to_grade = sorted(r for r in mapping if (not a.cases or mapping[r]["case"] in a.cases.split(","))
-                  and done(r, "claude.json") and not (a.resume and done(r, "grading.json")))
-with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(grade), to_grade))
+if not a.report:
+    to_grade = sorted(r for r in mapping if (a.validate or not a.cases or mapping[r]["case"] in a.cases.split(","))
+                      and done(r, "claude.json")
+                      and not (a.resume and done(r, "grading.json") and mapping[r]["case"] not in changed))
+    with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(grade), to_grade))
+
+if a.validate:
+    # A grader is trusted once it tells a correct answer from the common one.
+    bad = 0
+    for rid, m in sorted(mapping.items(), key=lambda kv: (kv[1]["case"], kv[1]["arm"])):
+        d = f"{W}/runs/{rid}"
+        if not done(rid, "grading.json"):
+            print(f"{m['case']} {m['arm']}: not graded"); bad += 1; continue
+        verdicts = {g: e["passed"] for (g, _, _), e in zip(graders(m["case"]), json.load(open(f"{d}/grading.json"))["expectations"])}
+        if done(rid, "cargo.json") and os.path.getsize(f"{d}/cargo.json"):
+            c = json.load(open(f"{d}/cargo.json"))
+            for g in os.listdir(f"{EVALS}/{m['case']}/graders"):
+                if g.startswith("01-"): verdicts[g] = bool(c.get("test_passed"))
+                if g.startswith("02-"): verdicts[g] = bool(c.get("clippy_current_lints"))
+        expect_fail = set()
+        if m["arm"] == "mainstream":
+            expect_fail = set(open(f"{EVALS}/{m['case']}/mainstream/expected-fails").read().split())
+        for g, passed in sorted(verdicts.items()):
+            want = g.split("-")[0] not in {x.split("-")[0] for x in expect_fail}
+            if passed != want:
+                bad += 1
+                print(f"MISGRADED {m['case']} {m['arm']} {g}: expected {'pass' if want else 'fail'}, got {'pass' if passed else 'fail'}")
+    print(f"validate: {len(mapping)} answers, {bad} misgraded   workspace {W}")
+    sys.exit(1 if bad else 0)
 
 # Unblind: score per case and arm, and the tokens every call reported.
-score, tokens, per_sample = {}, 0, {}
+score, tokens, per_sample, by_kind = {}, 0, {}, {}
 missing = sorted(r for r in mapping if not done(r, "grading.json"))
 for rid in missing:
     print(f"MISSING {rid} {mapping[rid]['case']} {mapping[rid]['arm']}: not scored (rerun with --resume {W})")
@@ -206,12 +296,17 @@ for rid, m in sorted(mapping.items()):
     if rid in missing: continue
     d = f"{W}/runs/{rid}"; p = n = 0; fails = []
     g = json.load(open(f"{d}/grading.json"))
+    # Older gradings carry no kinds: take them from the current graders by position.
+    kinds = g.get("kinds") or [k for _, k, _ in graders(m["case"])]
+    tally = by_kind.setdefault(m["arm"], {})
     if os.path.exists(f"{d}/cargo.json") and os.path.getsize(f"{d}/cargo.json"):
         c = json.load(open(f"{d}/cargo.json"))
-        for k in ("test_passed", "clippy_current_lints"):
+        for k, kind in (("test_passed", "correctness"), ("clippy_current_lints", "convention")):
             n += 1; p += bool(c.get(k)); fails += [] if c.get(k) else [k]
-    for e in g.get("expectations", []):
+            t = tally.setdefault(kind, [0, 0]); t[0] += bool(c.get(k)); t[1] += 1
+    for i, e in enumerate(g.get("expectations", [])):
         n += 1; p += bool(e.get("passed")); fails += [] if e.get("passed") else [e.get("text", "")[:80]]
+        t = tally.setdefault(kinds[i] if i < len(kinds) else "untagged", [0, 0]); t[0] += bool(e.get("passed")); t[1] += 1
     for f in ("claude.json",):
         u = json.load(open(f"{d}/{f}")).get("usage", {})
         tokens += sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
@@ -228,6 +323,9 @@ for c, s in score.items():
         for f in s[arm][2]: print(f"    {label[arm]} FAIL: {f}")
 summary = "total " + "   ".join(f"{label[arm]} {sum(s[arm][0] for s in score.values() if arm in s)}/"
                                 f"{sum(s[arm][1] for s in score.values() if arm in s)}" for arm in present)
+for kind in sorted({k for t in by_kind.values() for k in t}):
+    print(f"{kind:12}" + "   ".join(f"{label[arm]} {by_kind[arm][kind][0]}/{by_kind[arm][kind][1]}"
+                                   for arm in present if kind in by_kind.get(arm, {})))
 if any(len(v) > 1 for v in per_sample.values()):
     print("per sample " + "   ".join(f"{label[arm]} " + ", ".join(f"{p}/{n}" for _, (p, n) in sorted(per_sample[arm].items()))
                                      for arm in present))

@@ -121,6 +121,26 @@ refused by the safety filter under both Sonnet and Opus, so it is unscored.
 - [ ] Only then the A/B against the skill before the Google additions (0e5d632): on today's cases
   both skill versions sit at the ceiling, so a tie would say nothing about the additions.
 
+## Validity (2026-11-15)
+
+- Every grader says its kind: `correctness` (48: a bug any Rust reviewer would agree on) or
+  `convention` (105: this skill's own rule). The table reports them apart. Recomputed from saved
+  gradings: discriminating run correctness skill 30/30, no skill 30/30, convention 71/71 against
+  63/76; the 12-case run against main correctness 33/33 both, convention 59/61 against 65/67. So
+  far every gap is convention: the evals show the skill is followed, not that the code is better.
+  The classification is the skill author's judgment; a second reader should check it.
+- Graders are frozen per workspace (graders.json); a change needs `--grader-change "<reason>"`,
+  regrades every arm and lands in grader-changes.md (the four earlier changes are backfilled there).
+- `--validate` grades each case's reference/ and mainstream/ answers. Both code cases pass it: the
+  first pass caught a weak test in the rate-limit reference (a zero limit asserted only as some
+  load error), fixed. Review cases have no reference/mainstream review yet.
+
+- [ ] Correctness evidence: hidden behavioral tests in the code cases, and tasks where the common
+  approach produces a real bug (money in f64, swappable same-typed ids, a lookup hiding failures).
+- [ ] reference/ and mainstream/ review.md for the review cases, so their graders validate too.
+- [ ] At least 3 samples on the cases that disagree; a gap within the per-sample spread is a tie.
+- [ ] Cases written by someone who hasn't read the skill.
+
 ## 5. Commit
 
 - [ ] Commit `bench.py`, the eight cases and this file; then the benchmark results, if they

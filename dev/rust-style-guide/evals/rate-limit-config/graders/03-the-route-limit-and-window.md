@@ -1,5 +1,6 @@
 ---
 type: llm
+kind: convention
 focus: trace
 weight: 1
 ---
