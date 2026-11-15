@@ -11,7 +11,9 @@ for `cargo` and `tail` only (other commands are refused); cargo still runs added
 run that sees only that run's output, never its arm, under a one-line system prompt instead of the
 coding-agent one. --ref must name a commit whose skill differs from the working tree's; the script
 refuses to compare a skill with itself. --new-only runs the same cases and graders for the current
-skill, without a baseline arm; use the default A/B when comparing versions. --no-skill adds an arm
+skill, without a baseline arm; use the default A/B when comparing versions. A call that fails is
+retried once, then skipped with its error printed; --resume WORKSPACE finishes only the runs and
+gradings still missing. --no-skill adds an arm
 with no skill loaded (same task, no system prompt added), so a case shows what the skill itself buys. Workspace:
 .bench/rsg-<time>/ (git-excluded); --regrade re-grades one without new runs. It spends your
 claude.ai usage: the default four cases make 8 runs and 8 grading calls, about 400k input tokens
@@ -37,6 +39,7 @@ ap.add_argument("--dry-run", action="store_true")
 ap.add_argument("--new-only", action="store_true", help="grade the current skill without a baseline arm")
 ap.add_argument("--no-skill", action="store_true", help="add an arm with no skill loaded")
 ap.add_argument("--regrade", metavar="WORKSPACE", help="grade an earlier workspace again; no new runs")
+ap.add_argument("--resume", metavar="WORKSPACE", help="finish the missing runs and gradings of a workspace")
 a = ap.parse_args()
 if a.cases:
     cases = a.cases.split(",")
@@ -45,15 +48,15 @@ elif a.all:
 else:
     cases = DEFAULT
 
-if a.regrade:
-    W = os.path.abspath(a.regrade)
+if a.regrade or a.resume:
+    W = os.path.abspath(a.regrade or a.resume)
 else:
     bench_root = os.path.join(REPO, ".bench")
     os.makedirs(bench_root, exist_ok=True)
     W = tempfile.mkdtemp(prefix="rsg-" + time.strftime("%Y%m%d-%H%M%S") + "-", dir=bench_root)
 skills = {"new": f"{W}/s1/rust-style-guide", "old": f"{W}/s2/rust-style-guide"}
 is_review = lambda c: os.path.exists(f"{EVALS}/{c}/place-files.sh")
-if a.regrade:
+if a.regrade or a.resume:
     mapping = json.load(open(f"{W}/mapping.json"))
 else:
     shutil.copytree(f"{REPO}/skills/rust-style-guide", skills["new"], ignore=shutil.ignore_patterns(".*"))
@@ -97,7 +100,7 @@ def inputs(case):
 def run(rid):
     case, arm = mapping[rid]["case"], mapping[rid]["arm"]
     d, skill = f"{W}/runs/{rid}", skills.get(arm)
-    os.makedirs(d)
+    os.makedirs(d, exist_ok=True)
     system = skill and ("The rust-style-guide skill is loaded for this task"
               + ("." if is_review(case) else f"; its files are in {skill}.") + "\n\n" + open(f"{skill}/SKILL.md").read())
     task = strip(open(f"{EVALS}/{case}/prompt.md").read())
@@ -158,14 +161,34 @@ def grade(rid):
     return rid
 
 
+def retried(step):
+    # A call now and then fails for no reason of its own (an empty reply, a false safety flag): retry once,
+    # then report and skip it, so one bad call doesn't throw away the rest of the batch.
+    def attempt(rid):
+        for n in (1, 2):
+            try:
+                return step(rid)
+            except Exception as exc:
+                if n == 2:
+                    print(f"SKIPPED {step.__name__} {rid} {mapping[rid]}: {str(exc)[:300]}", file=sys.stderr)
+    return attempt
+
+
+done = lambda rid, f: os.path.exists(f"{W}/runs/{rid}/{f}")
 if not a.regrade:
-    with ThreadPoolExecutor(a.j) as ex: list(ex.map(run, sorted(mapping)))
-to_grade = sorted(r for r in mapping if not a.cases or mapping[r]["case"] in a.cases.split(","))
-with ThreadPoolExecutor(a.j) as ex: list(ex.map(grade, to_grade))
+    to_run = sorted(r for r in mapping if not (a.resume and done(r, "claude.json")))
+    with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(run), to_run))
+to_grade = sorted(r for r in mapping if (not a.cases or mapping[r]["case"] in a.cases.split(","))
+                  and done(r, "claude.json") and not (a.resume and done(r, "grading.json")))
+with ThreadPoolExecutor(a.j) as ex: list(ex.map(retried(grade), to_grade))
 
 # Unblind: score per case and arm, and the tokens every call reported.
 score, tokens = {}, 0
+missing = sorted(r for r in mapping if not done(r, "grading.json"))
+for rid in missing:
+    print(f"MISSING {rid} {mapping[rid]['case']} {mapping[rid]['arm']}: not scored (rerun with --resume {W})")
 for rid, m in sorted(mapping.items()):
+    if rid in missing: continue
     d = f"{W}/runs/{rid}"; p = n = 0; fails = []
     g = json.load(open(f"{d}/grading.json"))
     if os.path.exists(f"{d}/cargo.json") and os.path.getsize(f"{d}/cargo.json"):

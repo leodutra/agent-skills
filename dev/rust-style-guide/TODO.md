@@ -21,7 +21,7 @@ and when a run starts. Bench workspaces go in `.bench/`, not the scratchpad.
 
 ## 2. Benchmark the rewrite
 
-- [ ] `python3 dev/rust-style-guide/bench.py --all --ref main`. `--ref HEAD` refuses: the rewrite
+- [x] `python3 dev/rust-style-guide/bench.py --all --ref main`. `--ref HEAD` refuses: the rewrite
   is committed, so the working tree's skill equals HEAD's; `main` holds the pre-rewrite skill.
   12 cases × 2 arms = 24 runs + 24 grading calls (Sonnet).
 - [x] The nested `claude` CLI can't reach the API from the sandbox: the first attempt
@@ -55,12 +55,39 @@ and when a run starts. Bench workspaces go in `.bench/`, not the scratchpad.
     no newtypes, traits, error types or layers asked for.
   - `review-match-roster` (bug versus error): an error variant and an `unwrap_or_default` for
     states the constructor rules out; real input errors and an `Option` lookup are controls.
-- [ ] Run them: `bench.py --cases <the eight> --ref main --no-skill` (8 × 3 = 24 tool-less review
+- [x] Run them: `bench.py --cases <the eight> --ref main --no-skill` (8 × 3 = 24 tool-less review
   calls + 24 grading calls). Read each run's review.md before trusting a grader: a case whose
   no-skill arm passes everything tests nothing, and a control that every arm fails may be a grader
   problem.
 
-## 4. Commit
+## Results (2026-11-15, Sonnet, one run per arm)
+
+The benchmark ran on the skill as of 5e3c617 (before the unsafe, derive and ctor additions).
+`bench.py` gained `--resume` and a retry-then-skip per call after one grading call was refused by
+Sonnet's safety filter and one review came back empty.
+
+- 12 original cases (`.bench/rsg-20261114-234541-gocqx7tb`): new 92/94, main 98/100. The new
+  arm's `review-conversion-traits` grading is refused by the filter on every attempt, so it is
+  unscored; on the 11 comparable cases, new 92/94 against main 93/94: a tie at one sample. The
+  new arm missed a private `AccountNumber` without `Debug` (settlement-boundaries) and the generic
+  `CaptureService` name (capture-service); main missed the JSON DTO (cli-json-recipients).
+- 8 adversarial cases (`.bench/rsg-20261114-235302-42fkfrhf`): new 31/31, main 30/31, no-skill
+  30/31. They don't separate the arms: Sonnet without the skill passes nearly all of them.
+- Two graders were wrong, not the runs, and were fixed: `review-orders-store` 06 now accepts a
+  finite-float refinement whose constructor rejects NaN (the rewrite's own fix), and
+  `review-cli-format-flag` 04 accepts `writeln!` with its error handled in place of `println!`.
+
+## 4. Follow-ups
+
+- [ ] Harden the adversarial cases until the no-skill arm fails some: subtler controls (the
+  traps the skill's own wording would trip a careless reader into), fewer self-evident defects.
+- [ ] Score `review-conversion-traits` for the new arm: its grading call trips Sonnet's filter
+  (`reasoning_extraction`); try rewording the grading prompt, or grade it with another model.
+- [ ] Watch the two misses on a second sample before changing anything: private-type `Debug`
+  and catch-all names.
+- [ ] Re-run the benchmark on the skill with the unsafe, derive and ctor additions.
+
+## 5. Commit
 
 - [ ] Commit `bench.py`, the eight cases and this file; then the benchmark results, if they
   change anything.

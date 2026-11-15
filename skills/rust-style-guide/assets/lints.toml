@@ -6,10 +6,18 @@
 # Any `unsafe` at all. Lints: unsafe minimized. `forbid` cannot be lifted in code: a crate that
 # truly needs unsafe sets this to "deny" and puts #[expect(unsafe_code, reason = "…")] on each item.
 unsafe_code = "forbid"
+# An unsafe operation in an `unsafe fn` body outside an `unsafe` block (warns by default only from
+# edition 2024). Lints: every unsafe operation sits in a block with its own SAFETY comment.
+unsafe_op_in_unsafe_fn = "deny"
 # A public type without Debug. Refinements: every newtype and every error provides Debug.
 missing_debug_implementations = "deny"
 
 [lints.clippy]
+# A hand-written `Default` that a derive would produce. Refinements: derive what the derive gets right;
+# hand-write only behavior that must differ.
+derivable_impls = "deny"
+# A hand-written `Clone` on a `Copy` type. Same rule.
+expl_impl_clone_on_copy = "deny"
 # A `TryFrom` whose error is `Infallible`. Refinements: every input is valid, so implement `From`.
 infallible_try_from = "deny"
 # A fn returning `Result` or `Option` that only ever returns `Ok` or `Some`. Refinements: an error
@@ -99,6 +107,8 @@ fn_params_excessive_bools = "deny"
 disallowed_types = "deny"
 # The functions clippy.toml bans. Behavior: no abort; time and randomness are domain inputs.
 disallowed_methods = "deny"
+# The macros clippy.toml bans. Behavior: no code runs before or after `main` (`#[ctor]`, `#[dtor]`).
+disallowed_macros = "deny"
 # Library code never terminates its caller; `exit` permits calls in `main` only.
 exit = "deny"
 # Debug and print macros do not belong in library code. Binary and build-script targets that
@@ -108,6 +118,8 @@ print_stdout = "deny"
 print_stderr = "deny"
 # An `unsafe` block without a `// SAFETY:` comment. Lints: every unsafe block documents its invariants.
 undocumented_unsafe_blocks = "deny"
+# An `unsafe` block with more than one unsafe operation. Lints: each SAFETY comment justifies one.
+multiple_unsafe_ops_per_block = "deny"
 # A bare `#[allow]`. Lints: silence with `#[expect]`, which fails once the lint no longer fires.
 allow_attributes = "deny"
 # A silencing attribute with no `reason`. Lints: a tool's verdict is never waved away without saying why.

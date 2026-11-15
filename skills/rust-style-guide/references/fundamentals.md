@@ -104,6 +104,9 @@ Five decisions shape the whole setup.
 | --- | --- |
 | `unsafe_code = "forbid"` | any `unsafe` |
 | `undocumented_unsafe_blocks` | an `unsafe` block with no `// SAFETY:` comment |
+| `multiple_unsafe_ops_per_block` | an `unsafe` block holding more than one unsafe operation |
+| `unsafe_op_in_unsafe_fn` | an unsafe operation in an `unsafe fn` body outside an `unsafe` block |
+| `missing_safety_doc` (clippy default) | a public `unsafe fn` without a `# Safety` section |
 
 Rust's main promise is that safe code can't corrupt memory. An `unsafe` block is a proof the
 compiler can't check, and domain or backend code almost never needs one. `forbid` is stricter than
@@ -111,6 +114,31 @@ compiler can't check, and domain or backend code almost never needs one. `forbid
 `unsafe`, such as an FFI wrapper, lowers this one lint to `deny` and puts an
 `#[expect(unsafe_code, reason = "…")]` on each item. Then the `// SAFETY:` comment states the
 invariant the block relies on, so a reviewer can check the proof the compiler couldn't.
+
+Where `unsafe` is needed, it is fenced, so the unchecked proof stays small enough to review:
+
+- **Only where safe code can't do the job**, and the crate says why. When the reason is speed, a
+  benchmark shows it: performance overrides a convention only with a measurement (precedence,
+  above), and an unchecked proof is far more than a convention.
+- **Behind a safe API, in a module or crate of its own.** Domain code calls the wrapper and never
+  sees `unsafe`. "Safe" means no argument a caller can pass causes undefined behavior. A condition
+  only the caller can guarantee keeps the function an `unsafe fn` whose `# Safety` section states
+  it.
+- **One unsafe operation per block**, so each `SAFETY:` comment justifies exactly one thing. A
+  block doing three things under one comment invites the comment to cover only the first.
+
+```rust
+/// # Safety
+/// `ptr` must point to `len` initialized bytes that stay valid and unchanged for `'buf`.
+pub unsafe fn bytes<'buf>(ptr: *const u8, len: usize) -> &'buf [u8] {
+    // SAFETY: the caller guarantees `len` initialized bytes at `ptr`, valid for `'buf`.
+    unsafe { std::slice::from_raw_parts(ptr, len) }
+}
+```
+
+The caller-held condition (`ptr` and `len`) can't be checked inside, so `bytes` stays `unsafe fn`;
+a wrapper that owns the buffer, and so knows both, can offer a safe `as_bytes(&self) -> &[u8]`
+instead.
 
 ## 2. Parse, don't validate
 
@@ -169,6 +197,17 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
   `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4). That
   `From` is also why a function takes `AccountId` itself, never `impl Into<AccountId>`: the
   generic accepts any bare `u64`, and the mix-up the tag exists to stop compiles again.
+
+  ```rust
+  fn close(id: impl Into<AccountId>) { … }
+  close(order.customer_id.0);   // compiles: a customer's raw u64 becomes an AccountId
+
+  fn close(id: AccountId) { … }
+  close(order.customer_id.0);   // error[E0308]: expected `AccountId`, found `u64`
+  ```
+
+  A caller converting on purpose still can, in plain sight: `close(AccountId::from(raw))`. The rule
+  is about the parameter accepting the primitive silently, not about conversion.
 - A **refinement** is any type with an invariant, whether it wraps one value or holds several (a
   `Span` whose `start < end`). Its fields are private to its module, not `pub(crate)`, so the
   constructor is the only way to make one; same-crate code can't slip past it either.
@@ -206,6 +245,67 @@ A domain value that can't be `Eq` usually points to a modeling bug. Money as `f6
 cents or a decimal type. The one honest hand-written `Eq` is on a refinement whose invariant rules
 out `NaN`, such as a finite-float type: its constructor makes reflexivity true, so the promise
 holds. `Hash` and `Ord` follow the same test, wherever the fields allow and the contract holds.
+
+### Derive, unless the derived behavior is wrong
+
+| Lint | Catches |
+| --- | --- |
+| `derivable_impls` | a hand-written `Default` a derive would produce |
+| `expl_impl_clone_on_copy` | a hand-written `Clone` on a `Copy` type |
+| `derived_hash_with_manual_eq`, `derive_ord_xor_partial_ord` (clippy defaults) | `Hash` or `Ord` derived beside a hand-written `PartialEq` or `PartialOrd`, which can disagree |
+
+A derive is correct by construction and changes with the fields. A hand-written impl that does
+what the derive would is code to read, and it goes stale when a field is added and the impl isn't
+updated. So a trait is hand-written only where the derived behavior is *wrong* for the type, and
+then every trait that must agree with it is hand-written too: `a == b` must imply equal hashes, and
+`Ord` must agree with `==`. The cases that come up:
+
+- **A secret's `Debug`** is redacted by hand: the derived one prints the secret.
+  `impl fmt::Debug for ApiKey { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("ApiKey(***)") } }`
+- **`Default`** is derived when the fields' defaults are the type's default, hand-written when the
+  default is something else, and absent when no valid default exists. A refinement such as `Port`
+  has none: the derive would build `Port(0)`, and the invariant forbids it.
+- **`Ord`**: the derive compares fields in declaration order and variants in declaration order.
+  Declare them in the domain's order rather than hand-write the comparison. An order only one
+  caller needs (orders by total, today) is a `sort_by_key` at that call, not the type's `Ord`.
+
+  ```rust
+  #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+  pub enum Severity { Low, Medium, High, Critical }   // declared in order: Low < Critical
+  ```
+
+- **A finite float** is the one hand-written `Eq`, and the one place this goes wrong quietly.
+  `-0.0 == 0.0` is true, but the two have different bits and `total_cmp` orders them apart, so a
+  `Hash` over `to_bits()` or an `Ord` over `total_cmp` disagrees with `==`. Normalizing in the
+  constructor keeps a single zero:
+
+  ```rust
+  #[derive(Debug, Clone, Copy, PartialEq)]
+  pub struct Km(f64);   // finite, never negative
+
+  impl Km {
+      pub fn try_new(km: f64) -> Result<Self, InvalidKm> {
+          if !km.is_finite() || km < 0.0 {
+              return Err(InvalidKm);
+          }
+          Ok(Self(if km == 0.0 { 0.0 } else { km }))   // -0.0 becomes 0.0: one zero, one hash
+      }
+  }
+
+  impl Eq for Km {}   // the constructor rejects NaN, so a == a for every Km
+  impl Hash for Km {
+      fn hash<H: Hasher>(&self, state: &mut H) { self.0.to_bits().hash(state) }
+  }
+  impl PartialOrd for Km {
+      fn partial_cmp(&self, other: &Self) -> Option<Ordering> { Some(self.cmp(other)) }
+  }
+  impl Ord for Km {
+      fn cmp(&self, other: &Self) -> Ordering { self.0.total_cmp(&other.0) }
+  }
+  ```
+
+  Every other way to make a `Km`, such as an `Add`, goes through `try_new` too: two finite values
+  can sum to infinity.
 
 ## 4. One validating constructor, reached through std's traits
 
@@ -567,6 +667,20 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   `PoisonError::into_inner` reads it anyway, so the half-done update becomes the state everyone
   works from. The poisoning is reported as an error instead, like any other failure the caller
   can't fix in place.
+
+  ```rust
+  // wrong: carries on from whatever the panicking thread left half-done
+  let mut cache = self.cache.lock().unwrap_or_else(PoisonError::into_inner);
+
+  // right: the poisoning is a failure the caller sees
+  #[expect(clippy::map_err_ignore, reason = "PoisonError holds the guard, so it can't be a #[source]")]
+  let mut cache = self.cache.lock().map_err(|_| CacheError::Poisoned)?;
+  ```
+
+  The one recovery that never reads the old data is rebuilding it: take the guard, overwrite the
+  whole value, then `clear_poison`, under a reasoned `#[expect(clippy::disallowed_methods)]`. A lock
+  that doesn't poison (`tokio::sync::Mutex`, `parking_lot`) leaves the same half-done data after a
+  panic with no flag at all, so no lint helps there: keep the code holding it panic-free.
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
   nothing when the binary is built with `panic = "abort"`.
 - `process::abort` also stops the process without running destructors. `process::exit` is caught by
@@ -666,6 +780,7 @@ infrastructure code, such as connection pools and caches, legitimately needs loc
 | `SystemTime::now`, `Instant::now`, `chrono::Utc::now` | "pass the time in" |
 | `rand::random`, `rand::rng`, `rand::thread_rng` | "pass the source of randomness in" |
 | `uuid::Uuid::new_v4`, `uuid::Uuid::now_v7` | "pass the id in" |
+| `disallowed-macros`: `ctor::ctor`, `ctor::dtor` | code that runs before or after `main` |
 
 `iter_over_hash_type` flags `for` loops over a `HashMap` or `HashSet`, but not iterator chains such
 as `map.keys().collect()`. Review checks those chains and whether order can affect domain output or
@@ -682,6 +797,13 @@ fn is_expired(&self) -> bool { Utc::now() > self.expires_at }
 // Time is just a value: a test picks the moment it needs.
 fn is_expired(&self, now: DateTime<Utc>) -> bool { now > self.expires_at }
 ```
+
+**No code runs before or after `main`.** A `#[ctor]` function runs when the binary loads, in an
+order no file shows, before logging or configuration exist, and a failure there has no caller to
+return to. A `#[dtor]` runs after `main`, when other parts may already be gone. Both are hidden
+inputs of the whole program. Startup belongs in `main`, which calls each step in order and handles
+its errors, and builds what the rest needs to pass it in; teardown belongs to `main` or to the
+`Drop` of the value that owns the resource.
 
 The production caller reads the clock once, in the binary that wires everything together. `rand`
 0.9 renamed `thread_rng` to `rng`, so both are listed. `uuid`'s v4 and `now_v7` read randomness and
@@ -770,6 +892,21 @@ awkward.
   trait earns it differently: the orphan rule forbids inherent methods on a type from another
   crate, so a trait is the only way to add them. Its `Ext` suffix (`ResponseExt`) tells the reader
   it exists for its methods, not for generics or `dyn`.
+
+  ```rust
+  pub trait DurationExt {
+      fn whole_minutes(&self) -> u64;
+  }
+
+  impl DurationExt for std::time::Duration {
+      fn whole_minutes(&self) -> u64 { self.as_secs() / 60 }
+  }
+  ```
+
+  A trait implemented for several foreign types so that generic code can take any of them
+  (`trait Timestamped` for `SystemTime` and `chrono::DateTime`) is not an extension trait: it is
+  the generic-algorithm reason, and it gets no `Ext`. A method on your own type is never an
+  extension trait: write it inherent.
 - **An operator does what its symbol says.** `+` adds, `*` multiplies, `!` negates. An `Add` that
   appends to a log or a `Shl` that sends a message reads as arithmetic, so the reader has to look
   it up to learn it isn't; a named method says what happens.
@@ -847,6 +984,9 @@ threads, no async), and that part doesn't apply here.
 | Avoid abbreviations; name lifetimes and generic parameters | Section 13 |
 | Error types `Copy` where possible | `Copy` where the fields allow (section 7) |
 | Never reach inside a poisoned mutex | `PoisonError` accessors in `disallowed-methods` (section 8) |
+| Unsafe in a small safe abstraction, with a justification | Fenced in a module or crate of its own, one operation per block, a benchmark when the reason is speed (section 1) |
+| `#[derive]` where possible | Derive unless the derived behavior is wrong; `derivable_impls`, `expl_impl_clone_on_copy` (section 3) |
+| No code before `main` | `ctor`/`dtor` in `disallowed-macros` (section 11) |
 
 The same review also adopted one point from a video walkthrough of Google's guide, the presenter's
 own preference rather than Google's rule: `Option` means absence and `Result` means failure. A
@@ -884,8 +1024,7 @@ and file-layout conventions (one module per `use`, free functions called through
 files named after their main item) are left to rustfmt and to the architecture guide; rustfmt's
 `imports_granularity` is nightly-only. Smaller points left to review judgment: `#[doc(hidden)]`
 items treated as private, `const fn` as a stability promise in a published crate, assertion
-messages, iterator chains kept out of `for` headers, `#[rustfmt::skip]` only for alignment, and
-no code before `main`.
+messages, iterator chains kept out of `for` headers, and `#[rustfmt::skip]` only for alignment.
 
 ## Settings that only make the files work
 

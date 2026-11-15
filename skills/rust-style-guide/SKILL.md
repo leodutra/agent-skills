@@ -188,10 +188,16 @@ pub const HTTP: Port = Port::literal(80);
   `value_parser` needs a stated reason. `default_value_t = CONST` relies on the `Display`/`FromStr`
   round trip.
 - Derive `Debug, Clone, PartialEq`, and `Copy`, `Eq`, `Hash`, `Ord` wherever the fields allow and
-  the contract holds; `Borrow<str>` only if those agree with `str`'s. `Eq` adds reflexivity (`a == a`
-  for every value), which the compiler can't check: derive it (it compiles only when every field is
-  `Eq`), and hand-write it only where the invariant guarantees it (a finite-float refinement has no
-  `NaN`), never over a `PartialEq` that breaks it (`f32`/`f64` aren't `Eq`: `NaN != NaN`).
+  the contract holds; `Borrow<str>` only if those agree with `str`'s. Hand-write a trait only where
+  the derived behavior is wrong for the type (a redacted `Debug`, a `Default` that isn't the
+  fields' defaults), never to spell out what the derive does, and then hand-write the traits that
+  must agree with it (`Hash`, `PartialOrd`, `Ord` with `PartialEq`). Derived `Ord` follows
+  declaration order: declare variants and fields in the domain's order; an order one caller needs
+  is a `sort_by_key` there. `Eq` adds reflexivity (`a == a` for every value), which the compiler
+  can't check: derive it (it compiles only when every field is `Eq`), and hand-write it only where
+  the invariant guarantees it (a finite-float refinement rejects `NaN` and turns `-0.0` into `0.0`,
+  so `Hash` and `Ord` agree with `==`), never over a `PartialEq` that breaks it (`f32`/`f64` aren't
+  `Eq`: `NaN != NaN`).
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
 - `literal` calls `try_new`, never builds `Self`, and is `pub(crate)`; `pub` only when another crate
   needs the constants, then with a `# Panics` section.
@@ -211,6 +217,10 @@ pub const HTTP: Port = Port::literal(80);
 
 ## Behavior
 
+- `unsafe` only where safe code can't do the job, and the crate says why (a measurement when the
+  reason is speed): behind a safe API, in a module or crate of its own, never in domain code. Each
+  block holds one unsafe operation under a `// SAFETY:` comment stating the invariant it relies on;
+  an `unsafe fn` documents its contract under `# Safety`.
 - Functions are total: code MUST NOT panic on valid input or `assert!` on user input. `panic!`,
   `unwrap()`, `expect()` MUST NOT appear outside tests, except `expect()` with a clear message for
   `main.rs` bootstrap (the environment failing at startup: a config file, binding a port) under
@@ -232,6 +242,8 @@ pub const HTTP: Port = Port::literal(80);
   (`&mut self`; the caller shares).
 - Library code MUST NOT call `process::exit`/`abort`, `dbg!` or print macros; it returns errors and
   logs.
+- No code runs before or after `main` (`#[ctor]`, `#[dtor]`): `main` starts and stops everything,
+  in an order it shows, and handles the errors.
 - A poisoned lock means a panic interrupted an update: its data is never read again
   (`PoisonError::into_inner`); the poisoning is an error.
 - A name says what the thing does, never a catch-all (`Manager`, `Utils`) or an abbreviation a
@@ -273,7 +285,9 @@ pub const HTTP: Port = Port::literal(80);
 
 What clippy can check, clippy checks. Test allowances cover `#[test]` and `#[cfg(test)]`; a `tests/`
 helper is neither (it returns `Result`, uses `?`). The lints hold: wildcard arms;
-unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe and undocumented unsafe;
+unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe, undocumented unsafe and
+several unsafe operations per block; a hand-written `Default` a derive would produce; `Clone` on
+`Copy`; `#[ctor]`/`#[dtor]`;
 public types missing `Debug`; `PartialEq` that could be `Eq`; infallible `TryFrom`; public
 `Result<_, ()>`; never-failing `Result`; mixed `pub` fields; `Option<Option<T>>`; non-`Send`
 futures; locks across `.await`; >3 bools; glob imports; `for_each`; needless pass by value;
