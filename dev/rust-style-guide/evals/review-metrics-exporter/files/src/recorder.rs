@@ -28,9 +28,10 @@ pub struct Recorder<E> {
 }
 
 impl<E: Exporter> Recorder<E> {
-    /// Flushes to `exporter` whenever `flush_every` metrics are pending.
-    pub fn new(exporter: E, flush_every: NonZeroUsize) -> Self {
-        Self { exporter, policy: Box::new(EveryN(flush_every)), pending: BTreeMap::new() }
+    /// Flushes to `exporter` whenever `flush_every` metrics are pending; `None` if it is 0.
+    pub fn new(exporter: E, flush_every: usize) -> Option<Self> {
+        let every = NonZeroUsize::new(flush_every)?;
+        Some(Self { exporter, policy: Box::new(EveryN(every)), pending: BTreeMap::new() })
     }
 
     /// Records the latest value of `name`, flushing if enough metrics are pending.

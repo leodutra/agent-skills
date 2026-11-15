@@ -5,7 +5,8 @@ use std::hash::{Hash, Hasher};
 use std::ops::Add;
 
 /// A distance in kilometres: finite and never negative.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, serde::Deserialize)]
+#[serde(transparent)]
 pub struct Kilometres(f64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
@@ -75,7 +76,8 @@ impl Add for Kilometres {
 #[serde(transparent)]
 pub struct StopId(pub u32);
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One leg as the routing service returns it in its JSON plan.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
 pub struct Leg {
     pub from: StopId,
     pub to: StopId,

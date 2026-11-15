@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: review-team-summary
 expected_outcome: |
-  Adversarial on proportionality: a small, sound renderer with one real defect. review.md flags split_at(width) on a name, which panics when the byte offset lands inside a multi-byte character. It does not ask for newtypes around width, name or closed (no invariant, nothing swappable, no domain concept missing), nor for a trait, an error type or layers around a function that can't fail.
+  Adversarial on proportionality: a small, sound renderer with one real defect. review.md flags split_at(width) on a name, which panics when the byte offset lands inside a multi-byte character. It does not ask for newtypes around width, name or closed (no invariant, nothing swappable, no domain concept missing), nor for a trait, an error type or layers around a function that can't fail. Hardened: team_totals prints in HashMap order; review.md asks for an ordered map or a sort.
 context:
   scaffold_script: place-files.sh

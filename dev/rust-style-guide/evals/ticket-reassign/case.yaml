@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: ticket-reassign
+expected_outcome: |
+  Discriminating code case: the mainstream answer is get returning Option or Result<Ticket, NotFound>, bare u64 ids, a parse function or FromStr with no round-trip test, and possibly #[non_exhaustive] on Status for future states. The skill's answer: get returns Result<Option<Ticket>, E>, tag newtypes for the two ids, Status parsed through FromStr matching Display with a proptest round trip, no #[non_exhaustive] in a workspace crate, and an exact-error test for reassigning a closed ticket. reference/ holds a solution that passes grade_cargo.

@@ -9,11 +9,11 @@ use crate::domain::ledger::{Cents, Entry};
 
 #[derive(Debug, thiserror::Error)]
 pub enum LedgerError {
-    #[error("could not encode the entry")]
+    #[error("Could not encode the entry.")]
     Encode(#[from] serde_json::Error),
-    #[error("could not write the ledger")]
+    #[error("Could not write the ledger.")]
     Io(#[from] std::io::Error),
-    #[error("the balance would overflow")]
+    #[error("The balance would overflow.")]
     Overflow,
 }
 

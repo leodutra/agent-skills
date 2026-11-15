@@ -73,3 +73,22 @@ impl Roster {
         Ok(self.minutes.get(&captain.id).copied().unwrap_or_default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn player(id: u32) -> Player {
+        Player { id: PlayerId(id), name: format!("player {id}") }
+    }
+
+    #[test]
+    fn an_empty_pick_is_rejected() {
+        assert!(matches!(Roster::try_new(Vec::new()), Err(_)));
+    }
+
+    #[test]
+    fn a_player_picked_twice_is_rejected() {
+        assert!(Roster::try_new(vec![player(1), player(1)]).is_err_and(|e| e != RosterError::Empty));
+    }
+}

@@ -1,0 +1,4 @@
+schema_version: "1.1"
+name: rate-limit-config
+expected_outcome: |
+  Discriminating code case: the mainstream answer is a struct with pub fields, a validate() after deserializing, new() returning Result, one shared error enum and is_err() tests. The skill's answer: refinements with private fields built by try_new, deserialization through the constructors (serde try_from), the burst rule inside the rule's own constructor, an error per constructor, and exact-error tests. reference/ holds a solution that passes grade_cargo.

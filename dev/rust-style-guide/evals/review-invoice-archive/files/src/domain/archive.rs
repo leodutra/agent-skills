@@ -62,6 +62,24 @@ mod tests {
         }
     }
 
+    #[derive(Debug)]
+    struct BrokenStore;
+
+    impl BlobStore for BrokenStore {
+        fn put(&mut self, _key: &str, _bytes: &[u8]) -> io::Result<()> {
+            Err(io::Error::other("disk full"))
+        }
+
+        fn get(&self, _key: &str) -> io::Result<Option<Vec<u8>>> {
+            Err(io::Error::other("disk unreadable"))
+        }
+    }
+
+    #[test]
+    fn a_failing_store_fails_the_archive() {
+        assert!(matches!(archive(&mut BrokenStore, &sample_invoice()), Err(_)));
+    }
+
     #[test]
     fn an_archived_invoice_loads_back() {
         let mut store = MemoryBlobStore::default();

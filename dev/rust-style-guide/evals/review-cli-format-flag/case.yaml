@@ -1,6 +1,6 @@
 schema_version: "1.1"
 name: review-cli-format-flag
 expected_outcome: |
-  Adversarial: a closed set dressed as a parse-don't-validate refinement. review.md asks to replace the FormatName string refinement with an enum of the three formats, parsed by clap through a derived ValueEnum instead of the custom value_parser, and flags render's `_ =>` arm that silently renders any other string as a table. It leaves anyhow and the reasoned print_stdout expect in the binary's main alone.
+  Adversarial: a closed set dressed as a parse-don't-validate refinement. review.md asks to replace the FormatName string refinement with an enum of the three formats, parsed by clap through a derived ValueEnum instead of the custom value_parser, and flags render's `_ =>` arm that silently renders any other string as a table. It leaves anyhow and the reasoned print_stdout expect in the binary's main alone. Hardened: SortKey's hand-written FromStr accepts "qty" where its serde name is "quantity"; review.md asks for one canonical text.
 context:
   scaffold_script: place-files.sh

@@ -1,9 +1,11 @@
 //! The weekly team summary as fixed-width text.
+use std::collections::HashMap;
 
 /// One line of the summary: who, and how many tickets they closed this week.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Row {
     pub name: String,
+    pub team: String,
     pub closed: u32,
 }
 
@@ -22,6 +24,16 @@ pub fn render(title: &str, rows: &[Row], width: usize) -> String {
     out
 }
 
+/// Tickets closed per team, one line each, for the summary's footer.
+#[must_use]
+pub fn team_totals(rows: &[Row]) -> String {
+    let mut totals: HashMap<&str, u64> = HashMap::new();
+    for row in rows {
+        *totals.entry(row.team.as_str()).or_default() += u64::from(row.closed);
+    }
+    totals.iter().map(|(team, closed)| format!("{team}: {closed}\n")).collect()
+}
+
 /// Tickets closed by the whole team.
 #[must_use]
 pub fn total(rows: &[Row]) -> u64 {
@@ -35,8 +47,8 @@ mod tests {
     #[test]
     fn most_tickets_first_then_total() {
         let rows = [
-            Row { name: "ana".to_owned(), closed: 3 },
-            Row { name: "bruno".to_owned(), closed: 7 },
+            Row { name: "ana".to_owned(), team: "core".to_owned(), closed: 3 },
+            Row { name: "bruno".to_owned(), team: "core".to_owned(), closed: 7 },
         ];
         assert_eq!(render("week 12", &rows, 6), "week 12\nbruno      7\nana        3\ntotal     10\n");
     }

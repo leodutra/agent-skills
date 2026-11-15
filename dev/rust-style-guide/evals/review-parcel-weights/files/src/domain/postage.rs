@@ -19,7 +19,9 @@ impl Parcel {
     }
 }
 
+// More carriers are coming, so callers must not assume this list is complete.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[non_exhaustive]
 pub enum Carrier {
     Courier,
     Freight,
