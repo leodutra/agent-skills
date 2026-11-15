@@ -166,7 +166,9 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
   called with a `UserId`. Its field is `pub`, and `#[serde(transparent)]` is fine, since there is
   nothing to check. `From` is fine where the two types make the meaning obvious (`From<u64> for
   UserId`). Where the primitive carries a unit or scale the target doesn't name, as in
-  `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4).
+  `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4). That
+  `From` is also why a function takes `AccountId` itself, never `impl Into<AccountId>`: the
+  generic accepts any bare `u64`, and the mix-up the tag exists to stop compiles again.
 - A **refinement** is any type with an invariant, whether it wraps one value or holds several (a
   `Span` whose `start < end`). Its fields are private to its module, not `pub(crate)`, so the
   constructor is the only way to make one; same-crate code can't slip past it either.
@@ -516,7 +518,8 @@ pub enum OrderError {
   binary crate's own `clippy.toml` leaves these four entries out. Where `anyhow` is used, add
   `.context(...)` so the printed chain says what was being attempted.
 - **Errors derive `Clone, PartialEq, Eq`** so tests can `assert_eq!` on them, unless a cause can't
-  (`io::Error` has none of them).
+  (`io::Error` has none of them). An error whose fields are all `Copy` derives `Copy` too, so it
+  passes by value like the unit-struct `ZeroPort`.
 - **Messages are lowercase with no trailing period**, because they get chained into
   `outer: inner: cause`. They say what is wrong and never echo secret input. An
   `InvalidToken(String)` holding the rejected token puts the secret into every log line and panic
@@ -531,6 +534,7 @@ pub enum OrderError {
 | `todo`, `unimplemented` | placeholders that panic when reached |
 | `unreachable` | `unreachable!()` |
 | `disallowed-methods`: `catch_unwind`, `process::abort` | catching a panic or aborting the process |
+| `disallowed-methods`: `PoisonError::into_inner`, `get_ref`, `get_mut` | reading a lock a panic left poisoned |
 | `cast_possible_truncation`, `cast_sign_loss`, `cast_possible_wrap` | an `as` cast that truncates, drops the sign or wraps |
 | `string_slice` | `&s[a..b]` on a `str` |
 | `exit`, `dbg_macro`, `print_stdout`, `print_stderr` | process exit, debug and print macros |
@@ -558,6 +562,11 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   hides it until the data is wrong. Fix the API or the types so the state can't arise. When even
   an exhaustive match or a type can't express it, the narrow exception is a reasoned
   `#[expect(clippy::unreachable, reason = "…")]` at that spot, where every reader sees the claim.
+- **A poisoned lock stays shut.** A lock is poisoned when a thread panicked while holding it, which
+  means an update may have stopped halfway and the data may break its own invariants.
+  `PoisonError::into_inner` reads it anyway, so the half-done update becomes the state everyone
+  works from. The poisoning is reported as an error instead, like any other failure the caller
+  can't fix in place.
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
   nothing when the binary is built with `panic = "abort"`.
 - `process::abort` also stops the process without running destructors. `process::exit` is caught by
@@ -745,12 +754,25 @@ awkward.
 
 - **Names say what something is or does.** `Service`, `Manager`, `Helper`, `Utils` and `Misc` say
   only that something exists. `CaptureService` could do anything, while `ChargeCard` or
-  `LoadOrders` names the job.
+  `LoadOrders` names the job. An abbreviation only insiders know, or one made by dropping letters
+  (`cnt`, `mgr`), costs every newcomer a lookup. A single letter is fine for a lifetime or generic
+  parameter whose role is plain (`'a` tying an output to an input, `T` in a container); where
+  several are in play, names say which is which (`'input`, `S: Store`).
+- **Accessors follow std's names**, so callers guess them right: `foo()` returns a reference (or a
+  `Copy` value), `foo_mut()` a mutable one, `set_foo()` replaces, `take_foo()` empties and returns
+  the old value, `replace_foo()` sets and returns it. A `get_` prefix adds nothing. A refinement's
+  `get()`, as on `NonZeroU16`, is the whole value, not a field.
 - **A trait needs a real abstraction need.** A trait with one implementation and no other use adds
   a name and an indirection that every reader has to step through, and it hides which code
   actually runs, all for flexibility nobody uses yet. Write the concrete type first. A trait earns
   its place with a second implementation, a test double standing in for the network, disk or
-  clock, implementors outside the crate, or a generic algorithm written against it.
+  clock, implementors outside the crate, or a generic algorithm written against it. An extension
+  trait earns it differently: the orphan rule forbids inherent methods on a type from another
+  crate, so a trait is the only way to add them. Its `Ext` suffix (`ResponseExt`) tells the reader
+  it exists for its methods, not for generics or `dyn`.
+- **An operator does what its symbol says.** `+` adds, `*` multiplies, `!` negates. An `Add` that
+  appends to a log or a `Shl` that sends a message reads as arithmetic, so the reader has to look
+  it up to learn it isn't; a named method says what happens.
 - **A macro is the last resort.** Macros hide control flow, give worse error messages and confuse
   tooling. Try a function, a type or a trait first, then `macro_rules!`, and a proc macro only
   after that.
@@ -818,6 +840,13 @@ threads, no async), and that part doesn't apply here.
 | On someone else's non-exhaustive enum, list the known variants | Already what `wildcard_enum_match_arm` asks for (section 9) |
 | A constructor that returns `Result` is `try_new` | The same rule (section 4). Until November 2026 this guide used `new` |
 | `Eq` is a promise the compiler can't check | Reflexivity spelled out; `Eq` by derive, by hand only where the invariant guarantees it (section 3) |
+| Extension traits, named `…Ext` | A fifth reason for a trait (section 13); until then this guide flagged them |
+| Application code almost never takes `impl Into<T>` | Never for a newtype: it lets the primitive back in (section 3) |
+| Operators only for their mathematical meaning | Section 13 |
+| Accessor names (`foo`, `foo_mut`, `set_foo`, `take_foo`, `replace_foo`) | Section 13 |
+| Avoid abbreviations; name lifetimes and generic parameters | Section 13 |
+| Error types `Copy` where possible | `Copy` where the fields allow (section 7) |
+| Never reach inside a poisoned mutex | `PoisonError` accessors in `disallowed-methods` (section 8) |
 
 The same review also adopted one point from a video walkthrough of Google's guide, the presenter's
 own preference rather than Google's rule: `Option` means absence and `Result` means failure. A
@@ -827,7 +856,14 @@ self-evident failure.
 
 **Already here, often more strictly:** an enum instead of a bool parameter, a newtype instead of a
 type alias, pattern matching instead of check-then-unwrap, borrowing instead of cloning, a
-`SAFETY:` comment on `unsafe`, and a trait only for a real abstraction need.
+`SAFETY:` comment on `unsafe`, a trait only for a real abstraction need, and `#[non_exhaustive]`
+(on enums and structs alike) only in a crate published to users you don't rebuild.
+
+**Held by clippy's default lints**, which `cargo clippy -- -D warnings` already denies:
+`as_`/`to_`/`into_` receivers (`wrong_self_convention`), a std trait instead of a look-alike method
+(`should_implement_trait`), `is_empty` beside `len` (`len_without_is_empty`), `Default` beside an
+argument-free `new` (`new_without_default`), and `&T` over `&Box<T>`, `&[T]` over `&Vec<T>`
+(`borrowed_box`, `ptr_arg`).
 
 **Kept against Google, on purpose:**
 
@@ -842,7 +878,14 @@ type alias, pattern matching instead of check-then-unwrap, borrowing instead of 
 
 **Not taken:** required `#[must_use]` (`Result` is already must-use, and the lint is noisy), required
 doc comments (too noisy for application code), extra type annotations, and `format!` instead of
-`+`.
+`+`. Also not taken, as library ergonomics or performance this guide ranks below simplicity:
+generics over `dyn Trait` in parameters, returning iterators and taking `IntoIterator`. Import
+and file-layout conventions (one module per `use`, free functions called through their module,
+files named after their main item) are left to rustfmt and to the architecture guide; rustfmt's
+`imports_granularity` is nightly-only. Smaller points left to review judgment: `#[doc(hidden)]`
+items treated as private, `const fn` as a stability promise in a published crate, assertion
+messages, iterator chains kept out of `for` headers, `#[rustfmt::skip]` only for alignment, and
+no code before `main`.
 
 ## Settings that only make the files work
 

@@ -74,7 +74,8 @@ rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why,
   refinement's fields MUST be private to its defining module (not `pub(crate)`). A tag's field is
   `pub`, with `From` and `#[serde(transparent)]` fine where the two types make the meaning obvious
   (`From<u64> for UserId`, `From<u32> for Grams`), never where the primitive carries a unit or
-  scale the target doesn't name (`From<u64> for Timestamp`).
+  scale the target doesn't name (`From<u64> for Timestamp`). A function takes the newtype itself,
+  never `impl Into<Newtype>`, which lets the bare primitive back in.
 - A closed set is an enum, not a refinement over a string. Its `ValueEnum` (clap) or `rename_all`
   (serde) names are its canonical text; code that parses that text itself does so in a `FromStr`
   that accepts the same names.
@@ -204,8 +205,8 @@ pub const HTTP: Port = Port::literal(80);
 - A domain or library API MUST NOT return a dependency's error raw: wrap it in a variant of your
   own, kept as `#[source]`. An infrastructure adapter whose natural contract is std's error
   (`io::Result`) MAY return it.
-- Derive `Clone, PartialEq, Eq` (reflexive, as above) unless a cause can't (`io::Error`), so tests
-  assert variants.
+- Derive `Clone, PartialEq, Eq` (reflexive, as above), and `Copy` where the fields allow, unless a
+  cause can't (`io::Error`), so tests assert variants.
 - Messages: lowercase, no trailing period, say what is wrong, never echo secret input.
 
 ## Behavior
@@ -231,9 +232,17 @@ pub const HTTP: Port = Port::literal(80);
   (`&mut self`; the caller shares).
 - Library code MUST NOT call `process::exit`/`abort`, `dbg!` or print macros; it returns errors and
   logs.
-- A name says what the thing does, never a catch-all (`Manager`, `Utils`). A trait exists only for a
-  real abstraction need: a second implementation, a test double, outside implementors or a generic
-  algorithm; never for flexibility nobody uses yet.
+- A poisoned lock means a panic interrupted an update: its data is never read again
+  (`PoisonError::into_inner`); the poisoning is an error.
+- A name says what the thing does, never a catch-all (`Manager`, `Utils`) or an abbreviation a
+  newcomer wouldn't know; a single-letter lifetime or generic parameter only where one letter is
+  unambiguous. Accessors follow std: `foo()`, `foo_mut()`, `set_foo()`, `take_foo()`,
+  `replace_foo()`, never `get_foo()`.
+- A trait exists only for a real abstraction need: a second implementation, a test double, outside
+  implementors, a generic algorithm, or methods on a foreign type (an extension trait, named
+  `…Ext`); never for flexibility nobody uses yet.
+- An operator means its mathematical or logical operation (`Add` adds); anything else is a named
+  method.
 - Macros last: a function, type or trait; then `macro_rules!`; then a proc macro.
 - Borrow inputs (`&str`, `&[T]`, `&T`, `Option<&T>`); own only to store, return or consume. No clone
   to quiet the borrow checker: shorten the borrow, move the value or change the API.
@@ -270,7 +279,8 @@ public types missing `Debug`; `PartialEq` that could be `Eq`; infallible `TryFro
 futures; locks across `.await`; >3 bools; glob imports; `for_each`; needless pass by value;
 `&Option` params; redundant clones; `map_err(|_| …)`; dropped `Result` or future;
 `assert!(r.is_err())`; bare `#[allow]`, missing reasons; `anyhow`/`eyre`;
-`Cell`/`RefCell`/`Mutex`/`RwLock`; banned clock/`rand`/`uuid` calls; `catch_unwind`;
+`Cell`/`RefCell`/`Mutex`/`RwLock`; banned clock/`rand`/`uuid` calls; `catch_unwind`; reading a
+poisoned lock;
 `process::abort`/`exit`; lossy `as`; `&s[a..b]` on `str`; hash `for` loops; debug and print macros.
 
 Review every other rule, and what slips past a lint that looks like it holds:
@@ -292,6 +302,7 @@ Not defects, not even nits:
 - A tag's `pub` field, `#[serde(transparent)]`, and `From` where the types make the meaning obvious.
 - `Result<Option<T>, E>` from a lookup; `Option` from a function that can't fail.
 - A unit-struct error for a constructor with one failure.
+- An extension trait (`…Ext`) with a single implementation, on a foreign type.
 - Instead of `try_new`: an I/O resource's fallible `open`/`connect`/`bind`, a fallible `with_*`,
   and a `from_*` that chooses or that sits beside the trait a conversion requires.
 - An error lacking `Clone`/`PartialEq`/`Eq` because a cause does (`io::Error`).

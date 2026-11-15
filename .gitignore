@@ -16,3 +16,6 @@ graphify-out/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Google's Rust style guide, saved locally for comparison; not ours to redistribute.
+dev/rust-style-guide/google-style.guide.md

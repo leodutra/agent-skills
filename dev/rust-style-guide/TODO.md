@@ -10,20 +10,23 @@ and when a run starts. Bench workspaces go in `.bench/`, not the scratchpad.
 
 ## 1. Compare against Google's Rust style guide
 
-- [ ] Read <https://google.github.io/styleguide/rustguide.html> and list the details and rules it
-  has that `references/fundamentals.md` (its section "What came from Google's Rust style guide":
-  adopted, already here, kept against Google, not taken) and `SKILL.md` don't. Decide per item:
-  adopt (replicating into SKILL.md where it is a rule), already covered, or rejected with a reason.
-  Do this before the benchmark, so the benchmark measures the final skill.
+- [x] Compared Google's guide (saved locally, gitignored, as `dev/rust-style-guide/google-style.guide.md`;
+  never inside `skills/`, which the benchmark copies and installs ship) with `SKILL.md` and
+  `fundamentals.md`. Adopted: extension traits (`…Ext`) as a reason for a trait; no
+  `impl Into<Newtype>` parameters; operators only for their meaning; std accessor names; no
+  obscure abbreviations or ambiguous one-letter lifetimes and generics; `Copy` errors where the
+  fields allow; poisoned locks never read (`PoisonError` accessors in `disallowed-methods`). The
+  rest is recorded in fundamentals' Google section as already here, held by clippy's defaults, or
+  not taken.
 
 ## 2. Benchmark the rewrite
 
 - [ ] `python3 dev/rust-style-guide/bench.py --all --ref main`. `--ref HEAD` refuses: the rewrite
   is committed, so the working tree's skill equals HEAD's; `main` holds the pre-rewrite skill.
   12 cases × 2 arms = 24 runs + 24 grading calls (Sonnet).
-- [ ] The nested `claude` CLI can't reach the API from the sandbox: the first attempt
+- [x] The nested `claude` CLI can't reach the API from the sandbox: the first attempt
   (2026-11-14) failed every call with `connection_failed` before any run finished, so nothing was
-  spent. Run it outside the sandbox, or from the user's own shell (`! python3 …`).
+  spent. Runs go outside the sandbox (or from the user's own shell, `! python3 …`).
 
 ## 3. Adversarial evals with a no-skill arm
 
