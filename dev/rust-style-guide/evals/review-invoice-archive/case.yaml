@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-invoice-archive
+expected_outcome: |
+  Adversarial on error boundaries. The filesystem adapter returns io::Result, its natural contract, and review.md leaves that alone, as it leaves ArchiveError without Clone/PartialEq/Eq (its causes can't provide them) and the BlobStore trait (the in-memory test double is a second implementation). It flags the domain function load returning serde_json::Error raw, and its let-else that turns a store failure into Ok(None), "not archived".
+context:
+  scaffold_script: place-files.sh

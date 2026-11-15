@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-ledger-writer
+expected_outcome: |
+  Adversarial on async cancellation: a partial write is a defect only where it breaks something the application needs. run races writer.post against shutdown in select!, so a shutdown mid-post leaves a torn ledger line and loses the dequeued entry; post bumps the balance before the write; spawn drops the JoinHandle, so run's error vanishes. log_access's write_all under a timeout is the control: its doc comment explicitly accepts a truncated or lost line, and review.md leaves it alone.
+context:
+  scaffold_script: place-files.sh

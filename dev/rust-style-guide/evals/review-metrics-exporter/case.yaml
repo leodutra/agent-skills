@@ -1,0 +1,6 @@
+schema_version: "1.1"
+name: review-metrics-exporter
+expected_outcome: |
+  Adversarial on the trait and non_exhaustive rules in a published crate. The public Exporter trait has one in-crate implementation but exists for outside implementors, and ExportError's #[non_exhaustive] is right for users who don't rebuild with the crate: review.md leaves both alone. The crate-private FlushPolicy trait has one implementation, no test double and can't be implemented outside: review.md asks to replace it, and its Box<dyn>, with the concrete check.
+context:
+  scaffold_script: place-files.sh

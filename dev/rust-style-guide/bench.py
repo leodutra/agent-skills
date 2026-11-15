@@ -3,7 +3,7 @@
 `claude -p` sessions (the flags dev/gauntlet-loop/eval/run.sh uses: no settings, no MCP, only the
 tools a run needs). No Claude session stays open while it runs, so nothing re-reads a long context.
 
-  python3 dev/rust-style-guide/bench.py [--ref HEAD] [--cases a,b | --all] [--new-only] [--model sonnet] [-j 4] [--dry-run]
+  python3 dev/rust-style-guide/bench.py [--ref HEAD] [--cases a,b | --all] [--new-only] [--no-skill] [--model sonnet] [-j 4] [--dry-run]
 
 A review case is one tool-less call: SKILL.md as the system prompt, the input files inline, the
 reply saved as review.md. A code case gets Read/Write/Edit in its own directory and Bash approved
@@ -11,7 +11,8 @@ for `cargo` and `tail` only (other commands are refused); cargo still runs added
 run that sees only that run's output, never its arm, under a one-line system prompt instead of the
 coding-agent one. --ref must name a commit whose skill differs from the working tree's; the script
 refuses to compare a skill with itself. --new-only runs the same cases and graders for the current
-skill, without a baseline arm; use the default A/B when comparing versions. Workspace:
+skill, without a baseline arm; use the default A/B when comparing versions. --no-skill adds an arm
+with no skill loaded (same task, no system prompt added), so a case shows what the skill itself buys. Workspace:
 .bench/rsg-<time>/ (git-excluded); --regrade re-grades one without new runs. It spends your
 claude.ai usage: the default four cases make 8 runs and 8 grading calls, about 400k input tokens
 with Sonnet (2026-11-12); --all runs every case."""
@@ -34,6 +35,7 @@ ap.add_argument("--model", default="sonnet")
 ap.add_argument("-j", type=int, default=4)
 ap.add_argument("--dry-run", action="store_true")
 ap.add_argument("--new-only", action="store_true", help="grade the current skill without a baseline arm")
+ap.add_argument("--no-skill", action="store_true", help="add an arm with no skill loaded")
 ap.add_argument("--regrade", metavar="WORKSPACE", help="grade an earlier workspace again; no new runs")
 a = ap.parse_args()
 if a.cases:
@@ -62,7 +64,8 @@ else:
         if subprocess.run(["diff", "-rq", skills["new"], skills["old"]], capture_output=True).returncode == 0:
             shutil.rmtree(W)
             sys.exit(f"the working tree's skill is identical to {a.ref}'s: nothing to compare (pass --ref <older commit>)")
-    plan = [(c, arm) for c in cases for arm in (("new",) if a.new_only else ("new", "old"))]
+    arms = (("new",) if a.new_only else ("new", "old")) + (("none",) if a.no_skill else ())
+    plan = [(c, arm) for c in cases for arm in arms]
     ids = [f"r{n:02d}" for n in range(1, len(plan) + 1)]
     random.shuffle(ids)
     mapping = {rid: {"case": c, "arm": arm} for rid, (c, arm) in zip(ids, plan)}
@@ -93,9 +96,9 @@ def inputs(case):
 
 def run(rid):
     case, arm = mapping[rid]["case"], mapping[rid]["arm"]
-    d, skill = f"{W}/runs/{rid}", skills[arm]
+    d, skill = f"{W}/runs/{rid}", skills.get(arm)
     os.makedirs(d)
-    system = ("The rust-style-guide skill is loaded for this task"
+    system = skill and ("The rust-style-guide skill is loaded for this task"
               + ("." if is_review(case) else f"; its files are in {skill}.") + "\n\n" + open(f"{skill}/SKILL.md").read())
     task = strip(open(f"{EVALS}/{case}/prompt.md").read())
     if is_review(case):
@@ -112,7 +115,7 @@ def run(rid):
                      "Only `cargo` commands (and `tail`) are allowed in Bash; write files with Write and Edit. "
                      "Keep command output short (--quiet). End with at most three lines on what you ran.",
                      d, system, "Read,Write,Edit,Bash",
-                     ["--allowedTools", "Read,Write,Edit,Bash(cargo:*),Bash(tail:*)", "--add-dir", skill])
+                     ["--allowedTools", "Read,Write,Edit,Bash(cargo:*),Bash(tail:*)"] + (["--add-dir", skill] if skill else []))
     json.dump(out, open(f"{d}/claude.json", "w"))
     return rid
 
@@ -176,15 +179,12 @@ for rid, m in sorted(mapping.items()):
         tokens += sum(u.get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
     tokens += sum(g.get("usage", {}).get(k, 0) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens"))
     score.setdefault(m["case"], {})[m["arm"]] = (p, n, fails)
-has_old = any("old" in s for s in score.values())
+label = {"new": "new", "old": a.ref, "none": "no-skill"}
+present = [arm for arm in label if any(arm in s for s in score.values())]
 for c, s in score.items():
-    line = f"{c:26} new {s['new'][0]}/{s['new'][1]}"
-    if "old" in s:
-        line += f"   {a.ref} {s['old'][0]}/{s['old'][1]}"
-    print(line)
+    print(f"{c:28}" + "   ".join(f"{label[arm]} {s[arm][0]}/{s[arm][1]}" for arm in present if arm in s))
     for arm in s:
-        for f in s[arm][2]: print(f"    {arm} FAIL: {f}")
-summary = f"total new {sum(s['new'][0] for s in score.values())}/{sum(s['new'][1] for s in score.values())}"
-if has_old:
-    summary += f"   {a.ref} {sum(s['old'][0] for s in score.values())}/{sum(s['old'][1] for s in score.values())}"
+        for f in s[arm][2]: print(f"    {label[arm]} FAIL: {f}")
+summary = "total " + "   ".join(f"{label[arm]} {sum(s[arm][0] for s in score.values() if arm in s)}/"
+                                f"{sum(s[arm][1] for s in score.values() if arm in s)}" for arm in present)
 print(f"{summary}   input tokens {tokens:,}   workspace {W}")
