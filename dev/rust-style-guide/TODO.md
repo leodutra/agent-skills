@@ -85,11 +85,17 @@ Sonnet's safety filter and one review came back empty.
   (`reasoning_extraction`); try rewording the grading prompt, or grade it with another model.
 - [ ] Watch the two misses on a second sample before changing anything: private-type `Debug`
   and catch-all names.
-- [ ] Re-run the benchmark on the skill with the unsafe, derive and ctor additions. Started
-  2026-11-15 as `bench.py --all --ref main` (all 20 cases, 72bfa04's skill): the claude.ai usage
-  limit ran out after 27 of 40 runs, before any grading. Once it resets, finish it without
-  repeating the 27: `python3 dev/rust-style-guide/bench.py --ref main --resume
-  .bench/rsg-20261115-000044-ia3ulb76` (13 runs + 40 grading calls).
+- [x] Re-run the benchmark on the skill with the unsafe, derive and ctor additions:
+  `bench.py --all --ref main`, all 20 cases, 72bfa04's skill, finished 2026-11-15 with `--resume`
+  after the usage limit (`.bench/rsg-20261115-000044-ia3ulb76`). New 128/131, main 126/131. One
+  new-arm review (inventory-module) came back as imitation tool calls instead of a review; that
+  run was discarded and rerun (7/7). Misses: new proposed `From<Grams> for Ounces` for a rounding
+  conversion (parcel-weights); main flagged the finite-float `Eq` on Kilometres
+  (route-distances), missed `TryFrom` on Quantity (conversion-traits) and the JSON DTO
+  (cli-json-recipients); both arms missed the `CaptureService` name and called a real input error
+  in match-roster a bug.
+- [ ] Watch the rounding-conversion miss: SKILL.md already says a conversion that rounds is no
+  trait; see whether a second sample repeats it before rewording.
 
 ## 5. Commit
 
