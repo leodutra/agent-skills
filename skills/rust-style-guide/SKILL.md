@@ -333,5 +333,7 @@ Not defects, not even nits:
   exempt them.
 - A non-`Send` future deliberately run only on a local executor, with a reasoned
   `#[expect(clippy::future_not_send, reason = "…")]`.
+- A `Result` dropped where dropping is right (a send whose receiver may be gone), under a reasoned
+  `#[expect(clippy::let_underscore_must_use, reason = "…")]`.
 - A named parser or decoder for a parse that extracts or chooses, beside the type's `FromStr` where
   complete text has one interpretation.
