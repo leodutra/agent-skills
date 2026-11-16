@@ -1,3 +1,30 @@
+//! A refinement: the only way in is `try_new` (or `TryFrom`, `FromStr`, serde, which call it).
+//!
+//! Building one around the constructor doesn't compile:
+//! ```compile_fail
+//! use template::domain::port::Port;
+//! let port = Port(std::num::NonZeroU16::MIN);
+//! ```
+//! ```
+//! use template::domain::port::Port;
+//! let port = Port::try_new(80);
+//! ```
+//! There is no `Default`: 0 isn't a port.
+//! ```compile_fail
+//! use template::domain::port::Port;
+//! let port = Port::default();
+//! ```
+//! ```
+//! use template::domain::port::Port;
+//! let port = Port::try_new(0);
+//! ```
+//! Deserializing runs the constructor:
+//! ```
+//! use template::domain::port::Port;
+//! assert!(serde_json::from_str::<Port>("0").is_err());
+//! assert_eq!(serde_json::from_str::<Port>("80").ok(), Port::try_new(80).ok());
+//! ```
+
 use std::{fmt, num::NonZeroU16, num::ParseIntError, str::FromStr};
 
 // A refinement on std's NonZeroU16: the invariant is the inner type's, and Option<Port> is 2 bytes.

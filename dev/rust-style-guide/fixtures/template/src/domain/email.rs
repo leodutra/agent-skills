@@ -1,3 +1,24 @@
+//! A refinement over `String`: no `Deref`, no `&mut` to the inner value, so no edit skips `try_new`.
+//!
+//! ```compile_fail
+//! use template::domain::email::Email;
+//! let mut email = Email::try_new("a@example.com").unwrap();
+//! email.push_str(" not an address");
+//! ```
+//! ```
+//! use template::domain::email::Email;
+//! let mut email = Email::try_new("a@example.com").unwrap();
+//! email.as_str().to_owned().push_str(" not an address");
+//! ```
+//! ```compile_fail
+//! use template::domain::email::Email;
+//! let email = Email(String::new());
+//! ```
+//! ```
+//! use template::domain::email::Email;
+//! let email = Email::try_new(String::new());
+//! ```
+
 use std::{borrow::Borrow, fmt, str::FromStr};
 
 // A refinement: the field is private, and serde goes through TryFrom<String>, so through try_new().

@@ -1,6 +1,0 @@
-schema_version: "1.1"
-name: review-route-distances
-expected_outcome: |
-  Adversarial on Eq reflexivity over floats. review.md leaves the hand-written Eq on Kilometres alone (try_new rejects NaN, so the invariant makes it reflexive) and flags the hand-written Eq on Fix, whose raw f64 fields can be NaN. It catches that try_new accepts -0.0, which equals 0.0 but hashes (to_bits) and orders (total_cmp) apart, and asks to normalize it; and it flags Add building Self directly, since two finite values can sum to infinity. Hardened: Kilometres derives Deserialize with #[serde(transparent)], so Leg's JSON skips try_new; review.md asks for try_from.
-context:
-  scaffold_script: place-files.sh

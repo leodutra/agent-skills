@@ -1,6 +1,0 @@
-schema_version: "1.1"
-name: review-reservations-ids
-expected_outcome: |
-  Tests the tag trigger of the newtype rule (a value that could be swapped with another of the same primitive), on a type the skill never names. review.md flags the bare u64 customer, order and warehouse ids and asks for distinct tag newtypes across reserve, Order, Reservation, the error and the maps; it flags on_checkout passing order.id and order.customer_id in swapped positions as a live bug the tags would make a compile error; it does not ask the tags for private fields or a validating constructor, since any id is valid.
-context:
-  scaffold_script: place-files.sh

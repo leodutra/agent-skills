@@ -26,28 +26,32 @@ a case whose graders changed since the run, unless --grader-change "<reason>" is
 regrades that case in every arm and logs the change in grader-changes.md. --report WORKSPACE
 prints a workspace's table with no calls. --validate grades each case's reference/ (a correct
 answer: every assertion must pass) and mainstream/ (the common answer: it must fail the graders
-named in mainstream/expected-fails), so a grader is trusted only once it tells them apart.
+named in mainstream/expected-fails), so a grader is trusted only once it tells them apart. A code case
+may have hidden/tests/hidden.rs: behavioral tests against the API its prompt pins, never shown to a
+run, run by grade_cargo.py; each counts as one correctness assertion (`hidden` in expected-fails means
+at least one fails). A case with no LLM graders makes no grading call.
 
 --no-skill adds an arm
 with no skill loaded (same task, no system prompt added), so a case shows what the skill itself buys. Workspace:
 .bench/rsg-<time>/ (git-excluded); --regrade re-grades one without new runs. It spends your
-claude.ai usage: the default four cases make 8 runs and 8 grading calls, about 400k input tokens
-with Sonnet (2026-11-12); --all runs every case."""
+claude.ai usage: one arm of the default two cases is about 0.3M input tokens with Sonnet
+(a code run ~150k, a review run ~18k, a grading call ~7k; 2026-11-15)."""
 import argparse, hashlib, json, os, random, re, shutil, subprocess, sys, tempfile, time
 from concurrent.futures import ThreadPoolExecutor
+import claude_cli
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
 EVALS = os.path.join(HERE, "evals")
-# The cases that told the versions apart on 2026-11-12, plus one code case and one control.
-DEFAULT = ["review-inventory-module", "review-published-crate", "customer-lookup", "review-payments-module"]
+# The cases that separate the skill from no skill (2026-11-15, 3 samples); the unproven ones were dropped.
+DEFAULT = ["rate-limit-config", "ticket-reassign"]
 strip = lambda s: re.sub(r"(?s)\A---\n.*?\n---\n\n", "", s).strip()
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--ref", default="HEAD")
 selection = ap.add_mutually_exclusive_group()
 selection.add_argument("--cases")
-selection.add_argument("--all", action="store_true", help="run every case, not the default four")
+selection.add_argument("--all", action="store_true", help="run every case")
 ap.add_argument("--model", default="sonnet")
 ap.add_argument("--samples", type=int, default=1, help="runs per case and arm")
 ap.add_argument("--grade-fallback", default="opus", help="grading model when the safety filter refuses a grading call")
@@ -147,19 +151,7 @@ else:
 
 
 def claude(prompt, cwd, system=None, tools="", extra=(), replace_system=False, model=None):
-    cmd = ["claude", "-p", prompt, "--tools", tools, "--setting-sources", "", "--strict-mcp-config",
-           "--no-session-persistence", "--model", model or a.model, "--output-format", "json", *extra]
-    if system: cmd += ["--system-prompt" if replace_system else "--append-system-prompt", system]
-    if a.dry_run: return {"result": "", "usage": {}, "dry_run": " ".join(cmd[:2] + cmd[3:])[:300]}
-    p = subprocess.run(cmd, cwd=cwd, capture_output=True, text=True, stdin=subprocess.DEVNULL, timeout=1800)
-    try:
-        out = json.loads(p.stdout)
-    except ValueError as exc:
-        raise RuntimeError(f"claude returned non-JSON (exit {p.returncode}): {(p.stdout + p.stderr)[-1000:]}") from exc
-    if p.returncode or out.get("is_error") or out.get("terminal_reason") == "api_error":
-        reason = out.get("api_error") or out.get("error") or out.get("result") or p.stderr
-        raise RuntimeError(f"claude failed (exit {p.returncode}): {str(reason)[:500]}")
-    return out
+    return claude_cli.claude(prompt, cwd, system, tools, extra, replace_system, model or a.model, a.dry_run)
 
 
 def inputs(case):
@@ -199,7 +191,8 @@ def grade(rid):
     gs = graders(case)
     if not is_review(case):
         if not a.dry_run:
-            c = subprocess.run([sys.executable, "-I", f"{HERE}/grade_cargo.py", d], capture_output=True, text=True)
+            hidden = [f"{EVALS}/{case}/hidden"] if os.path.isdir(f"{EVALS}/{case}/hidden") else []
+            c = subprocess.run([sys.executable, "-I", f"{HERE}/grade_cargo.py", d, *hidden], capture_output=True, text=True)
             open(f"{d}/cargo.json", "w").write(c.stdout)
         hidden = lambda r: any(p == "target" or p.startswith(".") for p in os.path.relpath(r, d).split(os.sep) if p != ".")
         files = [os.path.join(r, f) for r, _, fs in os.walk(d) if not hidden(r) for f in fs if f.endswith((".rs", ".toml"))]
@@ -207,6 +200,9 @@ def grade(rid):
     else:
         output = f"The input files:\n\n{inputs(case)}\n\nreview.md:\n\n{open(f'{d}/review.md').read()}"
     asserts = [t for _, _, t in gs]
+    if not asserts:  # hidden tests and cargo are the whole grade
+        json.dump({"expectations": [], "kinds": [], "graded_by": "cargo", "usage": {}}, open(f"{d}/grading.json", "w"))
+        return rid
     prompt = ("Grade one assistant output against assertions. PASS needs clear evidence; when unsure, FAIL. An "
               "assertion that says review.md \"does not\" call something a defect passes only if review.md never "
               "calls it a defect or asks to change it, not even as a nit or a \"consider\".\n\nThe task:\n\n"
@@ -276,6 +272,7 @@ if a.validate:
             for g in os.listdir(f"{EVALS}/{m['case']}/graders"):
                 if g.startswith("01-"): verdicts[g] = bool(c.get("test_passed"))
                 if g.startswith("02-"): verdicts[g] = bool(c.get("clippy_current_lints"))
+            if "hidden_total" in c: verdicts["hidden"] = c["hidden_passed"] == c["hidden_total"]
         expect_fail = set()
         if m["arm"] == "mainstream":
             expect_fail = set(open(f"{EVALS}/{m['case']}/mainstream/expected-fails").read().split())
@@ -304,6 +301,11 @@ for rid, m in sorted(mapping.items()):
         for k, kind in (("test_passed", "correctness"), ("clippy_current_lints", "convention")):
             n += 1; p += bool(c.get(k)); fails += [] if c.get(k) else [k]
             t = tally.setdefault(kind, [0, 0]); t[0] += bool(c.get(k)); t[1] += 1
+        if "hidden_total" in c:
+            hp, hn = c["hidden_passed"], c["hidden_total"]
+            n += hn; p += hp; fails += [] if hp == hn else [f"hidden tests {hp}/{hn}"]
+            for kind in ("correctness", "hidden"):
+                t = tally.setdefault(kind, [0, 0]); t[0] += hp; t[1] += hn
     for i, e in enumerate(g.get("expectations", [])):
         n += 1; p += bool(e.get("passed")); fails += [] if e.get("passed") else [e.get("text", "")[:80]]
         t = tally.setdefault(kinds[i] if i < len(kinds) else "untagged", [0, 0]); t[0] += bool(e.get("passed")); t[1] += 1

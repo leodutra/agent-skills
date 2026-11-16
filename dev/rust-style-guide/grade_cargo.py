@@ -2,7 +2,9 @@
 """Mechanical graders 01 and 02 of the code-writing evals (evals/*/graders/0[12]-*.md): cargo test as
 delivered, and clippy -D warnings with the CURRENT skill's lints.toml and clippy.toml swapped in for
 whatever lint config the run used, so every skill version is judged by the same rules.
-Usage: grade_cargo.py <run outputs dir>; prints one JSON object. Needs cargo (and the network once)."""
+Usage: grade_cargo.py <run outputs dir> [hidden dir]; prints one JSON object. Needs cargo (and the network once).
+A hidden dir (the case's hidden/, never shown to the run) is copied over the crate and its tests/hidden.rs
+run with lints capped at warn, so a run's own lint config can't fail a behavioral test; each test counts."""
 import json
 import os
 import re
@@ -31,6 +33,19 @@ shutil.copytree(outputs, work, dirs_exist_ok=True, ignore=shutil.ignore_patterns
 clippy = ["cargo", "clippy", "--quiet", "--all-targets", "--", "-D", "warnings"]
 result["test_passed"], result["test_tail"] = run(["cargo", "test", "--quiet"], work)
 result["clippy_as_delivered"], result["clippy_as_delivered_tail"] = run(clippy, work)
+
+if len(sys.argv) > 2:
+    hidden = os.path.join(work, "tests", "hidden.rs")
+    shutil.copytree(sys.argv[2], work, dirs_exist_ok=True)
+    p = subprocess.run(["cargo", "test", "--quiet", "--test", "hidden"], cwd=work, capture_output=True, text=True,
+                       timeout=900, env={**os.environ, "RUSTFLAGS": "--cap-lints warn"})
+    m = re.search(r"test result: \w+\. (\d+) passed; (\d+) failed", p.stdout)
+    result["hidden_total"] = len(re.findall(r"#\[test\]", open(hidden).read()))
+    result["hidden_passed"] = int(m.group(1)) if m else 0  # no summary: the tests didn't compile
+    result["hidden_tail"] = "\n".join(l for l in (p.stdout + p.stderr).splitlines()
+                                      if l.startswith(("error", "test result", "---- ", "thread"))
+                                      or "panicked" in l)[-1500:]
+    os.remove(hidden)
 
 # Swap in the current lint set: drop every [lints...] / [workspace.lints...] table, append the skill's.
 manifest = os.path.join(work, "Cargo.toml")

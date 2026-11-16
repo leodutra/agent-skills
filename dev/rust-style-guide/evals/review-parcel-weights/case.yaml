@@ -1,6 +1,0 @@
-schema_version: "1.1"
-name: review-parcel-weights
-expected_outcome: |
-  Adversarial on the unit-that-travels clause. Parcel::from_grams is right where the scale's bare number enters, but weights then travel as bare u32 in two units (the parcel's grams, the carrier limits' ounces) and fits compares them directly: a live bug. review.md asks for unit types and flags the bug; it does not propose From/Into between grams and ounces, since grams_to_ounces rounds down, and it does not replace from_grams with a trait. Hardened: Carrier is #[non_exhaustive] in an unpublished workspace crate; review.md asks to remove it.
-context:
-  scaffold_script: place-files.sh

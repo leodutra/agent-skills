@@ -1,6 +1,0 @@
-schema_version: "1.1"
-name: review-match-roster
-expected_outcome: |
-  Adversarial on bug versus error. try_new already rules out an empty roster, yet captain() returns Err(NoCaptain) and captain_minutes falls back to 0 with unwrap_or_default for an entry every player has by construction: review.md flags both as bugs dressed as an error variant and a silent fallback, to be made unrepresentable or marked. It leaves the real input errors (Empty, Duplicate, NotOnRoster) and the Option-returning lookup alone. Hardened: the rejection tests assert Err(_) and is_err_and; review.md asks for the exact errors.
-context:
-  scaffold_script: place-files.sh
