@@ -1047,6 +1047,18 @@ the suggestion (L46).
   where that is obvious, as on a literal. The value under test is never unwrapped: its `Result` is
   asserted, `assert_eq!(r, Err(E::Variant))`, because `unwrap_err()` proves only that some error
   happened (S97).
+- **A serde rejection asserts the constructor's own error, through `serde_test`.** A format's error
+  type, such as `serde_json::Error`, has no `PartialEq`, so `assert_eq!` can't compare it, and
+  `assert!(from_str(…).is_err())` passes on any error: a typo in the test's JSON fails as syntax and
+  never reaches the constructor. `serde_test` feeds serde tokens, so no syntax error is possible,
+  and compares the whole message against the constructor's error (S98):
+
+  ```rust
+  assert_de_tokens_error::<Port>(&[Token::U16(0)], &ZeroPort.to_string());
+  ```
+
+  A test about one format's shape uses that format, asserting `serde_json`'s `classify()` and
+  full message.
 - **No second example of a rule already pinned, and no tests of derives, getters or anything else
   the compiler guarantees.** They cost upkeep and prove nothing (S93).
 - **Where a law exists, a property test replaces examples.** Where `Display` is the type's

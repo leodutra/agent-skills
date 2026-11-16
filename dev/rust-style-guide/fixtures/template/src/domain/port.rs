@@ -20,8 +20,9 @@
 //! ```
 //! Deserializing runs the constructor:
 //! ```
-//! use template::domain::port::Port;
-//! assert!(serde_json::from_str::<Port>("0").is_err());
+//! use serde_test::{Token, assert_de_tokens_error};
+//! use template::domain::port::{Port, ZeroPort};
+//! assert_de_tokens_error::<Port>(&[Token::U16(0)], &ZeroPort.to_string());
 //! assert_eq!(serde_json::from_str::<Port>("80").ok(), Port::try_new(80).ok());
 //! ```
 

@@ -22,8 +22,19 @@
 //! ```
 //! Deserializing runs the constructor, so the wire can't bypass it either:
 //! ```
+//! use serde_test::{Token, assert_de_tokens_error};
 //! use template::domain::span::{EmptySpan, Span};
-//! assert!(serde_json::from_str::<Span>(r#"{"start":3,"end":1}"#).is_err());
+//! assert_de_tokens_error::<Span>(
+//!     &[
+//!         Token::Struct { name: "SpanFields", len: 2 },
+//!         Token::Str("start"),
+//!         Token::U32(3),
+//!         Token::Str("end"),
+//!         Token::U32(1),
+//!         Token::StructEnd,
+//!     ],
+//!     &EmptySpan.to_string(),
+//! );
 //! assert_eq!(serde_json::from_str::<Span>(r#"{"start":1,"end":3}"#).ok(), Span::try_new(1, 3).ok());
 //! ```
 
