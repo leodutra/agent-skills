@@ -320,3 +320,5 @@ Three tiers check the guide's own claims rather than model behavior. Tiers 1–2
   - Every passing bad sample's evidence cites its own rule, not just another in its family.
 - **Open:** clippy's `not_unsafe_ptr_arg_deref` (deny by default) holds part of S3: a safe fn
   dereferencing a raw-pointer argument. Under "default lints are still listed" it belongs in lints.toml.
+- Both opens resolved (60923cd): SKILL.md's `Borrow<str>` wording now names the text callers look up
+  with; `not_unsafe_ptr_arg_deref` is listed (fundamentals L51, lints.toml, tier 1 pair).
