@@ -1,0 +1,14 @@
+# The crate's only source file, src/lib.rs, is:
+#
+#     pub fn slug(title: &str) -> String {
+#         title.to_lowercase().replace(' ', "-")
+#     }
+
+[package]
+name = "slugs"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+regex = "1"
+serde = { version = "1", features = ["derive"] }

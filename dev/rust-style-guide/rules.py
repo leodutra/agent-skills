@@ -41,7 +41,9 @@ DEPS = """
 thiserror = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-tokio = { version = "1", features = ["io-util", "macros", "sync"] }
+tokio = { version = "1", features = ["io-util", "macros", "sync", "rt", "time"] }
+clap = { version = "4", features = ["derive"] }
+anyhow = "1"
 """
 # Rough input tokens per call (2026-11-15 bench: a review run ~18k, a grading call ~7k; these are smaller).
 EST = {"grade": 3_000, "fix-skill": 4_500, "fix-none": 4_000, "skill-cache-write": 6_000}  # fresh input; 2026-11-16 screen
@@ -50,7 +52,7 @@ GRADER_SYSTEM = "You check Rust code against one rule of a style guide and reply
 
 def samples(rules):
     for rule in rules:
-        for f in sorted((JUDGMENT / rule).glob("*.rs")):
+        for f in sorted(f for f in (JUDGMENT / rule).iterdir() if f.suffix in (".rs", ".toml")):
             kind = "allowed" if f.name.startswith("allowed") else "bad" if f.name.startswith("bad") else "good"
             yield rule, kind, f
 
@@ -83,7 +85,9 @@ def lint_check(sources):
         if old.parent.name not in sources:
             old.unlink()
     for name, source in sources.items():
-        member(WORK, name, lints, DEPS)
+        # The unsafe family needs unsafe code: lowered to deny, as lints.toml's comment allows.
+        crate_lints = lints.replace('unsafe_code = "forbid"', 'unsafe_code = "deny"') if name.startswith("unsafe_") else lints
+        member(WORK, name, crate_lints, DEPS)
         (WORK / name / "src" / "lib.rs").write_text(source)
     (WORK / "Cargo.toml").write_text(f'[workspace]\nresolver = "3"\nmembers = {json.dumps(sorted(sources))}\n')
     (WORK / "clippy.toml").write_text((ASSETS / "clippy.toml").read_text())
@@ -184,7 +188,8 @@ def main():
         sys.exit("FAIL\n" + "\n".join(f"- {p}" for p in problems))
 
     if not (a.judgment or a.fix):
-        found, stray = lint_check({module(r, f): code_and_keep(f)[0] for r, _, f in items})
+        # A .toml sample (a Cargo.toml) is graded as text; only Rust samples are built.
+        found, stray = lint_check({module(r, f): code_and_keep(f)[0] for r, _, f in items if f.suffix == ".rs"})
         bad = [f"{name}: {status} {diags}" for name, (status, diags) in found.items() if status != "clean"] + stray
         if bad:
             print("FAIL\n" + "\n".join(f"- {b}" for b in bad))

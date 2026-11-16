@@ -6,6 +6,10 @@ trace-ledger.md has one row per fundamentals.md ID: `| ID | home | holds | note 
   (`disallowed-methods std::process::abort`, `config allow-unwrap-in-tests`) or `level deny`.
 - home `skill`: holds quotes SKILL.md (`"…"`, whitespace-insensitive).
 - home `lint+skill`: both; the note says why the model needs it before linting.
+An optional fifth cell, `eval`, names the files that prove the rule: `judgment:<dir>/<file>` (tier 3),
+`doctest:<path>#<fragment>` (tier 2, from this directory; the fragment, a piece of the doctest
+that proves this rule, must appear in the file) or `lints:<path>` (a tier 1 sample). Every S rule needs
+one; every tier 3 sample must be named by some row.
 `;` separates items. Fails when an ID is in one of fundamentals.md and the ledger only; a lint item,
 config entry or quote doesn't exist; a lints.toml lint, clippy.toml entry or SKILL.md paragraph or
 sentence is held by no row (sentences, so one quote never covers a whole bullet). No cargo, no model calls.
@@ -65,14 +69,28 @@ def main():
     rows = {}
     for line in LEDGER.read_text().splitlines():
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
-        if len(cells) != 4 or not re.fullmatch(r"[LSM]\d+", cells[0]):
+        if len(cells) not in (4, 5) or not re.fullmatch(r"[LSM]\d+", cells[0]):
             continue
         if cells[0] in rows:
             problems.append(f"{cells[0]}: two ledger rows")
-        rows[cells[0]] = cells
+        rows[cells[0]] = cells + [""] * (5 - len(cells))
 
-    held_lints, quotes = set(), []
-    for rid, home, holds, note in rows.values():
+    held_lints, quotes, proven = set(), [], set()
+    roots = {"judgment": HERE / "rules" / "judgment", "doctest": HERE, "lints": HERE / "rules" / "lints"}
+    for rid, home, holds, note, evals in rows.values():
+        refs = [e.strip() for e in evals.split(";") if e.strip()]
+        if rid[0] == "S" and not refs:
+            problems.append(f"{rid}: skill rule with no eval")
+        for ref in refs:
+            kind, _, path = ref.partition(":")
+            path, _, fragment = path.partition("#")
+            target = roots[kind] / path if kind in roots else None
+            if not target or not target.is_file():
+                problems.append(f"{rid}: eval {ref!r} doesn't exist")
+            elif kind == "doctest" and (not fragment or fragment not in target.read_text()):
+                problems.append(f"{rid}: eval {ref!r} names no doctest fragment found in the file")
+            else:
+                proven.add(target.resolve())
         items = [i.strip() for i in holds.split(";") if i.strip()]
         said = [i[1:-1] for i in items if i.startswith('"') and i.endswith('"')]
         named = [i for i in items if not (i.startswith('"') and i.endswith('"'))]
@@ -98,6 +116,10 @@ def main():
                 problems.append(f"{rid}: SKILL.md doesn't say {quote!r}")
             quotes.append(norm(quote))
 
+    samples = {f.resolve() for f in roots["judgment"].rglob("*") if f.is_file() and f.name != "rule.md"
+               and ".claude" not in f.parts}
+    problems += [f"{f.relative_to(roots['judgment'].resolve())}: tier 3 sample no rule names as its eval"
+                 for f in sorted(samples - proven)]
     problems += [f"{i}: tagged in fundamentals.md, no ledger row" for i in sorted(fundamentals_ids - rows.keys())]
     problems += [f"{i}: ledger row, not tagged in fundamentals.md" for i in sorted(rows.keys() - fundamentals_ids)]
     problems += [f"{x}: in the lint set, no fundamental holds it" for x in sorted((lint_names | entries) - held_lints)]
@@ -108,7 +130,7 @@ def main():
         return 1
     homes = [r[1] for r in rows.values()]
     print(f"ok ({len(rows)} fundamentals: {homes.count('lint')} lint, {homes.count('skill')} skill, "
-          f"{homes.count('lint+skill')} both; every lint entry and SKILL.md sentence has one)")
+          f"{homes.count('lint+skill')} both; every lint entry and SKILL.md sentence has one; {sum(1 for r in rows.values() if r[4])} have evals)")
     return 0
 
 
