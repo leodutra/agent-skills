@@ -105,3 +105,24 @@ restates, and the note says why the model needs it before linting. `;` separates
 | L21 | lint | clippy::result_unit_err | |
 | L22 | lint | clippy::map_err_ignore | |
 | L23 | lint | disallowed-types anyhow::Error; disallowed-types anyhow::Result; disallowed-types eyre::Report; disallowed-types eyre::Result | |
+| L24 | lint+skill | clippy::unwrap_used; clippy::expect_used; clippy::panic; "MUST NOT appear outside tests" | totality shapes signatures and error types; learned from clippy, the API gets redesigned |
+| S64 | skill | "Functions are total" | |
+| S65 | skill | "except `expect()` with a clear message"; "`main.rs` `expect()` with a clear message" | |
+| S66 | skill | "User input, CLI arguments included, is an error" | |
+| L25 | lint | clippy::todo; clippy::unimplemented | tests included (C2) |
+| L26 | lint | clippy::unreachable | tests included (C2) |
+| S67 | skill | "A bug is neither an error variant nor a silent fallback" | |
+| L27 | lint+skill | disallowed-methods std::sync::PoisonError::into_inner; disallowed-methods std::sync::PoisonError::get_ref; disallowed-methods std::sync::PoisonError::get_mut; "its data is never read again" | the poisoning becomes an error variant: error-type design |
+| S68 | skill | "Rebuilding a poisoned lock's whole value" | C7 |
+| S69 | skill | "A lock that doesn't poison" | |
+| L28 | lint | disallowed-methods std::panic::catch_unwind | |
+| L29 | lint+skill | disallowed-methods std::process::abort; clippy::exit; "Library code MUST NOT call `process::exit`/`abort`" | returning an error instead of exiting changes the signature |
+| L30 | lint+skill | clippy::cast_possible_truncation; clippy::cast_sign_loss; clippy::cast_possible_wrap; "never `as`" | `TryFrom` returns `Result`, so a narrowing conversion changes the signature |
+| L31 | lint | clippy::string_slice | |
+| S70 | skill | "Slice a `str` only at char boundaries"; "`split_at` on `str`" | |
+| S71 | skill | "Input-dependent indexing MUST use" | C10: or check bounds first |
+| S72 | skill | "Money and quantity arithmetic that can overflow"; "overflowing arithmetic" | |
+| S73 | skill | "check a possibly-zero divisor" | |
+| S74 | skill | "Money: integer minor units or a decimal type" | |
+| L32 | lint | clippy::dbg_macro; clippy::print_stdout; clippy::print_stderr | a binary prints under a reasoned #[expect] (C6) |
+| L33 | lint+skill | config allow-unwrap-in-tests; config allow-expect-in-tests; config allow-panic-in-tests; config allow-dbg-in-tests; config allow-print-in-tests; "Test allowances cover `#[test]`"; "`unwrap()`, `expect()`, `panic!`, `dbg!` and printing in" | a `tests/` helper written to unwrap must be rewritten to return `Result` (C3) |

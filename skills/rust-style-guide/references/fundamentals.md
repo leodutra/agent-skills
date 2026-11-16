@@ -27,7 +27,9 @@ review has to check by hand.
 3. Otherwise, or for the part a lint misses, state it in SKILL.md.
 4. Restate a lint-held rule in SKILL.md only if skipping it means a redesign later.
 5. Remove or change nothing in SKILL.md or the lints without changing its rule here.
-6. In this repository, `dev/rust-style-guide/trace.py` checks steps 1 to 5 against its ledger.
+6. In this repository, `dev/rust-style-guide/trace.py` checks the IDs against its ledger: every rule
+   reaches its home, and every lint entry and SKILL.md paragraph has a rule. A sentence added to a
+   paragraph that already has one, and whether a rule belongs in a lint, still need review.
 
 ## Two ideas underneath everything
 
@@ -721,29 +723,30 @@ A panic takes failure out of the type system. The caller can't see it in the sig
 on it and can't recover from it. In a server, it kills the request's task or, under
 `panic = "abort"`, the whole process. That is why functions are *total*: every valid input gives a
 value, and every failure is an `Err` the caller has to handle. User input is never checked with
-`assert!`, because bad input is expected, not a bug.
+`assert!`, because bad input is expected, not a bug (S64).
 
-- `unwrap` and `expect` are panics with a shorter name. `expect` gets one exception: bootstrap in
-  `main.rs`, where crashing with a clear message *is* the right thing to do. It sits under an
-  `#[expect]` that says so. Bootstrap means the environment failing at startup, such as a missing
+- `unwrap` and `expect` are panics with a shorter name (L24). `expect` gets one exception:
+  bootstrap in `main.rs`, where crashing with a clear message *is* the right thing to do. It sits
+  under an `#[expect]` that says so (S65). Bootstrap means the environment failing at startup, such as a missing
   config file or a port that won't bind. A user mistyping an argument is not bootstrap. A panic
   prints `thread 'main' panicked at src/main.rs` and exits with code 101, where a user expects a
-  usage message and an error code, so CLI input is parsed and its error reported.
-- `todo!` and `unimplemented!` are panics that ship by accident.
+  usage message and an error code, so CLI input is parsed and its error reported (S66).
+- `todo!` and `unimplemented!` are panics that ship by accident, in tests too (L25).
 - `unreachable!` claims something the compiler doesn't check. An exhaustive `match`, or a type that
-  can't hold the impossible case, makes the compiler check it.
+  can't hold the impossible case, makes the compiler check it (L26).
 - **A bug is not an error, and not a default either.** Banning panics must not push code into
   pretending. `Result` is for failures a caller can act on: bad input, an unavailable store. A
   broken precondition or an impossible state is a bug. Dressing it up as an error variant gives
   callers a case they can't handle, and papering over it with a fallback (`unwrap_or_default()`)
   hides it until the data is wrong. Fix the API or the types so the state can't arise. When even
   an exhaustive match or a type can't express it, the narrow exception is a reasoned
-  `#[expect(clippy::unreachable, reason = "…")]` at that spot, where every reader sees the claim.
+  `#[expect(clippy::unreachable, reason = "…")]` at that spot, where every reader sees the claim
+  (S67).
 - **A poisoned lock stays shut.** A lock is poisoned when a thread panicked while holding it, which
   means an update may have stopped halfway and the data may break its own invariants.
   `PoisonError::into_inner` reads it anyway, so the half-done update becomes the state everyone
   works from. The poisoning is reported as an error instead, like any other failure the caller
-  can't fix in place.
+  can't fix in place (L27).
 
   ```rust
   // wrong: carries on from whatever the panicking thread left half-done
@@ -755,40 +758,43 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   ```
 
   The one recovery that never reads the old data is rebuilding it: take the guard, overwrite the
-  whole value, then `clear_poison`, under a reasoned `#[expect(clippy::disallowed_methods)]`. A lock
-  that doesn't poison (`tokio::sync::Mutex`, `parking_lot`) leaves the same half-done data after a
-  panic with no flag at all, so no lint helps there: keep the code holding it panic-free.
+  whole value, then `clear_poison`, under a reasoned `#[expect(clippy::disallowed_methods)]`
+  (S68). A lock that doesn't poison (`tokio::sync::Mutex`, `parking_lot`) leaves the same half-done
+  data after a panic with no flag at all, so no lint helps there: keep the code holding it
+  panic-free (S69).
 - `catch_unwind` is banned because recovering from panics is not error handling. It also does
-  nothing when the binary is built with `panic = "abort"`.
+  nothing when the binary is built with `panic = "abort"` (L28).
 - `process::abort` also stops the process without running destructors. `process::exit` is caught by
-  its own lint outside `main`. Neither belongs in a library.
+  its own lint outside `main`. Neither belongs in a library (L29).
 - The `panic` lint does not catch `assert!` on external input. Review checks assertions against
-  values that can arrive from users or I/O.
+  values that can arrive from users or I/O (S64).
 - **An `as` cast between integers never fails, so it gets the value wrong instead.** `300u64 as u8`
   is `44`, `-1i64 as u64` is `18446744073709551615`, and `u64::MAX as i64` is `-1`. The three cast
   lints catch those casts. Use `From` when the conversion can't lose anything, and `TryFrom` when
-  it can, so the error reaches the caller.
+  it can, so the error reaches the caller (L30).
 - **Slicing a `str` at a byte offset panics** when the offset lands inside a multi-byte character:
   `&"aé123"[..2]` panics, because `é` takes two bytes. `string_slice` catches `&s[a..b]`. Nothing
-  catches `split_at`, so review does. Use `split_once`, `char_indices` or `s.get(a..b)`, which
-  returns `None` instead of panicking.
+  catches `split_at`, so review does (L31, S70). Use `split_once`, `char_indices` or `s.get(a..b)`,
+  which returns `None` instead of panicking.
 - **Indexing a slice or `Vec` at input-dependent bounds can panic.** Use `get` or `get_mut` and
-  handle the missing element or range. `indexing_slicing` is too noisy for this lint set, so review
-  checks it.
+  handle the missing element or range, or check the bounds first. `indexing_slicing` is too noisy
+  for this lint set, so review checks it (S71).
 - **Arithmetic that can overflow panics in a debug build and wraps in release.** For money and
   quantities, both are wrong: `cents * percent` can overflow on a large order. Use `checked_mul` and
   friends and return an error. Clippy's lint for this, `arithmetic_side_effects`, flags every `+`
-  and `*`, which is too noisy to enable, so review catches it.
+  and `*`, which is too noisy to enable, so review catches it (S72).
 - **Division and remainder by zero panic in all builds.** When a divisor can be zero, check it or
-  use `checked_div`/`checked_rem` and return an error. Money uses integer minor units or a decimal
-  type; binary floats can round amounts and are not suitable for exact accounting.
+  use `checked_div`/`checked_rem` and return an error (S73). Money uses integer minor units or a
+  decimal type; binary floats can round amounts and are not suitable for exact accounting (S74).
 - **Library code returns failures to its caller.** `process::exit` skips destructors and stops the
-  process. `dbg!` and print macros leak debugging or write output the caller did not request;
-  use structured logging when observation is needed. Binary entry points may print deliberately.
+  process (L29). `dbg!` and print macros leak debugging or write output the caller did not
+  request; use structured logging when observation is needed. A binary entry point prints
+  deliberately, each printing site under a reasoned `#[expect]` (L32).
 
 In a test, a panic is how the test fails, so unwrapping there is the assertion. The
-`allow-*-in-tests` settings let `#[test]` functions and `#[cfg(test)]` code do that. A helper file
-under `tests/` is neither, so it returns `Result` and uses `?`.
+`allow-*-in-tests` settings let `#[test]` functions and `#[cfg(test)]` code do that, and print or
+`dbg!` too (L33). A helper file under `tests/` is neither, so it returns `Result` and uses `?`
+(L33). `todo!`, `unimplemented!` and `unreachable!` have no test allowance (L25, L26).
 
 ## 9. Matches keep up with enums
 

@@ -244,12 +244,12 @@ pub const HTTP: Port = Port::literal(80);
 - Domain code: time and randomness are parameters, never ambient; output and decisions MUST NOT
   depend on `HashMap`/`HashSet` order (an ordered collection, or sort); no interior mutability
   (`&mut self`; the caller shares).
-- Library code MUST NOT call `process::exit`/`abort`, `dbg!` or print macros; it returns errors and
-  logs.
+- Library code MUST NOT call `process::exit`/`abort`; it returns errors and logs.
 - No code runs before or after `main` (`#[ctor]`, `#[dtor]`): `main` starts and stops everything,
   in an order it shows, and handles the errors.
 - A poisoned lock means a panic interrupted an update: its data is never read again
-  (`PoisonError::into_inner`); the poisoning is an error.
+  (`PoisonError::into_inner`); the poisoning is an error. A lock that doesn't poison (tokio,
+  `parking_lot`) leaves no flag, so code holding it MUST NOT panic.
 - A name says what the thing does, never a catch-all (`Manager`, `Service`, `Utils`) or an abbreviation a
   newcomer wouldn't know; a single-letter lifetime or generic parameter only where one letter is
   unambiguous. Accessors follow std: `foo()`, `foo_mut()`, `set_foo()`, `take_foo()`,
@@ -292,7 +292,7 @@ pub const HTTP: Port = Port::literal(80);
 
 What clippy can check, clippy checks. Test allowances cover `#[test]` and `#[cfg(test)]`; a `tests/`
 helper is neither (it returns `Result`, uses `?`). The lints hold: wildcard arms;
-unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe, undocumented unsafe,
+unwrap/expect/panic outside tests; todo/unimplemented/unreachable; unsafe, undocumented unsafe,
 several unsafe operations per block and an `unsafe fn` without `# Safety`; a hand-written
 `Default` a derive would produce; `Clone` on `Copy`; `Hash`/`Ord` derived beside a hand-written
 `PartialEq`/`PartialOrd`; `#[ctor]`/`#[dtor]`;
@@ -332,7 +332,9 @@ Not defects, not even nits:
 - `literal`'s panic in `const` items, under its `#[expect]`.
 - `main.rs` `expect()` with a clear message for an environment startup failure, under its
   `#[expect]`.
-- `unwrap()`, `expect()`, `panic!` in `#[test]` and `#[cfg(test)]` code.
+- `unwrap()`, `expect()`, `panic!`, `dbg!` and printing in `#[test]` and `#[cfg(test)]` code.
+- Rebuilding a poisoned lock's whole value, then `clear_poison`, under a reasoned
+  `#[expect(clippy::disallowed_methods, reason = "…")]`.
 - `anyhow`/`eyre` in a binary's `main` and CLI commands; the clock, randomness and locks outside
   domain code, where clippy.toml's comments exempt them.
 - A non-`Send` future deliberately run only on a local executor, with a reasoned

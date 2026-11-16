@@ -44,9 +44,8 @@ dtor = "0"
 D = "clippy::disallowed_"
 PROMISES = {
     "wildcard arms": ["clippy::wildcard_enum_match_arm", "clippy::match_wildcard_for_single_variants"],
-    "unwrap/expect/panic/todo/unimplemented/unreachable outside tests": [
-        "clippy::unwrap_used", "clippy::expect_used", "clippy::panic", "clippy::todo", "clippy::unimplemented",
-        "clippy::unreachable"],
+    "unwrap/expect/panic outside tests": ["clippy::unwrap_used", "clippy::expect_used", "clippy::panic"],
+    "todo/unimplemented/unreachable": ["clippy::todo", "clippy::unimplemented", "clippy::unreachable"],
     "unsafe, undocumented unsafe, several unsafe operations per block and an `unsafe fn` without `# Safety`": [
         "unsafe_code", "unsafe_op_in_unsafe_fn", "clippy::undocumented_unsafe_blocks",
         "clippy::multiple_unsafe_ops_per_block", "clippy::missing_safety_doc"],
