@@ -54,3 +54,29 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S18 | skill | "Derive `Debug, Clone, PartialEq`, and `Copy`" | |
 | S19 | skill | "a value meant to follow IEEE 754" | |
 | S20 | skill | "a `try_*` method returning `Result`, never an operator" | e.g. `Km::try_add`; `Add` can't return an error |
+| S21 | skill | "One validation, and every way in runs it" | |
+| S22 | skill | "An inherent fallible constructor MUST be `try_new`"; "`new` returning `Result`" | |
+| S23 | skill | "Other names follow C-CTOR"; "Instead of `try_new`: an I/O resource's fallible" | `from_*` also names a unit (C9) |
+| S24 | skill | "returning `Result`, never `Option`" | |
+| S25 | skill | "Its error holds only the failures it can produce"; "A unit-struct error for a constructor with one failure" | |
+| S26 | skill | "its output printed back by `Display`"; "`default_value_t = CONST` relies on" | |
+| S27 | skill | "Normalize first (trim, canonical case)" | |
+| S28 | skill | "`Borrow<str>` only if those agree" | |
+| S29 | skill | "No value of the type exists that breaks its invariant" | |
+| S30 | skill | "No `Deref`/`DerefMut`, no `&mut` to the inner value" | |
+| S31 | skill | "serde: `#[serde(try_from"; "skips the constructor and MUST NOT be used" | |
+| S32 | skill | "`Decode`/`FromSql` decodes the inner type" | |
+| S33 | skill | "clap: a refinement parses through `FromStr`" | |
+| S34 | skill | "`literal` calls `try_new`, never builds `Self`"; "`literal`'s panic in `const` items" | |
+| S35 | skill | "**Conversion**: one typed value becomes unambiguously" | |
+| S36 | skill | "a name MUST NOT replace the trait"; "An unambiguous conversion or complete text parse without its trait" | |
+| S37 | skill | "A conversion that would surprise a reader" | |
+| S38 | skill | "A primitive whose type doesn't carry its unit is ambiguous" | |
+| S39 | skill | "**Parsing**: interpreting a text or byte representation" | |
+| S40 | skill | "MUST parse through `FromStr`" | |
+| S41 | skill | "names are its canonical text" | |
+| S42 | skill | "MAY sit beside it with the same semantics"; "A type that borrows its input uses" | |
+| S43 | skill | "Complete bytes with one context-free interpretation" | |
+| S44 | skill | "A parse that extracts"; "A parse that chooses among formats"; "A named parser or decoder for a parse that extracts or chooses" | |
+| L16 | lint | clippy::infallible_try_from | |
+| L17 | lint | clippy::unnecessary_wraps | |

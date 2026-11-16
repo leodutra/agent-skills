@@ -403,31 +403,33 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
 - **Every way in runs one validation.** `FromStr`, `TryFrom`, serde and the database decoder all
   run the same check, usually by calling the constructor; an owned `TryFrom<String>` may share
   the check and keep its allocation instead. With two checks, the rule ends up updated in one and
-  forgotten in the other.
+  forgotten in the other (S21).
 - **It's named `try_new`, following Google's Rust guide:** "If the constructor returns a `Result`,
   use `try_new()`." There are two reasons. In most languages `new` builds a value and that's all,
   so a reader coming to the code expects it to succeed. And it reads better: `Email::try_new(raw)?`
-  says at the call site that this can fail, before anyone looks at the signature.
+  says at the call site that this can fail, before anyone looks at the signature (S22).
   The other constructor names come from the
   [Rust API Guidelines, C-CTOR](https://rust-lang.github.io/api-guidelines/predictability.html#c-ctor).
   A type that represents an I/O resource names its constructor in the domain's terms:
   `File::open`, `Mmap::open`, `TcpStream::connect`, `UdpSocket::bind`. A secondary constructor is
   prefixed `with_` (`Vec::with_capacity`), and a `from_` name marks a parse that chooses among
-  forms (`Config::from_json`). These may return `Result` under their own names. A conversion is
-  the trait itself: a `from_*` may sit beside it, never stand in for it (below). This guide departs
+  forms (`Config::from_json`) or a constructor that names the unit of its raw number
+  (`Weight::from_grams`, below). These may return `Result` under their own names. A conversion is
+  the trait itself: a `from_*` may sit beside it, never stand in for it (below) (S23). This guide departs
   from the API Guidelines and std in one place, for the two reasons above: they allow a `new` that
   returns `Result` (`NonZero::new`, `CString::new`), and here `new` always means "cannot fail".
 - **It returns `Result`, never `Option`.** `Option` means "there is nothing here". A rejected input
-  is a failure, and the caller should be told which one (see section 6).
+  is a failure, and the caller should be told which one (see section 6) (S24).
 - **Its error holds only the failures it can produce.** `Port::try_new` can fail one way, so its error
   is a unit struct. A shared `ValidationError { Empty, TooLong, BadChar, Zero }` would make every
   caller handle three cases that can't happen, and nobody could tell from the type which ones are
   real. `FromStr` wraps the constructor's error beside its own syntax failure, as `ParsePortError`
-  does.
+  does, so a caller of `.parse()` still matches the constructor's failure as a variant of its own
+  (S25).
 - **`Display` prints what `FromStr` parses back.** A value printed and parsed back gives the same
   value. The reverse need not hold when `FromStr` accepts several spellings: `"HIGH"` parses, and
   prints back as `high`. clap's `default_value_t` relies on the round trip, and a property test
-  pins it (section 14).
+  pins it (section 14) (S26).
 
 | Lint | Catches |
 | --- | --- |
@@ -435,15 +437,15 @@ impl FromStr for Port { /* parses the u16, then calls Port::try_new */ }
 | `unnecessary_wraps` | a fn returning `Result` or `Option` that always returns `Ok` or `Some` |
 
 A conversion that can't fail but is written as `TryFrom` makes every caller handle an error that
-never happens. `From` is the honest signature. The same goes for a function that never fails but
+never happens. `From` is the honest signature (L16). The same goes for a function that never fails but
 returns `Result`: the caller writes dead error handling, and readers look for a failure case that
-doesn't exist.
+doesn't exist (L17).
 
 ### Normalize in the constructor
 
 The constructor brings the value to its canonical form first, by trimming and fixing case, so
 that the derived `Eq`, `Hash` and `Ord` compare what the domain means. It must not erase a
-difference the domain keeps.
+difference the domain keeps (S27).
 
 ```rust
 impl Email {
@@ -464,22 +466,23 @@ Normalize anywhere else and two equal values can compare unequal, so a `HashSet<
 same address twice. The same reasoning limits `Borrow<str>`: a `HashMap<Email, _>` looked up with a
 `&str` hashes and compares the `str`, so `Borrow` is honest only when `Eq`, `Hash` and `Ord` on the
 type agree with those on its text. After a normalization such as the email's, they don't, and a
-lookup by the raw string misses an entry that is there.
+lookup by the raw string misses an entry that is there (S28).
 
 ### No back doors
 
 The real promise is stronger than "there is a validating constructor": no value of the type can
 exist that breaks its invariant, however it was obtained. One unchecked path undoes every check on
-the others, so each path is closed or routed through the constructor.
+the others, so each path is closed or routed through the constructor (S29).
 
 - **Every other way to obtain a value keeps the invariant**: operators, mutating methods, and APIs
-  behind a feature flag or `#[cfg(test)]` that a build can switch on. An operation that can break it
+  behind a feature flag or `#[cfg(test)]` that a build can switch on (S29). An operation that can break it
   (a sum past a bound) is a `try_*` method returning `Result`, never an operator (S20).
 
 - **No `Deref` to the inner type.** It turns every `String` method into an `Email` method. Offer
-  `as_str()`, `get()`, `AsRef` or `into_inner()` instead.
-- **No `&mut` to the inner value.** A mutating method either keeps the invariant or doesn't exist.
-- **No `Default`** unless the default value is valid.
+  `as_str()`, `get()`, `AsRef` or `into_inner()` instead (S30).
+- **No `&mut` to the inner value.** A mutating method either keeps the invariant or doesn't exist
+  (S30).
+- **No `Default`** unless the default value is valid (S16).
 - **serde goes through the constructor.**
 
   ```rust
@@ -493,16 +496,16 @@ the others, so each path is closed or routed through the constructor.
   ```
 
   A derived `Deserialize`, `#[serde(transparent)]` and `#[sqlx(transparent)]` all build the value
-  without calling the constructor. A database `Decode` or `FromSql` decodes the inner type and
-  calls `try_from`. A clap field of the type parses through `FromStr`; a closed set uses
+  without calling the constructor (S31). A database `Decode` or `FromSql` decodes the inner type
+  and calls `try_from` (S32). A clap field of the type parses through `FromStr`; a closed set uses
   `ValueEnum`, which lists the choices in `--help`. A custom `value_parser` is a second way in,
-  so it needs a stated reason.
+  so it needs a stated reason (S33).
 - **A compile-time literal still calls `try_new`.** `const fn literal(n) -> Self` panics on failure,
   under an `#[expect(clippy::panic, reason = "…")]`, and is called only in `const` items. There, the
   panic happens at compile time, so an invalid literal fails the build:
   `pub const HTTP: Port = Port::literal(80);`. It is `pub(crate)`. Nothing stops another crate
   from calling a `pub` one at run time with a value from its users, and then it panics there. When
-  another crate really needs the constants, make it `pub` with a `# Panics` doc section.
+  another crate really needs the constants, make it `pub` with a `# Panics` doc section (S34).
 
 ### Making a value from another, for every type
 
@@ -515,14 +518,14 @@ as for refinements.
   `.try_into()` find the trait; nobody finds an inherent `from_u16`. Such a method may stay beside
   the trait, but can't stand in for it. A name kept instead must say in its doc comment what the
   trait would hide: a loss, a rounding, an ambiguity or a choice. Merely describing the input is
-  no reason. A constructor taking several values is not a conversion at all.
+  no reason. A constructor taking several values is not a conversion at all (S35, S36).
 - **A trait impl promises an obvious conversion.** Std's `From` docs describe a strong convention,
   not a language rule: the conversion is lossless, value-preserving and obvious (std itself bends
   it where the difference is representational, as with `f32` to `f64`). This guide adopts the
   convention as policy, and `TryFrom` makes the same promise except that it fails instead of
   losing anything. Generic code calls `.into()` without reading a name, so an impl that rounds,
   truncates or picks one meaning among several surprises every caller. Such a conversion is a
-  named function, whatever else the rules say: obviousness outranks trait conformity.
+  named function, whatever else the rules say: obviousness outranks trait conformity (S37).
 - **A unit the primitive doesn't carry is named, and typed once it travels.** A `u32` can't say
   "grams", so `From<u32> for Weight` would hide the unit and is ambiguous. Where the raw number
   enters, a named constructor says it, as `Weight::from_grams(u32)` and `Duration::from_secs`
@@ -532,32 +535,32 @@ as for refinements.
   a type, the conversion becomes obvious again (`impl From<Grams> for Weight`), and the mix-up no
   longer compiles. A change of unit is a conversion only when nothing is lost: grams to whole
   ounces rounds, so it is a named method (`Grams::to_whole_ounces`), never `From<Grams> for
-  Ounces`, whose `.into()` would round silently in every caller.
+  Ounces`, whose `.into()` would round silently in every caller (S38).
 - **A parse interprets a representation.** Text or bytes are read by a grammar or an encoding
   into a typed value. That is what separates it from a conversion: `Percentage::try_from(150u8)`
-  checks a value but interprets nothing, so it is a conversion.
+  checks a value but interprets nothing, so it is a conversion (S39).
 - **Complete text with one interpretation parses through `FromStr`**, which `.parse()`, clap and
   generic code reach for. A `parse_priority(&str)` or a `TryFrom<&str>` on its own leaves the type
   unreachable from all of them. What matters is one unambiguous interpretation, not one accepted
   spelling: `"HIGH"`, `"high"` and `"High"` may all parse, while `Display` prints one canonical
-  form, so printing and parsing back still round-trip. A closed set's `ValueEnum` or serde names
-  are its canonical text, and a `FromStr` for it accepts the same names.
+  form, so printing and parsing back still round-trip (S40). A closed set's `ValueEnum` or serde
+  names are its canonical text, and a `FromStr` for it accepts the same names (S41).
 - **Text `TryFrom` sits beside `FromStr`, with the same semantics.** It doesn't have to go through
   `FromStr`: `FromStr` receives `&str` and must allocate for an owned value, while a
   `TryFrom<String>` can run the same check and keep the caller's allocation. The rule is one
   validation and identical results, not one call path. `FromStr` returns an owned value, so a type
-  that borrows from its input uses `TryFrom<&'a str>` or a named parser.
+  that borrows from its input uses `TryFrom<&'a str>` or a named parser (S42).
 - **Bytes have no `FromStr`, and often no obvious trait either.** A complete, self-contained byte
   representation with one context-free interpretation may use `TryFrom<&[u8]>`. Most binary
   formats need more: a byte order, a protocol version, a decoding policy, a borrowed result or a
-  stream. Those are named decoders, because the trait would hide the choice.
+  stream. Those are named decoders, because the trait would hide the choice (S43).
 - **A parse that does more than read one value is a named function.** When it cuts the value out of
   a larger input (a URL's query string, a header before a body) or yields many values, a `parse_*`
   name says what it takes out. When the whole input is one collection, a collection type with its
   own `FromStr` is the better home, since the list then has a name and a trait. When it must choose
   something the input can't say (one format among several, a lossy or strict policy, extra context),
   a `from_*` name says the choice, as in `Config::from_json` or `String::from_utf8_lossy`. No trait
-  can carry that information, so here the name is the right interface, not a way around one.
+  can carry that information, so here the name is the right interface, not a way around one (S44).
 
 ## 5. Types say what values mean
 
