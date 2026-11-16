@@ -23,7 +23,8 @@ load).
 clarity (an obvious API over a conforming one); std-trait interoperability; simplicity;
 performance; style. A documented project requirement (a hard deadline, a stable public API) MAY
 override a convention, never safety or an invariant. Performance overrides a convention only with
-a measurement or a stated system constraint, documented where the code deviates.
+a measurement or a stated system constraint, documented where the code deviates. Where a rule leaves
+the choice open, take the one that moves the type toward its canonical value (Refinements).
 
 **Proportionality**: a newtype, trait, error variant, layer or generic parameter exists only when it
 enforces an invariant, prevents a real misuse, names a domain concept or measurably eases

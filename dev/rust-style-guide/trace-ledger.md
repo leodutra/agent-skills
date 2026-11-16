@@ -171,3 +171,4 @@ restates, and the note says why the model needs it before linting. `;` separates
 | M14 | skill | "Reasons, for people:" | SKILL.md carries no reasons and never loads fundamentals.md |  |
 | L51 | lint | clippy::not_unsafe_ptr_arg_deref | the lintable part of S3 |
 | S99 | skill | "A domain type holds one canonical, valid form of its value"; "Parsing does whatever input needs to reach"; "No sink's form is ever stored" | canonical inside, derived outside | judgment:canonical-form/bad-input-format.rs; judgment:canonical-form/bad-unused-data.rs; judgment:canonical-form/bad-sink-form.rs; judgment:canonical-form/bad-sorts-wrong.rs; judgment:canonical-form/good.rs |
+| M15 | skill | "moves the type toward its canonical value" | the north star as tie-break, below the precedence order |

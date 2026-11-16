@@ -51,7 +51,7 @@ only valid values and nothing else; memory-safe; and optimal, with no leftover f
 nothing uses, and no more memory than the value needs. It compares and sorts correctly as stored, and
 every other form is derived from it at the edge (S99). The rules that follow are the steps that
 move a type toward that point, and where a rule seems unclear, the one that moves the type closer
-wins.
+wins (M15).
 
 In September 2026 the checks that a tool can make moved from prose to clippy and rustc lints.
 Prose works only when someone reads it and follows it. A lint runs on every change, whoever wrote
