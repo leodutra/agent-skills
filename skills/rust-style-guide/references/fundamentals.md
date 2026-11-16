@@ -791,7 +791,8 @@ value, and every failure is an `Err` the caller has to handle. User input is nev
   request; use structured logging when observation is needed. A binary entry point prints
   deliberately, each printing site under a reasoned `#[expect]` (L32).
 
-In a test, a panic is how the test fails, so unwrapping there is the assertion. The
+In a test, a panic is how the test fails, so unwrapping a setup step there states a precondition
+(section 14). The
 `allow-*-in-tests` settings let `#[test]` functions and `#[cfg(test)]` code do that, and print or
 `dbg!` too (L33). A helper file under `tests/` is neither, so it returns `Result` and uses `?`
 (L33). `todo!`, `unimplemented!` and `unreachable!` have no test allowance (L25, L26).
@@ -1039,6 +1040,13 @@ the suggestion (L46).
 
 - **One accepted input per constructor, and every rejection reason reached by a test that asserts
   that error.** A rejection no test reaches can be deleted and nothing goes red (S92).
+- **Setup unwraps; the behavior under test is asserted.** `unwrap` and `expect` are
+  `#[track_caller]`, so a failure names the test's own line, where `?` returns an error with no
+  line at all; a setup step reads as a plain precondition, and the test needs no `Result` return or
+  `anyhow`. `expect("80 is a valid port")` says what the test assumed; a bare `unwrap()` fits only
+  where that is obvious, as on a literal. The value under test is never unwrapped: its `Result` is
+  asserted, `assert_eq!(r, Err(E::Variant))`, because `unwrap_err()` proves only that some error
+  happened (S97).
 - **No second example of a rule already pinned, and no tests of derives, getters or anything else
   the compiler guarantees.** They cost upkeep and prove nothing (S93).
 - **Where a law exists, a property test replaces examples.** Where `Display` is the type's

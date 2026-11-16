@@ -283,6 +283,8 @@ pub const HTTP: Port = Port::literal(80);
 - Per constructor: one accepted input, and every domain rejection reached by a test asserting its
   exact error (`assert_eq!(Port::try_new(0), Err(ZeroPort))`). No second example of a pinned rule;
   no tests of derives, getters or compiler guarantees.
+- Setup uses `expect("why it holds")` (`unwrap()` where obvious); the behavior under test is
+  asserted on its `Result`, never unwrapped.
 - A law gets a property test instead of examples; where `Display` is the type's canonical text,
   a round-trip one MUST pin it: `prop_assert_eq!(v.to_string().parse(), Ok(v))` over generated
   values.

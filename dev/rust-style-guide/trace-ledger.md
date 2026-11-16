@@ -165,3 +165,4 @@ restates, and the note says why the model needs it before linting. `;` separates
 | L48 | lint | clippy::wildcard_imports | |
 | L49 | lint | clippy::derive_partial_eq_without_eq | a published crate may drop it (comment in lints.toml) |
 | L50 | lint | disallowed-types anyhow::Error; disallowed-types anyhow::Result; disallowed-types eyre::Report; disallowed-types eyre::Result; disallowed-methods chrono::Utc::now; disallowed-methods rand::random; disallowed-methods rand::rng; disallowed-methods rand::thread_rng; disallowed-methods uuid::Uuid::new_v4; disallowed-methods uuid::Uuid::now_v7; disallowed-macros ctor::ctor; disallowed-macros dtor::dtor | allow-invalid entries and per-crate omissions (clippy.toml comments) |
+| S97 | skill | "the behavior under test is asserted on its `Result`" | setup `expect`s (`unwrap` where obvious) |
