@@ -111,6 +111,12 @@ rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why,
 
 ## Refinements: parse, don't validate
 
+A domain type holds one canonical, valid form of its value: minimal, with no leftover formatting or
+unused data, comparing and sorting correctly as stored. Parsing does whatever input needs to reach
+it (decodes the source's encoding, normalizes equivalent spellings) or rejects; every output
+(`Display`, serde, SQL, HTML, a log line) is derived from it for its sink and formatted or escaped
+there. No sink's form is ever stored.
+
 At every boundary, data is parsed into domain types before domain logic; from then on the type is
 the proof. The boundary type is itself built from domain types: a request, row or DTO field whose
 value has a refinement or tag MUST use it, so deserializing runs its constructor, and no primitive

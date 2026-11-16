@@ -216,6 +216,26 @@ impl FromStr for Email { /* calls Email::try_new: the text entry callers reach w
 fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 ```
 
+**Canonical inside, derived outside.** A domain type holds one canonical, valid form of its value:
+the simplest representation that serves the system. It carries no leftover input formatting and
+no data nothing uses, compares and sorts correctly as stored, and takes no more memory than the
+value needs. Parsing does whatever turns input into that form: it decodes the source's encoding
+(unescapes JSON, percent-decodes a URL), normalizes equivalent spellings (trims, fixes case,
+Unicode NFC), converts a unit or a representation, and rejects what can't become it. Every output
+is derived from the canonical value for its sink and formatted or escaped there: `Display`, serde,
+SQL, HTML, a log line. No sink's form is ever stored. The canonical form and the system's needs
+decide each transformation; the lists are examples, not a recipe (S99):
+
+- `" Ann@Example.COM "` is stored as `Ann@example.com`, the domain lowercased and the local part
+  kept. SMTP gets it as is, an HTML page escapes it, and a template builds a `mailto:` link from it.
+- `"1.234,50 €"` (German-locale input) is stored as 123450 minor units of `Currency::Eur`. An
+  English UI derives `€1,234.50`, JSON derives `"1234.50"`, and SQL gets a `NUMERIC`.
+- A version `"1.10.0"` is stored as numbers, `{ major: 1, minor: 10, patch: 0 }`, so it sorts after
+  `1.9.0`. As a string it would sort before it.
+
+The rules below follow from it: parse at every boundary (S5), normalize in the constructor (S27),
+and serialize outbound from valid values (S13).
+
 **Rules, all checked in review:**
 
 - At each inbound boundary, parse external data from network messages, files and other I/O, database
