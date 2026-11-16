@@ -233,7 +233,8 @@ fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
 A newtype wraps a primitive so that the compiler can tell values apart. A value gets one when it
 carries an invariant, or when it could be swapped with another value of the same primitive, and
 not otherwise: a local count or a one-off label with neither gains only a name (proportionality,
-above) (S8). A newtype comes in one of two kinds, and its field's visibility says which.
+above) (S8). A type alias (`type UserId = u64`) is no newtype: the compiler still accepts any `u64`,
+so it stops no mix-up (S8). A newtype comes in one of two kinds, and its field's visibility says which.
 
 ```rust
 pub struct UserId(pub u64);   // a tag: any u64 is a valid id; it only stops mix-ups
@@ -571,7 +572,7 @@ as for refinements.
 | `fn_params_excessive_bools` | a fn with more than three `bool` parameters |
 
 **Illegal states are unrepresentable.** If a value can hold a combination that means nothing,
-some code somewhere will produce it.
+some code somewhere will produce it (S45).
 
 ```rust
 // Eight combinations, three meaningful: tracking can exist on an unshipped order.
@@ -583,22 +584,23 @@ enum OrderState { Placed, Paid, Shipped { tracking: TrackingNumber } }
 
 - Several `bool`s usually encode states that exclude each other. At a call site,
   `f(true, false, true, true)` can't be read without the definition open. The limit of three leaves
-  room for flags that really are independent.
+  room for flags that really are independent (L18).
 - A number that can't be zero is `NonZero*`. A field that exists only with another is one
-  variant's data.
+  variant's data (S45).
 - `Option<Option<T>>` has three states (`None`, `Some(None)`, `Some(Some(x))`) and nothing names
   them. A reader has to guess which `None` means "not set" and which means "cleared". Use an enum
-  whose variants say it.
+  whose variants say it (L19). The same holds for any `Option`: it means one thing, and a `None`
+  that means "unset" in one place and "cleared" in another needs an enum too (S46).
 - Absence is an `Option` or a variant. A sentinel such as `""`, `0` or `-1` must not stand for it,
-  because the type can't tell a real `-1` from "none".
+  because the type can't tell a real `-1` from "none" (S47).
 - A closed set of values, such as `small | medium | large`, is an enum (`#[derive(ValueEnum)]` for
   clap, `#[serde(rename_all = "…")]` for serde), not a refinement over a string. The compiler then
-  knows every value, `match` stays exhaustive, and clap lists the choices in `--help`.
+  knows every value, `match` stays exhaustive, and clap lists the choices in `--help` (S48).
 - State read from storage or the wire is an enum, not typestate. Typestate (`Order<Paid>`) checks
-  transitions at compile time, but a row loaded at run time can be in any state.
+  transitions at compile time, but a row loaded at run time can be in any state (S49).
 
 **Variant fields are always public**, so an enum can't guard an invariant across its own fields.
-Fields that share one go into a struct with private fields, which the variant wraps:
+Fields that share one go into a struct with private fields, which the variant wraps (S50):
 
 ```rust
 pub enum Window { All, Between { start: Timestamp, end: Timestamp } }  // end < start compiles
@@ -609,12 +611,12 @@ pub enum Window { All, Between(Span) }
 
 **Data with more than one field has named fields.** In `(u32, u32)` or `struct Size(u32, u32)`,
 which one is the width? Name them: `struct Size { width: u32, height: u32 }`. A newtype's single
-field is the exception.
+field is the exception (S51).
 
 ## 6. `Option` is absence, `Result` is failure
 
 The two types answer different questions. `Option` says whether there is a value. `Result` says
-whether the operation worked. Using one for the other loses information.
+whether the operation worked. Using one for the other loses information (S52).
 
 ```rust
 // Wrong: a dead database reads as "no such order", and the caller creates a duplicate.
@@ -633,7 +635,7 @@ fn find(&self, id: OrderId) -> Result<Option<Order>, StoreError> {
 - An operation that needs the value, like `ship(order_id)`, makes its absence an error variant
   (`OrderNotFound`), since for that operation, absence is a failure.
 - A function that can't fail and may have nothing to return, such as `next_page()`, returns a
-  plain `Option`.
+  plain `Option` (S53).
 
 | Lint | Catches |
 | --- | --- |
@@ -642,10 +644,11 @@ fn find(&self, id: OrderId) -> Result<Option<Order>, StoreError> {
 | `ref_option` | a `&Option<T>` parameter (see section 10) |
 
 `r.ok();` and `let _ = r;` both drop an error silently. `let _` is also clippy's own suggested fix
-for `unused_result_ok`, which is why it's banned too. Sometimes dropping is right, such as a send
-whose receiver may already be gone. Then say so with an `#[expect]`. An `.ok()` used as a value, as
-in `find` above, slips past both lints, so review catches that one. `let _ignored = r` and `drop(r)`
-also evade these lints; review checks whether the error is deliberately discarded.
+for `unused_result_ok`, which is why it's banned too (L20). Sometimes dropping is right, such as a
+send whose receiver may already be gone. Then say so with an `#[expect]` (S54). An `.ok()` used as
+a value, as in `find` above, slips past both lints, so review catches that one (S55).
+`let _ignored = r` and `drop(r)` also evade these lints; review checks whether the error is
+deliberately discarded (S56).
 
 ## 7. Errors carry their cause
 
@@ -673,29 +676,31 @@ pub enum OrderError {
   not matched on. `Box<dyn Error>` also erases which failures a library function can return;
   use a typed error with variants for its possible failures. It implements
   `Error + Send + Sync + 'static` so it can cross threads and tasks, be returned from a spawned
-  task, and be wrapped as a `#[source]` or boxed into `anyhow` at the edge without a wrapper.
+  task, and be wrapped as a `#[source]` or boxed into `anyhow` at the edge without a wrapper
+  (S57, L21).
 - `result_unit_err` checks public functions only. Private helpers returning `Result<_, ()>` still
-  lose the failure's meaning and require review.
+  lose the failure's meaning and require review (S58).
 - **The cause is kept.** `map_err(|_| …)` replaces the real cause (an `io::Error`, a parse error)
-  with your own error and throws the original away. Wrap it with `#[source]` or `#[from]` so the
-  chain survives. A domain or library API never exposes a dependency's error type directly,
+  with your own error and throws the original away (L22). Wrap it with `#[source]` or `#[from]` so
+  the chain survives. A domain or library API never exposes a dependency's error type directly,
   because then every caller depends on that library too. An infrastructure adapter whose natural
   contract is std's own error, such as a file store returning `io::Result`, is the exception: the
-  type is already the shared vocabulary, as std itself shows. The lint misses a named cause
+  type is already the shared vocabulary, as std itself shows (S59). The lint misses a named cause
   converted to text, such as `map_err(|e| e.to_string())`; review checks that the source remains
-  typed.
-- **`anyhow` and `eyre` stay where errors only get printed:** `main`, a CLI command, a test. In a
-  library, they hide the error's type, so callers can print it but can't match on it. The `Result`
-  aliases are listed separately because banning `anyhow::Error` doesn't catch `anyhow::Result<T>`. A
-  binary crate's own `clippy.toml` leaves these four entries out. Where `anyhow` is used, add
-  `.context(...)` so the printed chain says what was being attempted.
+  typed (S60).
+- **`anyhow` and `eyre` stay where errors only get printed:** a binary's `main` and its CLI
+  commands. In a library crate, infrastructure included, they hide the error's type, so callers can
+  print it but can't match on it (S61, L23). The `Result` aliases are listed separately because
+  banning `anyhow::Error` doesn't catch `anyhow::Result<T>`. A binary crate's own `clippy.toml`
+  leaves these four entries out; a library crate's tests stay under the ban, like its code. Where
+  `anyhow` is used, add `.context(...)` so the printed chain says what was being attempted (S61).
 - **Errors derive `Clone, PartialEq, Eq`** so tests can `assert_eq!` on them, unless a cause can't
   (`io::Error` has none of them). An error whose fields are all `Copy` derives `Copy` too, so it
-  passes by value like the unit-struct `ZeroPort`.
+  passes by value like the unit-struct `ZeroPort` (S62).
 - **Messages are lowercase with no trailing period**, because they get chained into
   `outer: inner: cause`. They say what is wrong and never echo secret input. An
   `InvalidToken(String)` holding the rejected token puts the secret into every log line and panic
-  message that prints the error.
+  message that prints the error (S63).
 
 ## 8. Failure is a value, not a crash
 

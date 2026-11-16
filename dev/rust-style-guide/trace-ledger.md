@@ -80,3 +80,28 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S44 | skill | "A parse that extracts"; "A parse that chooses among formats"; "A named parser or decoder for a parse that extracts or chooses" | |
 | L16 | lint | clippy::infallible_try_from | |
 | L17 | lint | clippy::unnecessary_wraps | |
+| S45 | skill | "Illegal states MUST be unrepresentable" | |
+| S46 | skill | "One meaning per `Option`" | |
+| S47 | skill | "MUST NOT stand for absence" | |
+| S48 | skill | "A closed set is an enum, not a refinement over a string" | |
+| S49 | skill | "State from storage or the wire is an enum" | |
+| S50 | skill | "Variant fields are public, so fields sharing" | |
+| S51 | skill | "More than one field means named fields" | |
+| S52 | skill | "`Option` is absence, `Result` failure" | |
+| S53 | skill | "A fallible lookup returns"; "a lookup that can't fail returns `Option`"; "`Result<Option<T>, E>` from a lookup" | |
+| S54 | skill | "A `Result` dropped where dropping is right" | |
+| S55 | skill | "no `.ok()` dropping an error"; "`.ok()` hiding an error" | |
+| S56 | skill | "bound to `_name` or `drop`ped" | |
+| S57 | skill | "Library errors are typed" | |
+| S58 | skill | "private `Result<_, ()>`" | |
+| S59 | skill | "MUST NOT return a dependency's error raw" | |
+| S60 | skill | "names the cause, loses its type" | |
+| S61 | skill | "`anyhow`/`eyre` only where errors only get printed"; "`anyhow`/`eyre` in a binary's `main` and CLI commands" | C1: no infrastructure libraries; tests of a library stay under the ban |
+| S62 | skill | "Derive `Clone, PartialEq, Eq` (reflexive"; "An error lacking `Clone`/`PartialEq`/`Eq`" | |
+| S63 | skill | "Messages: lowercase, no trailing period" | |
+| L18 | lint | clippy::struct_excessive_bools; clippy::fn_params_excessive_bools | |
+| L19 | lint | clippy::option_option | |
+| L20 | lint | clippy::unused_result_ok; clippy::let_underscore_must_use | |
+| L21 | lint | clippy::result_unit_err | |
+| L22 | lint | clippy::map_err_ignore | |
+| L23 | lint | disallowed-types anyhow::Error; disallowed-types anyhow::Result; disallowed-types eyre::Report; disallowed-types eyre::Result | |

@@ -69,9 +69,9 @@ rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why,
   failing); an operation that needs the value makes absence an error variant; a lookup that can't
   fail returns `Option`. One meaning per `Option`; sentinels (`""`, `0`, `-1`) MUST NOT stand for
   absence.
-- A value with an invariant, or swappable with another of the same primitive, gets a newtype. A
-  refinement's fields MUST be private to its defining module (not `pub(crate)`). A tag's field is
-  `pub`, with `From` and `#[serde(transparent)]` fine where the two types make the meaning obvious
+- A value with an invariant, or swappable with another of the same primitive, gets a newtype (a
+  type alias isn't one). A refinement's fields MUST be private to its defining module (not
+  `pub(crate)`). A tag's field is `pub`, with `From` and `#[serde(transparent)]` fine where the two types make the meaning obvious
   (`From<u64> for UserId`, `From<u32> for Grams`), never where the primitive carries a unit or
   scale the target doesn't name (`From<u64> for Timestamp`). A function takes the newtype itself,
   never `impl Into<Newtype>`, which lets the bare primitive back in.
@@ -210,10 +210,10 @@ pub const HTTP: Port = Port::literal(80);
 - Library errors are typed (`thiserror` enum, or a unit struct for one failure) and implement
   `Error + Send + Sync + 'static`, with typed context (`InvalidTransition { from, to }`); `String`,
   `&str`, `()` and `Box<dyn Error>` MUST NOT be the error or carry its context. `anyhow`/`eyre` only
-  outside domain code (`main`, infrastructure), with `.context(…)`.
+  where errors only get printed (a binary's `main` and CLI commands), with `.context(…)`.
 - A domain or library API MUST NOT return a dependency's error raw: wrap it in a variant of your
-  own, kept as `#[source]`. An infrastructure adapter whose natural contract is std's error
-  (`io::Result`) MAY return it.
+  own, kept as `#[source]` (or `#[from]`). An infrastructure adapter whose natural contract is
+  std's error (`io::Result`) MAY return it.
 - Derive `Clone, PartialEq, Eq` (reflexive, as above), and `Copy` where the fields allow, unless a
   cause can't (`io::Error`), so tests assert variants.
 - Messages: lowercase, no trailing period, say what is wrong, never echo secret input.
@@ -333,8 +333,8 @@ Not defects, not even nits:
 - `main.rs` `expect()` with a clear message for an environment startup failure, under its
   `#[expect]`.
 - `unwrap()`, `expect()`, `panic!` in `#[test]` and `#[cfg(test)]` code.
-- `anyhow`/`eyre`, the clock, randomness and locks outside domain code, where clippy.toml's comments
-  exempt them.
+- `anyhow`/`eyre` in a binary's `main` and CLI commands; the clock, randomness and locks outside
+  domain code, where clippy.toml's comments exempt them.
 - A non-`Send` future deliberately run only on a local executor, with a reasoned
   `#[expect(clippy::future_not_send, reason = "…")]`.
 - A `Result` dropped where dropping is right (a send whose receiver may be gone), under a reasoned
