@@ -190,8 +190,8 @@ pub const HTTP: Port = Port::literal(80);
   `value_parser` needs a stated reason. `default_value_t = CONST` relies on the `Display`/`FromStr`
   round trip.
 - Derive `Debug, Clone, PartialEq`, and `Copy`, `Eq`, `Hash`, `Ord` wherever the fields allow and
-  the contract holds; `Borrow<str>` only if those agree with `str`'s on the text callers look up
-  with; a normalizing type has none. Hand-write a trait only where the derived behavior is wrong
+  the contract holds; `Borrow<str>` only if `Eq`/`Ord`/`Hash` match `str`'s on the stored
+  text: normalize in the constructor, never in a comparison. Hand-write a trait only where the derived behavior is wrong
   for the type (a redacted `Debug`, a `Default` that isn't the
   fields' defaults), never to spell out what the derive does, and then hand-write the traits that
   must agree with it (`Hash`, `PartialOrd`, `Ord` with `PartialEq`). Derived `Ord` follows

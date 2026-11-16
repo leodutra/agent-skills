@@ -473,9 +473,17 @@ impl Email {
 
 Normalize anywhere else and two equal values can compare unequal, so a `HashSet<Email>` holds the
 same address twice. The same reasoning limits `Borrow<str>`: a `HashMap<Email, _>` looked up with a
-`&str` hashes and compares the `str`, so `Borrow` is honest only when `Eq`, `Hash` and `Ord` on the
-type agree with those on its text. After a normalization such as the email's, they don't, and a
-lookup by the raw string misses an entry that is there (S28).
+`&str` hashes and compares the `str`, so `Borrow<str>` is implemented only when the type's `Eq`,
+`Ord` and `Hash` match `str`'s for every borrowed value and lookup key. Normalization at
+construction is fine; normalization during comparison is not (S28):
+
+- An `Email` that lowercases its domain in the constructor and compares its stored string exactly:
+  allowed, since its equality, ordering and hashing are `str`'s on that string. A lookup key must
+  be in the same canonical form, so callers parse the raw text into an `Email` first.
+- An `Email` that stores mixed case but compares case-insensitively: not allowed, because a `&str`
+  key hashes differently from the entry it should find.
+- An `Email` that normalizes in the constructor but then uses a different equality rule (ignoring a
+  `+tag`, say): not allowed, for the same reason.
 
 ### No back doors
 

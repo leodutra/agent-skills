@@ -61,7 +61,7 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S25 | skill | "Its error holds only the failures it can produce"; "A unit-struct error for a constructor with one failure"; "Constructors MUST NOT share an enum"; "`FromStr`'s error wraps it beside the syntax failure" |  | judgment:constructor/allowed-unit-error.rs |
 | S26 | skill | "its output printed back by `Display`"; "`default_value_t = CONST` relies on" |  | judgment:refinement-ways-in/bad-round-trip.rs |
 | S27 | skill | "Normalize first (trim, canonical case)" |  | judgment:refinement-ways-in/bad-not-normalized.rs |
-| S28 | skill | "`Borrow<str>` only if those agree" |  | judgment:refinement-ways-in/bad-borrow.rs |
+| S28 | skill | "`Borrow<str>` only if `Eq`/`Ord`/`Hash` match `str`'s" | normalize at construction, never in a comparison | judgment:refinement-ways-in/bad-borrow-case-insensitive.rs; judgment:refinement-ways-in/bad-borrow-other-equality.rs; judgment:refinement-ways-in/allowed-borrow-normalized.rs |
 | S29 | skill | "No value of the type exists that breaks its invariant" |  | doctest:fixtures/template/src/domain/span.rs#span.start = 9 |
 | S30 | skill | "No `Deref`/`DerefMut`, no `&mut` to the inner value"; "A mutating method keeps the invariant or doesn't exist" |  | doctest:fixtures/template/src/domain/email.rs#email.push_str; doctest:fixtures/template/src/domain/span.rs#span.start = 9 |
 | S31 | skill | "serde: `#[serde(try_from"; "skips the constructor and MUST NOT be used" |  | doctest:fixtures/template/src/domain/port.rs#assert_de_tokens_error; doctest:fixtures/template/src/domain/span.rs#assert_de_tokens_error |

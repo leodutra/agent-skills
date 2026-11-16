@@ -1,3 +1,4 @@
+// keep: the Borrow<str> impl for Email
 use std::borrow::Borrow;
 
 /// An email address, its domain lowercased in the constructor.
@@ -16,7 +17,8 @@ impl Email {
     }
 }
 
-/// So a `HashMap<Email, _>` can be looked up with the address a user types.
+/// So a `HashMap<Email, _>` can be looked up by the address text; callers parse a raw address into
+/// an `Email` first, so the key is in the same canonical form.
 impl Borrow<str> for Email {
     fn borrow(&self) -> &str {
         &self.0
