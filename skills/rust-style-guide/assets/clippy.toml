@@ -49,5 +49,6 @@ disallowed-methods = [
 disallowed-macros = [
   # Behavior: no code runs before or after main; startup is the sequence main shows.
   { path = "ctor::ctor", reason = "start it from main, which orders it and handles its errors", allow-invalid = true },
-  { path = "ctor::dtor", reason = "release it from main or a Drop the owner runs", allow-invalid = true },
+  # The dtor crate (split out of ctor) holds #[dtor]; ctor itself no longer exports it.
+  { path = "dtor::dtor", reason = "release it from main or a Drop the owner runs", allow-invalid = true },
 ]

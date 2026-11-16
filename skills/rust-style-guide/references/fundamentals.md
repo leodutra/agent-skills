@@ -792,7 +792,7 @@ infrastructure code, such as connection pools and caches, legitimately needs loc
 | `SystemTime::now`, `Instant::now`, `chrono::Utc::now` | "pass the time in" |
 | `rand::random`, `rand::rng`, `rand::thread_rng` | "pass the source of randomness in" |
 | `uuid::Uuid::new_v4`, `uuid::Uuid::now_v7` | "pass the id in" |
-| `disallowed-macros`: `ctor::ctor`, `ctor::dtor` | code that runs before or after `main` |
+| `disallowed-macros`: `ctor::ctor`, `dtor::dtor` | code that runs before or after `main` |
 
 `iter_over_hash_type` flags `for` loops over a `HashMap` or `HashSet`, but not iterator chains such
 as `map.keys().collect()`. Review checks those chains and whether order can affect domain output or
