@@ -139,6 +139,10 @@ multiple_unsafe_ops_per_block = "deny"
 # A public `unsafe fn` without a `# Safety` section. Behavior: an unsafe fn states its contract.
 # A clippy default, listed to raise it to deny.
 missing_safety_doc = "deny"
+# A safe public fn that dereferences a raw-pointer argument: any caller can pass a dangling pointer.
+# Behavior: a condition only the caller can guarantee keeps it an `unsafe fn`. A clippy default
+# (deny), listed so the file states every rule it holds.
+not_unsafe_ptr_arg_deref = "deny"
 # A bare `#[allow]`. Lints: silence with `#[expect]`, which fails once the lint no longer fires.
 allow_attributes = "deny"
 # A silencing attribute with no `reason`. Lints: a tool's verdict is never waved away without saying why.

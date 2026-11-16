@@ -22,7 +22,7 @@ restates, and the note says why the model needs it before linting. `;` separates
 | L1 | lint | level deny | every lint deny, unsafe_code forbid |  |
 | L2 | lint | clippy::allow_attributes; clippy::allow_attributes_without_reason |  |  |
 | L3 | lint | config avoid-breaking-exported-api |  |  |
-| L4 | lint | clippy::infallible_try_from; clippy::result_unit_err; clippy::await_holding_lock; clippy::await_holding_refcell_ref; clippy::disallowed_types; clippy::disallowed_methods; clippy::missing_safety_doc; clippy::derived_hash_with_manual_eq; clippy::derive_ord_xor_partial_ord | clippy defaults, listed |  |
+| L4 | lint | clippy::infallible_try_from; clippy::result_unit_err; clippy::await_holding_lock; clippy::await_holding_refcell_ref; clippy::disallowed_types; clippy::disallowed_methods; clippy::missing_safety_doc; clippy::derived_hash_with_manual_eq; clippy::derive_ord_xor_partial_ord; clippy::not_unsafe_ptr_arg_deref | clippy defaults, listed |  |
 | L5 | lint | unsafe_code |  |  |
 | L6 | lint | clippy::undocumented_unsafe_blocks | presence; the comment's content is S4 |  |
 | L7 | lint | clippy::multiple_unsafe_ops_per_block |  |  |
@@ -169,3 +169,4 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S98 | skill | "A serde rejection asserts the constructor's error via" | serde_test: no syntax error possible, whole message compared | doctest:fixtures/template/src/domain/port.rs#assert_de_tokens_error; doctest:fixtures/template/src/domain/span.rs#assert_de_tokens_error |
 | M13 | skill | "Default for all Rust, over Rust's own defaults" |  |  |
 | M14 | skill | "Reasons, for people:" | SKILL.md carries no reasons and never loads fundamentals.md |  |
+| L51 | lint | clippy::not_unsafe_ptr_arg_deref | the lintable part of S3 |

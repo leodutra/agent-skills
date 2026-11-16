@@ -71,10 +71,10 @@ rule; drop anything [Allowed](#allowed), not even a nit; report line, rule, why,
   absence.
 - A value with an invariant, or swappable with another of the same primitive, gets a newtype (a
   type alias isn't one). A refinement's fields MUST be private to its defining module (not
-  `pub(crate)`). A tag's field is `pub`, with `From` and `#[serde(transparent)]` fine where the two types make the meaning obvious
-  (`From<u64> for UserId`, `From<u32> for Grams`), never where the primitive carries a unit or
-  scale the target doesn't name (`From<u64> for Timestamp`). A function takes the newtype itself,
-  never `impl Into<Newtype>`, which lets the bare primitive back in.
+  `pub(crate)`). A tag's field is `pub`, with `From` and `#[serde(transparent)]` fine where the two
+  types make the meaning obvious (`From<u64> for UserId`, `From<u32> for Grams`), never where the
+  primitive carries a unit or scale the target doesn't name (`From<u64> for Timestamp`). A function
+  takes the newtype itself, never `impl Into<Newtype>`, which lets the bare primitive back in.
 - A closed set is an enum, not a refinement over a string. Its `ValueEnum` (clap) or `rename_all`
   (serde) names are its canonical text; code that parses that text itself does so in a `FromStr`
   that accepts the same names.
@@ -190,8 +190,9 @@ pub const HTTP: Port = Port::literal(80);
   `value_parser` needs a stated reason. `default_value_t = CONST` relies on the `Display`/`FromStr`
   round trip.
 - Derive `Debug, Clone, PartialEq`, and `Copy`, `Eq`, `Hash`, `Ord` wherever the fields allow and
-  the contract holds; `Borrow<str>` only if those agree with `str`'s. Hand-write a trait only where
-  the derived behavior is wrong for the type (a redacted `Debug`, a `Default` that isn't the
+  the contract holds; `Borrow<str>` only if those agree with `str`'s on the text callers look up
+  with; a normalizing type has none. Hand-write a trait only where the derived behavior is wrong
+  for the type (a redacted `Debug`, a `Default` that isn't the
   fields' defaults), never to spell out what the derive does, and then hand-write the traits that
   must agree with it (`Hash`, `PartialOrd`, `Ord` with `PartialEq`). Derived `Ord` follows
   declaration order: declare variants and fields in the domain's order; an order one caller needs
@@ -296,7 +297,8 @@ pub const HTTP: Port = Port::literal(80);
 What clippy can check, clippy checks. Test allowances cover `#[test]` and `#[cfg(test)]`; a `tests/`
 helper is neither (it returns `Result`, uses `?`). The lints hold: wildcard arms;
 unwrap/expect/panic outside tests; todo/unimplemented/unreachable; unsafe, undocumented unsafe,
-several unsafe operations per block and an `unsafe fn` without `# Safety`; a hand-written
+several unsafe operations per block, an `unsafe fn` without `# Safety` and a safe fn dereferencing a
+raw-pointer argument; a hand-written
 `Default` a derive would produce; `Clone` on `Copy`; `Hash`/`Ord` derived beside a hand-written
 `PartialEq`/`PartialOrd`; `#[ctor]`/`#[dtor]`;
 public types missing `Debug`; `PartialEq` that could be `Eq`; infallible `TryFrom`; public

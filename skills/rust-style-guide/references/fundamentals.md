@@ -133,9 +133,10 @@ Five decisions shape the whole setup.
   workspace you rebuild, changing a public signature is a refactor, not a release. A crate published
   to outside users drops this line, and for the same reason it may use `#[non_exhaustive]` (see
   section 9) (L3).
-- **Default lints are still listed.** Nine entries (`infallible_try_from`, `result_unit_err`,
+- **Default lints are still listed.** Ten entries (`infallible_try_from`, `result_unit_err`,
   `await_holding_lock`, `await_holding_refcell_ref`, `disallowed_types`, `disallowed_methods`,
-  `missing_safety_doc`, `derived_hash_with_manual_eq`, `derive_ord_xor_partial_ord`) are already on
+  `missing_safety_doc`, `derived_hash_with_manual_eq`, `derive_ord_xor_partial_ord`,
+  `not_unsafe_ptr_arg_deref`) are already on
   in clippy by default. They are listed anyway, so that the file states every rule it holds and
   raises them to `deny` (L4).
 
@@ -176,7 +177,8 @@ Where `unsafe` is needed, it is fenced, so the unchecked proof stays small enoug
 - **Behind a safe API, in a module or crate of its own.** Domain code calls the wrapper and never
   sees `unsafe` (S2). "Safe" means no argument a caller can pass causes undefined behavior. A condition
   only the caller can guarantee keeps the function an `unsafe fn` whose `# Safety` section states
-  it (S3, L9).
+  it (S3, L9). A safe public function that dereferences a raw-pointer argument is the plainest
+  case, and `not_unsafe_ptr_arg_deref` catches it (L51).
 - **One unsafe operation per block**, so each `SAFETY:` comment justifies exactly one thing. A
   block doing three things under one comment invites the comment to cover only the first (L7).
   Inside an `unsafe fn` too, each unsafe operation sits in its own `unsafe` block, so the
