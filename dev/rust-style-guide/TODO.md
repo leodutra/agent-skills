@@ -300,3 +300,23 @@ Three tiers check the guide's own claims rather than model behavior. Tiers 1–2
   `serde_json::Error` has no `PartialEq`, so "assert the exact error" has no sanctioned form for a
   serde rejection: the lint bans `is_err()`, and a message substring is what exact-error-test calls a
   defect. The tier 2 doctests do the same (clippy doesn't lint doctests). SKILL.md needs to name a form.
+
+## Evals for every skill-home rule (2026-11-16)
+
+- The trace ledger has an eval column. trace.py fails when an S rule has no eval, a listed file is
+  missing, a doctest link's fragment isn't in its file, or a tier 3 sample is claimed by no rule.
+  All 98 S rules have evals (M rules exempt).
+- 12 new tier 3 families, 67 samples, every bad one lint-clean. Tier 2 adds `Km`, whose `a + b`
+  doesn't compile (`try_add` instead). Static gate: rules.py 122 samples, static_eval, trace and
+  verify all pass.
+- `--judgment` on the new families (`.bench/rsg-rules-20261116-151009`, 201k fresh input): 65/67.
+  - `unsafe-placement/good.rs` was rightly flagged: `get_unchecked(7)` on a `[u8; 8]` is avoidable.
+    The family was rewritten around FFI to a vendor C driver, where unsafe is unavoidable.
+  - `refinement-ways-in/bad-borrow.rs` passed as clean, under a literal reading of SKILL.md's
+    "`Borrow<str>` only if those agree with `str`'s". A normalized type does agree with its stored
+    text; the problem is the text callers look up with. rule.md was reworded. **SKILL.md's wording
+    stays ambiguous: open.**
+  - Rerun of the 9 changed samples (`…151228`, 27k): 9/9.
+  - Every passing bad sample's evidence cites its own rule, not just another in its family.
+- **Open:** clippy's `not_unsafe_ptr_arg_deref` (deny by default) holds part of S3: a safe fn
+  dereferencing a raw-pointer argument. Under "default lints are still listed" it belongs in lints.toml.

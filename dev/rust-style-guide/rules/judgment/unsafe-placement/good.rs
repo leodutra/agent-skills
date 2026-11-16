@@ -1,34 +1,31 @@
-//! Fixed-width record access, the storage crate's `raw` module: the only `unsafe` in the workspace,
-//! behind a safe API. Benchmarked 2026-10-02: unchecked reads make full scans 22% faster.
+//! The `sensor` crate's `driver` module: the workspace's only `unsafe`, wrapping the vendor's C
+//! driver (no Rust implementation exists), behind a safe API.
 
-/// Fields of a fixed 8-byte record.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Record {
-    bytes: [u8; 8],
+#[expect(unsafe_code, reason = "FFI to the vendor's C driver")]
+unsafe extern "C" {
+    /// Reads channel `channel`; the driver's contract: `channel` must be below 4.
+    fn sensor_read_celsius(channel: u32) -> i32;
 }
 
-impl Record {
-    #[must_use]
-    pub const fn new(bytes: [u8; 8]) -> Self {
-        Self { bytes }
-    }
+/// One of the board's four channels: the type carries the driver's precondition.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Channel(u32);
 
-    /// The record's flag byte: safe, since the index is a constant within the array.
-    #[expect(unsafe_code, reason = "hot scan loop, benchmark in the module docs")]
-    #[must_use]
-    pub fn flags(&self) -> u8 {
-        // SAFETY: `bytes` is `[u8; 8]`, so index 7 is in bounds.
-        unsafe { *self.bytes.get_unchecked(7) }
-    }
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NoSuchChannel;
 
-    /// The byte at `index`, for the scan loop.
-    ///
-    /// # Safety
-    /// `index` must be below 8; only the caller's loop bound knows it.
-    #[expect(unsafe_code, reason = "hot scan loop, benchmark in the module docs")]
-    #[must_use]
-    pub unsafe fn byte_unchecked(&self, index: usize) -> u8 {
-        // SAFETY: the caller guarantees `index < 8`, the array's length.
-        unsafe { *self.bytes.get_unchecked(index) }
+impl Channel {
+    /// # Errors
+    /// [`NoSuchChannel`] unless `n` is below 4.
+    pub const fn try_new(n: u32) -> Result<Self, NoSuchChannel> {
+        if n < 4 { Ok(Self(n)) } else { Err(NoSuchChannel) }
     }
+}
+
+/// Safe for every argument: a `Channel` is always below 4.
+#[expect(unsafe_code, reason = "FFI to the vendor's C driver")]
+#[must_use]
+pub fn read_celsius(channel: Channel) -> i32 {
+    // SAFETY: `Channel::try_new` admits only 0..4, the driver's whole precondition.
+    unsafe { sensor_read_celsius(channel.0) }
 }
