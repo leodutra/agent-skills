@@ -239,14 +239,14 @@ pub const HTTP: Port = Port::literal(80);
 - Slice a `str` only at char boundaries (`split_once`, `char_indices`, `get(a..b)`), never
   `split_at`/`&s[a..b]` at an offset input can move. Input-dependent indexing MUST use
   `get`/`get_mut` and handle `None`, or check bounds first.
-- Match your own enums exhaustively: no `_ =>`, no `#[non_exhaustive]` (it forces `_` arms on the
-  workspace's other crates; only a crate published to users you don't rebuild uses it).
+- No `#[non_exhaustive]` on your own types: it forces `_` arms on the workspace's other crates; only
+  a crate published to users you don't rebuild uses it.
 - Domain code: time and randomness are parameters, never ambient; output and decisions MUST NOT
   depend on `HashMap`/`HashSet` order (an ordered collection, or sort); no interior mutability
   (`&mut self`; the caller shares).
 - Library code MUST NOT call `process::exit`/`abort`; it returns errors and logs.
-- No code runs before or after `main` (`#[ctor]`, `#[dtor]`): `main` starts and stops everything,
-  in an order it shows, and handles the errors.
+- No code runs before or after `main` (`#[ctor]`, `#[dtor]`): `main` starts everything in an order
+  it shows and handles the errors; teardown is `main`'s or the owner's `Drop`.
 - A poisoned lock means a panic interrupted an update: its data is never read again
   (`PoisonError::into_inner`); the poisoning is an error. A lock that doesn't poison (tokio,
   `parking_lot`) leaves no flag, so code holding it MUST NOT panic.

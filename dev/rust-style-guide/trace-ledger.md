@@ -126,3 +126,18 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S74 | skill | "Money: integer minor units or a decimal type" | |
 | L32 | lint | clippy::dbg_macro; clippy::print_stdout; clippy::print_stderr | a binary prints under a reasoned #[expect] (C6) |
 | L33 | lint+skill | config allow-unwrap-in-tests; config allow-expect-in-tests; config allow-panic-in-tests; config allow-dbg-in-tests; config allow-print-in-tests; "Test allowances cover `#[test]`"; "`unwrap()`, `expect()`, `panic!`, `dbg!` and printing in" | a `tests/` helper written to unwrap must be rewritten to return `Result` (C3) |
+| L34 | lint | clippy::wildcard_enum_match_arm; clippy::match_wildcard_for_single_variants | SKILL.md's "no `_ =>`" dropped: the fix is local |
+| S75 | skill | "No `#[non_exhaustive]` on your own types"; "`#[non_exhaustive]` in a crate published" | structs too |
+| L35 | lint | clippy::needless_pass_by_value | |
+| L36 | lint | clippy::ref_option | |
+| L37 | lint | clippy::redundant_clone | |
+| S76 | skill | "Borrow inputs" | |
+| S77 | skill | "to quiet the borrow checker" | |
+| S78 | skill | "Shared ownership (`Rc`/`Arc`) only where" | |
+| L38 | lint+skill | disallowed-types std::cell::Cell; disallowed-types std::cell::RefCell; disallowed-types std::sync::Mutex; disallowed-types std::sync::RwLock; "no interior mutability"; "the clock, randomness and locks outside" | a type mutated through `&self` is redesigned to `&mut self`, with the caller sharing |
+| S79 | skill | "atomics, `OnceCell`, other interior mutability" | |
+| L39 | lint+skill | disallowed-methods std::time::SystemTime::now; disallowed-methods std::time::Instant::now; disallowed-methods chrono::Utc::now; disallowed-methods rand::random; disallowed-methods rand::rng; disallowed-methods rand::thread_rng; disallowed-methods uuid::Uuid::new_v4; disallowed-methods uuid::Uuid::now_v7; "time and randomness are parameters" | time and randomness become parameters: a signature change through every caller |
+| S80 | skill | "Time or randomness missing from `clippy.toml`" | |
+| L40 | lint | clippy::iter_over_hash_type | |
+| S81 | skill | "depend on `HashMap`/`HashSet` order"; "hash iterator chains" | |
+| L41 | lint+skill | disallowed-macros ctor::ctor; disallowed-macros dtor::dtor; "No code runs before or after `main`" | startup wiring moves into `main`: a structural change (C5: teardown may be the owner's `Drop`) |

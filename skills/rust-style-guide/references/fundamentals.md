@@ -806,7 +806,7 @@ In a test, a panic is how the test fails, so unwrapping there is the assertion. 
 An exhaustive `match` is a checklist the compiler keeps for you. When someone adds a variant, every
 `match` that lists variants by name stops compiling until it decides what the new variant means. A
 `_ =>` arm silently handles the new variant the same way as whatever it was covering before, and
-that is usually wrong.
+that is usually wrong (L34).
 
 ```rust
 match status {
@@ -815,15 +815,15 @@ match status {
 }
 ```
 
-**`#[non_exhaustive]` stays off your own enums.** Inside the defining crate the attribute does
-nothing. In every *other* crate, including the other crates in your workspace, it forces a `_` arm,
-which throws this check away. Its purpose is a crate published to users you don't rebuild, where
-adding a variant would otherwise be a breaking release. In a workspace built together, you *want*
-a new variant to break the build.
+**`#[non_exhaustive]` stays off your own types,** enums and structs alike. Inside the defining crate
+the attribute does nothing. In every *other* crate, including the other crates in your workspace,
+it forces a `_` arm (or `..` in a struct pattern), which throws this check away. Its purpose is a
+crate published to users you don't rebuild, where adding a variant or field would otherwise be a
+breaking release. In a workspace built together, you *want* a new variant to break the build (S75).
 
 On another crate's `#[non_exhaustive]` enum, a `_` arm is required. List every variant you know
 before it, and the lint asks for exactly that. If only one or two matter, use `matches!` or
-`if let`.
+`if let` (L34).
 
 ## 10. Ownership is borrowed unless it's needed
 
@@ -837,9 +837,10 @@ This is the second idea in practice. A signature that takes ownership forces cal
 up or to clone. Asking for more than the function uses costs every caller. So take `&T`, `&str` or
 `&[T]` when you only read, and `Option<&T>` rather than `&Option<T>`, which any caller can produce,
 even one that holds a `T` and no `Option`. Take ownership when storing, returning or consuming the
-value. Clippy already flags `&String`, `&Vec` and `&Box` parameters by default. A clone whose
-original is never used again is pure cost: move the value instead. If a clone only quiets a borrow
-error, shorten the borrow or change the API to make the needed ownership clear.
+value (S76, L35, L36). Clippy already flags `&String`, `&Vec` and `&Box` parameters by default. A
+clone whose original is never used again is pure cost: move the value instead (L37). If a clone only
+quiets a borrow error, shorten the borrow or change the API to make the needed ownership clear
+(S77).
 
 **Shared ownership is for shared lifetimes.** `Rc` and `Arc` keep a value alive until the last
 clone is dropped, wherever that is, so ownership stops being visible: nobody can say when the value
@@ -849,7 +850,7 @@ goes, a cycle of them never goes at all (break it with `Weak`), and each clone a
 `Arc`, and frameworks such as axum ask for `Clone + 'static` state. It is the wrong price for
 escaping a borrow error, which is the clone-to-quiet-the-borrow-checker case above in another
 form. Many handles are already an `Arc` inside (sqlx's `Pool`, reqwest's `Client`); clone those
-directly instead of wrapping them in a second `Arc`.
+directly instead of wrapping them in a second `Arc` (S78).
 
 **Domain values don't mutate behind your back.**
 
@@ -862,9 +863,9 @@ Interior mutability lets code change a value through a shared `&` reference, so 
 trust that a value they hold a shared reference to is still what it was. A domain type that
 changes only through `&mut self` makes every change visible in signatures, and the borrow checker
 rules out races. When a value must be shared across tasks, the *caller* wraps it, as
-`Arc<Mutex<Order>>`. The domain type stays plain. These bans apply to domain crates only:
+`Arc<Mutex<Order>>`. The domain type stays plain (L38). These bans apply to domain crates only:
 infrastructure code, such as connection pools and caches, legitimately needs locks. Atomics and
-`OnceCell` have no lint, so review catches them in domain code.
+`OnceCell` have no lint, so review catches them in domain code (S79).
 
 ## 11. Hidden inputs are passed in
 
@@ -876,12 +877,14 @@ infrastructure code, such as connection pools and caches, legitimately needs loc
 | `disallowed-macros`: `ctor::ctor`, `dtor::dtor` | code that runs before or after `main` |
 
 `iter_over_hash_type` flags `for` loops over a `HashMap` or `HashSet`, but not iterator chains such
-as `map.keys().collect()`. Review checks those chains and whether order can affect domain output or
-decisions. When it does, use an ordered collection or sort before using the items. When a flagged
-loop's order cannot matter, explain the exception with `#[expect]`.
+as `map.keys().collect()` (L40). A `HashMap`'s iteration order is randomized per process, so output
+built from it differs run to run: a flaky test, a diff that churns, two replicas deciding
+differently. Review checks those chains and whether order can affect domain output or decisions.
+When it does, use an ordered collection or sort before using the items (S81). When a flagged loop's
+order cannot matter, explain the exception with `#[expect]` (L40).
 
 If a function reads the clock or a random generator inside, its signature lies. It looks like the
-same inputs always give the same output, but they don't.
+same inputs always give the same output, but they don't (L39).
 
 ```rust
 // Untestable: "the day the trial expires" can't be reached without waiting for it.
@@ -896,12 +899,14 @@ order no file shows, before logging or configuration exist, and a failure there 
 return to. A `#[dtor]` runs after `main`, when other parts may already be gone. Both are hidden
 inputs of the whole program. Startup belongs in `main`, which calls each step in order and handles
 its errors, and builds what the rest needs to pass it in; teardown belongs to `main` or to the
-`Drop` of the value that owns the resource.
+`Drop` of the value that owns the resource (L41).
 
 The production caller reads the clock once, in the binary that wires everything together. `rand`
 0.9 renamed `thread_rng` to `rng`, so both are listed. `uuid`'s v4 and `now_v7` read randomness and
 the clock, while `Uuid::new_v7(ts)` takes its time as a parameter, so it stays allowed. These bans
-apply to domain crates.
+apply to domain crates (L39). The list can't name every clock or generator a crate might add
+(`jiff`, `fastrand`, …), so review checks for time or randomness read some other way, and the
+crate's `clippy.toml` gains the missing path (S80).
 
 ## 12. Async code doesn't block, deadlock or lose `Send`
 
