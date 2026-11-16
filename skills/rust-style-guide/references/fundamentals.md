@@ -13,7 +13,9 @@ review has to check by hand.
   holds, `M` for a rule about applying the guide. Nothing exists in the lints or SKILL.md without a rule here.
 - **The lints hold every rule a lint can hold.** They are deterministic, fast and cost no tokens, and
   they run on every compile, in CI and while fixing.
-- **SKILL.md holds the rest**, in as few words as decide the behavior, without the reasons. It
+- **SKILL.md holds the rest**, in as few words as decide the behavior, without the reasons: it
+  points here for people and tells the model not to load this file, which would only cost tokens
+  (M14). It
   restates a lint-held rule only when code written without knowing it would need a redesign once
   the lint fires (totality, error types, API shape); a local fix (a glob import, a missing derive)
   is left to the lint. A rule a lint holds only in part is split: the lint takes its part, SKILL.md
@@ -28,8 +30,8 @@ review has to check by hand.
 4. Restate a lint-held rule in SKILL.md only if skipping it means a redesign later.
 5. Remove or change nothing in SKILL.md or the lints without changing its rule here.
 6. In this repository, `dev/rust-style-guide/trace.py` checks the IDs against its ledger: every rule
-   reaches its home, and every lint entry and SKILL.md paragraph has a rule. A sentence added to a
-   paragraph that already has one, and whether a rule belongs in a lint, still need review.
+   reaches its home, and every lint entry and SKILL.md sentence has a rule. A clause added inside a
+   sentence that already has one, and whether a rule belongs in a lint, still need review.
 
 ## Two ideas underneath everything
 
@@ -72,7 +74,9 @@ dropping the rule lets one of these back in, the rule stays.
 
 ## When rules pull apart, and how much of them to apply
 
-Good rules still conflict. A conversion rule says "implement `From`", and an obviousness rule says
+The guide is the default for all Rust code, ahead of Rust's own defaults: where it tightens
+clippy's or std's conventions, its version holds, and it yields only as the next paragraph says
+(M13). Good rules still conflict. A conversion rule says "implement `From`", and an obviousness rule says
 "not if it surprises the caller". Without an order, two careful readers pick differently. So the
 guide ranks them, and the first wins: memory and type safety, then domain invariants, then semantic
 clarity, then std-trait interoperability, then simplicity, then performance, then style (M1). Safety and

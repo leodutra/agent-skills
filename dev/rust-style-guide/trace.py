@@ -8,7 +8,7 @@ trace-ledger.md has one row per fundamentals.md ID: `| ID | home | holds | note 
 - home `lint+skill`: both; the note says why the model needs it before linting.
 `;` separates items. Fails when an ID is in one of fundamentals.md and the ledger only; a lint item,
 config entry or quote doesn't exist; a lints.toml lint, clippy.toml entry or SKILL.md paragraph or
-bullet is held by no row. No cargo, no model calls.
+sentence is held by no row (sentences, so one quote never covers a whole bullet). No cargo, no model calls.
 """
 import re
 import sys
@@ -38,7 +38,15 @@ def skill_units(text):
             current.append(line)
     if current:
         units.append(norm(" ".join(current)))
-    return [u for u in units if len(u.split()) > 3]  # a bare "**Write**" lead-in is no rule
+    # One sentence at a time, so a sentence added to a covered bullet needs its own fundamental. Code
+    # spans are masked while splitting, so a `.` inside backticks never ends a sentence.
+    sentences = []
+    for unit in units:
+        spans = iter(re.findall(r"`[^`]*`", unit))
+        masked = re.sub(r"`[^`]*`", "\0", unit)
+        for part in re.split(r"(?<=[.!?])\s+(?=[A-Z*(\0])", masked):
+            sentences.append(re.sub("\0", lambda _: next(spans), part))
+    return [s for s in sentences if len(s.split()) > 3]  # a bare "**Write**" lead-in is no rule
 
 
 def main():
@@ -100,7 +108,7 @@ def main():
         return 1
     homes = [r[1] for r in rows.values()]
     print(f"ok ({len(rows)} fundamentals: {homes.count('lint')} lint, {homes.count('skill')} skill, "
-          f"{homes.count('lint+skill')} both; every lint entry and SKILL.md paragraph has one)")
+          f"{homes.count('lint+skill')} both; every lint entry and SKILL.md sentence has one)")
     return 0
 
 

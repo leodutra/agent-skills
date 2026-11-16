@@ -12,8 +12,8 @@ restates, and the note says why the model needs it before linting. `;` separates
 | M3 | skill | "more specific guidance for the code at hand" | |
 | M4 | skill | "Performance overrides a convention only with" | |
 | M5 | skill | "`MUST`/`SHOULD`/`MAY` are literal" | |
-| M6 | skill | "**Proportionality**: a newtype" | |
-| M7 | skill | "What clippy can check, clippy checks"; "if CI runs them, else report it too"; "Review every other rule, and what slips past" | |
+| M6 | skill | "**Proportionality**: a newtype"; "These rules say how such a thing is built" | |
+| M7 | skill | "What clippy can check, clippy checks"; "if CI runs them, else report it too"; "Review every other rule, and what slips past"; "The lints hold:" | |
 | M8 | skill | "drop anything [Allowed](#allowed), not even a nit"; "Not defects, not even nits" | |
 | M9 | skill | "A lint misfire gets" | |
 | M10 | skill | "`review [target]` → **Review**"; "`audit` → **Review** of the whole codebase"; "`lint [target]` (code or crates"; "Other text, or none → the task" | |
@@ -40,11 +40,11 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S4 | skill | "states the invariant its block relies on" | |
 | S5 | skill | "At every boundary, data is parsed into domain types"; "Code MUST NOT re-check the invariant"; "**Boundary**: anywhere data from outside" | |
 | S6 | skill | "MUST become the constructor" | |
-| S7 | skill | "The boundary type is itself built from domain types"; "A cross-field rule lives there" | |
+| S7 | skill | "The boundary type is itself built from domain types"; "A cross-field rule lives there"; "A separate DTO, still built from domain types" | |
 | S8 | skill | "A value with an invariant, or swappable with another" | |
 | S9 | skill | "A tag's field is `pub`"; "**Tag**: a newtype with no invariant"; "A tag's `pub` field, `#[serde(transparent)]`" | the Allowed entry too |
 | S10 | skill | "never `impl Into<Newtype>`" | |
-| S11 | skill | "A refinement's fields MUST be private" | |
+| S11 | skill | "A refinement's fields MUST be private"; "**Refinement**: any type with an invariant" | |
 | S12 | skill | "private type missing `Debug`" | |
 | S13 | skill | "A secret hand-writes a redacted `Debug`" | |
 | S14 | skill | "`Eq` adds reflexivity" | |
@@ -58,18 +58,18 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S22 | skill | "An inherent fallible constructor MUST be `try_new`"; "`new` returning `Result`" | |
 | S23 | skill | "Other names follow C-CTOR"; "Instead of `try_new`: an I/O resource's fallible" | `from_*` also names a unit (C9) |
 | S24 | skill | "returning `Result`, never `Option`" | |
-| S25 | skill | "Its error holds only the failures it can produce"; "A unit-struct error for a constructor with one failure" | |
+| S25 | skill | "Its error holds only the failures it can produce"; "A unit-struct error for a constructor with one failure"; "Constructors MUST NOT share an enum"; "`FromStr`'s error wraps it beside the syntax failure" | |
 | S26 | skill | "its output printed back by `Display`"; "`default_value_t = CONST` relies on" | |
 | S27 | skill | "Normalize first (trim, canonical case)" | |
 | S28 | skill | "`Borrow<str>` only if those agree" | |
 | S29 | skill | "No value of the type exists that breaks its invariant" | |
-| S30 | skill | "No `Deref`/`DerefMut`, no `&mut` to the inner value" | |
+| S30 | skill | "No `Deref`/`DerefMut`, no `&mut` to the inner value"; "A mutating method keeps the invariant or doesn't exist" | |
 | S31 | skill | "serde: `#[serde(try_from"; "skips the constructor and MUST NOT be used" | |
 | S32 | skill | "`Decode`/`FromSql` decodes the inner type" | |
 | S33 | skill | "clap: a refinement parses through `FromStr`" | |
 | S34 | skill | "`literal` calls `try_new`, never builds `Self`"; "`literal`'s panic in `const` items" | |
-| S35 | skill | "**Conversion**: one typed value becomes unambiguously"; "what the source is decides" | |
-| S36 | skill | "a name MUST NOT replace the trait"; "An unambiguous conversion or complete text parse without its trait" | |
+| S35 | skill | "**Conversion**: one typed value becomes unambiguously"; "what the source is decides"; "A constructor taking several values is not a conversion" | |
+| S36 | skill | "a name MUST NOT replace the trait"; "An unambiguous conversion or complete text parse without its trait"; "the named function says so in its doc comment" | |
 | S37 | skill | "A conversion that would surprise a reader" | |
 | S38 | skill | "A primitive whose type doesn't carry its unit is ambiguous" | |
 | S39 | skill | "**Parsing**: interpreting a text or byte representation" | |
@@ -94,7 +94,7 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S56 | skill | "bound to `_name` or `drop`ped" | |
 | S57 | skill | "Library errors are typed" | |
 | S58 | skill | "private `Result<_, ()>`" | |
-| S59 | skill | "MUST NOT return a dependency's error raw" | |
+| S59 | skill | "MUST NOT return a dependency's error raw"; "An infrastructure adapter whose natural contract" | |
 | S60 | skill | "names the cause, loses its type" | |
 | S61 | skill | "`anyhow`/`eyre` only where errors only get printed"; "`anyhow`/`eyre` in a binary's `main` and CLI commands" | C1: no infrastructure libraries; tests of a library stay under the ban |
 | S62 | skill | "Derive `Clone, PartialEq, Eq` (reflexive"; "An error lacking `Clone`/`PartialEq`/`Eq`" | |
@@ -133,7 +133,7 @@ restates, and the note says why the model needs it before linting. `;` separates
 | L37 | lint | clippy::redundant_clone | |
 | S76 | skill | "Borrow inputs" | |
 | S77 | skill | "to quiet the borrow checker" | |
-| S78 | skill | "Shared ownership (`Rc`/`Arc`) only where" | |
+| S78 | skill | "Shared ownership (`Rc`/`Arc`) only where"; "A handle already shared inside" | |
 | L38 | lint+skill | disallowed-types std::cell::Cell; disallowed-types std::cell::RefCell; disallowed-types std::sync::Mutex; disallowed-types std::sync::RwLock; "no interior mutability"; "the clock, randomness and locks outside" | a type mutated through `&self` is redesigned to `&mut self`, with the caller sharing |
 | S79 | skill | "atomics, `OnceCell`, other interior mutability" | |
 | L39 | lint+skill | disallowed-methods std::time::SystemTime::now; disallowed-methods std::time::Instant::now; disallowed-methods chrono::Utc::now; disallowed-methods rand::random; disallowed-methods rand::rng; disallowed-methods rand::thread_rng; disallowed-methods uuid::Uuid::new_v4; disallowed-methods uuid::Uuid::now_v7; "time and randomness are parameters" | time and randomness become parameters: a signature change through every caller |
@@ -148,11 +148,11 @@ restates, and the note says why the model needs it before linting. `;` separates
 | L44 | lint | clippy::let_underscore_future | |
 | S84 | skill | "A future MUST be awaited, returned or spawned" | |
 | S85 | skill | "No blocking on the runtime" | |
-| S86 | skill | "Each `.await` can cancel" | |
+| S86 | skill | "Each `.await` can cancel"; "A future dropped there MUST NOT break a domain invariant" | |
 | L45 | lint | clippy::needless_for_each | |
 | S87 | skill | "A name says what the thing does" | |
 | S88 | skill | "Accessors follow std" | |
-| S89 | skill | "A trait exists only for a real abstraction need"; "An extension trait (`…Ext`) with a single implementation" | |
+| S89 | skill | "A trait exists only for a real abstraction need"; "An extension trait (`…Ext`) with a single implementation"; "A trait over several foreign types for generic" | |
 | S90 | skill | "An operator means its mathematical or logical operation" | |
 | S91 | skill | "Macros last" | |
 | S96 | skill | "Unused dependencies" | `unused_crate_dependencies` flags per target: too noisy |
@@ -160,10 +160,12 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S92 | skill | "Per constructor: one accepted input"; "a rejection test asserting its error" | |
 | S93 | skill | "No second example of a pinned rule" | |
 | S94 | skill | "A law gets a property test" | |
-| S95 | skill | "Every forbidden transition the types allow is tested" | |
+| S95 | skill | "Every forbidden transition the types allow is tested"; "`tests/` uses the public API" | |
 | L47 | lint | clippy::wrong_self_convention; clippy::should_implement_trait; clippy::len_without_is_empty; clippy::new_without_default; clippy::ptr_arg; clippy::borrowed_box | clippy defaults fundamentals relied on, now listed |
 | L48 | lint | clippy::wildcard_imports | |
 | L49 | lint | clippy::derive_partial_eq_without_eq | a published crate may drop it (comment in lints.toml) |
 | L50 | lint | disallowed-types anyhow::Error; disallowed-types anyhow::Result; disallowed-types eyre::Report; disallowed-types eyre::Result; disallowed-methods chrono::Utc::now; disallowed-methods rand::random; disallowed-methods rand::rng; disallowed-methods rand::thread_rng; disallowed-methods uuid::Uuid::new_v4; disallowed-methods uuid::Uuid::now_v7; disallowed-macros ctor::ctor; disallowed-macros dtor::dtor | allow-invalid entries and per-crate omissions (clippy.toml comments) |
 | S97 | skill | "the behavior under test is asserted on its `Result`" | setup `expect`s (`unwrap` where obvious) |
 | S98 | skill | "A serde rejection asserts the constructor's error via" | serde_test: no syntax error possible, whole message compared |
+| M13 | skill | "Default for all Rust, over Rust's own defaults" | |
+| M14 | skill | "Reasons, for people:" | SKILL.md carries no reasons and never loads fundamentals.md |
