@@ -256,7 +256,8 @@ pub const HTTP: Port = Port::literal(80);
   `replace_foo()`, never `get_foo()`.
 - A trait exists only for a real abstraction need: a second implementation, a test double, outside
   implementors, a generic algorithm, or methods on a foreign type (an extension trait, named
-  `…Ext`); never for flexibility nobody uses yet.
+  `…Ext`); never for flexibility nobody uses yet. A trait over several foreign types for generic
+  code takes no `Ext`; your own type's methods are inherent.
 - An operator means its mathematical or logical operation (`Add` adds); anything else is a named
   method.
 - Macros last: a function, type or trait; then `macro_rules!`; then a proc macro.
@@ -269,8 +270,7 @@ pub const HTTP: Port = Port::literal(80);
 ## Async
 
 - A trait whose futures are spawned multithreaded returns `impl Future<Output = …> + Send`.
-- No `std::sync::MutexGuard` across `.await`; no blocking on the runtime (`std::fs`, sync clients,
-  heavy CPU): async APIs or `spawn_blocking`.
+- No blocking on the runtime (`std::fs`, sync clients, heavy CPU): async APIs or `spawn_blocking`.
 - Each `.await` can cancel. A future dropped there MUST NOT break a domain invariant or silently
   lose progress the application needs; where an operation can leave a partial effect (a partial
   write, a charge without its record), the caller preserves, recovers, compensates or explicitly
@@ -303,7 +303,9 @@ futures; locks across `.await`; >3 bools; glob imports; `for_each`; needless pas
 `assert!(r.is_err())`; bare `#[allow]`, missing reasons; `anyhow`/`eyre`;
 `Cell`/`RefCell`/`Mutex`/`RwLock`; banned clock/`rand`/`uuid` calls; `catch_unwind`; reading a
 poisoned lock;
-`process::abort`/`exit`; lossy `as`; `&s[a..b]` on `str`; hash `for` loops; debug and print macros.
+`process::abort`/`exit`; lossy `as`; `&s[a..b]` on `str`; hash `for` loops; debug and print macros;
+`&String`/`&Vec`/`&Box` params; std conventions (`as_`/`to_`/`into_` receivers, std-trait
+look-alikes, `is_empty` beside `len`, `Default` beside `new()`).
 
 Review every other rule, and what slips past a lint that looks like it holds:
 - `new` returning `Result`; private type missing `Debug`; private `Result<_, ()>`;

@@ -512,7 +512,7 @@ the others, so each path is closed or routed through the constructor (S29).
 
 ### Making a value from another, for every type
 
-What the source is decides how the code is written. This holds for records, enums and tags as much
+What the source is decides how the code is written (S35). This holds for records, enums and tags as much
 as for refinements.
 
 - **A conversion turns a typed value into the same value in another type**, so it is a std trait:
@@ -921,24 +921,25 @@ Each `.await` is a point where the task can pause while other tasks run.
 
 - A std `Mutex` locked across that pause stays locked while the task sleeps. Any other task that
   wants the lock blocks a runtime thread, and if that task runs on the same thread, nothing ever
-  makes progress. Release the guard before the `.await`, or use an async-aware lock.
-- A `RefCell` borrowed across the pause can panic at run time when another task borrows it.
+  makes progress. Release the guard before the `.await`, or use an async-aware lock (L42).
+- A `RefCell` borrowed across the pause can panic at run time when another task borrows it (L42).
 - A multithreaded runtime moves tasks between threads, so `tokio::spawn` needs a `Send` future. If
   the future isn't `Send`, the compile error shows up at the `spawn`, often far from the
   `Rc` or guard that caused it, with a long message. This lint reports it at the function that
-  creates the future, where the fix is. A trait whose futures get spawned declares
-  `-> impl Future<Output = …> + Send` for the same reason.
+  creates the future, where the fix is (L43). A trait whose futures get spawned declares
+  `-> impl Future<Output = …> + Send` for the same reason (S82).
 - `future_not_send` also flags a future intended only for a local executor. Such a future is valid;
-  document that exception with a reasoned `#[expect]`.
+  document that exception with a reasoned `#[expect]` (S83).
 - An async operation is lazy: `let _ = send()` drops its future without running it. Await, return
-  or deliberately spawn it. A spawned task's `JoinHandle` must be awaited or supervised so its
-  error and panic are observed; detached work needs an owner and a failure path. The lint misses
-  `let _future = send()`, which also leaves it unpolled, so review catches it.
+  or deliberately spawn it (L44). A spawned task's `JoinHandle` must be awaited or supervised so
+  its error and panic are observed; detached work needs an owner and a failure path (S84). The lint
+  misses `let _future = send()`, which also leaves it unpolled, so review catches it (S56).
 
 **Review checks blocking, cancellation and spawned task ownership:**
 
 - **Blocking calls stay off the runtime.** `std::fs`, a synchronous HTTP client or heavy CPU work
-  inside an `async fn` stalls every task on that thread. Use the async API or `spawn_blocking`.
+  inside an `async fn` stalls every task on that thread. Use the async API or `spawn_blocking`
+  (S85).
 - **Every `.await` is a cancellation point.** A timeout, a `select!` or a client disconnecting can
   drop the future there, and the code after that `.await` never runs:
 
@@ -956,7 +957,7 @@ Each `.await` is a point where the task can pause while other tasks run.
   halfway, the caller decides on purpose: preserve the progress, recover, compensate, or accept
   the partial outcome and say so. A charge without its record fails that test; how to fix it, by
   ordering the steps or making a retry harmless, is a design decision. The Rust fact is that the
-  drop can happen at any `.await`.
+  drop can happen at any `.await` (S86).
 
 ## 13. Code says what it does, plainly
 
@@ -966,9 +967,9 @@ Each `.await` is a point where the task can pause while other tasks run.
 | `needless_for_each` | `.for_each(…)` where a `for` loop reads plainer |
 
 A glob import hides where a name comes from. It also lets a new item added upstream shadow, or
-clash with, one of yours, with no change in your file. A `for` loop says "loop" in one word.
+clash with, one of yours, with no change in your file (L48). A `for` loop says "loop" in one word.
 `.for_each(|x| …)` says the same thing in a combinator and makes `break`, `continue` and `?`
-awkward.
+awkward (L45).
 
 **Review checks the rest:**
 
@@ -977,11 +978,11 @@ awkward.
   `LoadOrders` names the job. An abbreviation only insiders know, or one made by dropping letters
   (`cnt`, `mgr`), costs every newcomer a lookup. A single letter is fine for a lifetime or generic
   parameter whose role is plain (`'a` tying an output to an input, `T` in a container); where
-  several are in play, names say which is which (`'input`, `S: Store`).
+  several are in play, names say which is which (`'input`, `S: Store`) (S87).
 - **Accessors follow std's names**, so callers guess them right: `foo()` returns a reference (or a
   `Copy` value), `foo_mut()` a mutable one, `set_foo()` replaces, `take_foo()` empties and returns
   the old value, `replace_foo()` sets and returns it. A `get_` prefix adds nothing. A refinement's
-  `get()`, as on `NonZeroU16`, is the whole value, not a field.
+  `get()`, as on `NonZeroU16`, is the whole value, not a field (S88).
 - **A trait needs a real abstraction need.** A trait with one implementation and no other use adds
   a name and an indirection that every reader has to step through, and it hides which code
   actually runs, all for flexibility nobody uses yet. Write the concrete type first. A trait earns
@@ -1004,13 +1005,17 @@ awkward.
   A trait implemented for several foreign types so that generic code can take any of them
   (`trait Timestamped` for `SystemTime` and `chrono::DateTime`) is not an extension trait: it is
   the generic-algorithm reason, and it gets no `Ext`. A method on your own type is never an
-  extension trait: write it inherent.
+  extension trait: write it inherent (S89).
 - **An operator does what its symbol says.** `+` adds, `*` multiplies, `!` negates. An `Add` that
   appends to a log or a `Shl` that sends a message reads as arithmetic, so the reader has to look
-  it up to learn it isn't; a named method says what happens.
+  it up to learn it isn't; a named method says what happens (S90).
 - **A macro is the last resort.** Macros hide control flow, give worse error messages and confuse
   tooling. Try a function, a type or a trait first, then `macro_rules!`, and a proc macro only
-  after that.
+  after that (S91).
+- **Every dependency is used.** An unused one still compiles, ships and widens the supply chain.
+  Rustc's `unused_crate_dependencies` judges each build target alone, so every test and binary
+  that doesn't touch a library dependency gets flagged: too noisy for this set, so review checks
+  it (S96).
 
 ## 14. Tests pin behavior, not the compiler
 
@@ -1028,18 +1033,18 @@ assert_eq!(Port::try_new(0), Err(ZeroPort));   // passes only for the right reas
 ```
 
 Clippy suggests `r.unwrap_err()` instead, but that checks no more than the original, so don't take
-the suggestion.
+the suggestion (L46).
 
 **Review checks the rest:**
 
 - **One accepted input per constructor, and every rejection reason reached by a test that asserts
-  that error.** A rejection no test reaches can be deleted and nothing goes red.
+  that error.** A rejection no test reaches can be deleted and nothing goes red (S92).
 - **No second example of a rule already pinned, and no tests of derives, getters or anything else
-  the compiler guarantees.** They cost upkeep and prove nothing.
+  the compiler guarantees.** They cost upkeep and prove nothing (S93).
 - **Where a law exists, a property test replaces examples.** Where `Display` is the type's
   canonical text, the one `FromStr` reads, a property test pins that its printed form parses back.
   Rust doesn't promise `Display` is lossless or machine-readable, so a type whose `Display` is
-  only for people needs no such test:
+  only for people needs no such test (S94):
 
   ```rust
   proptest! {
@@ -1051,8 +1056,9 @@ the suggestion.
   }
   ```
 
-- **Every forbidden state transition the types can't rule out has a test.** Integration tests in
-  `tests/` use only the public API, as real callers do.
+- **Every forbidden state transition the types can't rule out has a test**, because only code
+  guards it, and only a test notices when that code goes. Integration tests in `tests/` use only
+  the public API, as real callers do (S95).
 
 ## What came from Google's Rust style guide
 
@@ -1101,14 +1107,14 @@ type alias, pattern matching instead of check-then-unwrap, borrowing instead of 
 `as_`/`to_`/`into_` receivers (`wrong_self_convention`), a std trait instead of a look-alike method
 (`should_implement_trait`), `is_empty` beside `len` (`len_without_is_empty`), `Default` beside an
 argument-free `new` (`new_without_default`), and `&T` over `&Box<T>`, `&[T]` over `&Vec<T>`
-(`borrowed_box`, `ptr_arg`).
+(`borrowed_box`, `ptr_arg`). They are listed in `lints.toml` too, raised to `deny` (L47).
 
 **Kept against Google, on purpose:**
 
 - **`Eq` wherever it holds.** Google prefers `PartialEq` alone, because adding `Eq` to a published
   type is a promise that is hard to take back. Here, domain types need `Eq` to be map keys, and the
   derive can't be wrong (section 3). A crate published for others to depend on may drop the lint and
-  add `Eq` only where it means to promise it.
+  add `Eq` only where it means to promise it (L49).
 - **No `panic!` for broken invariants.** Google allows it. This guide makes functions total
   (section 8), which Google itself notes some codebases do.
 - **`Arc` where the lifetime is shared.** Google says to avoid `Rc` and `Arc` unless the
@@ -1132,7 +1138,7 @@ messages, iterator chains kept out of `for` headers, and `#[rustfmt::skip]` only
 
 - **`allow-invalid = true`** on library paths (`anyhow`, `chrono`, `rand`, `uuid`) keeps an entry
   quiet in a crate that doesn't depend on that library. Without it, clippy warns that the path
-  doesn't resolve, and the same file couldn't serve every crate.
+  doesn't resolve, and the same file couldn't serve every crate (L50).
 - **Entries marked "domain crates only" or "library crates only"** are left out of the copy of
   `clippy.toml` in crates where they don't apply. A binary prints `anyhow` errors and reads the
-  clock, and an infrastructure crate holds locks.
+  clock, and an infrastructure crate holds locks (L50).

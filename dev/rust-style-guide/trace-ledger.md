@@ -13,8 +13,8 @@ restates, and the note says why the model needs it before linting. `;` separates
 | M4 | skill | "Performance overrides a convention only with" | |
 | M5 | skill | "`MUST`/`SHOULD`/`MAY` are literal" | |
 | M6 | skill | "**Proportionality**: a newtype" | |
-| M7 | skill | "What clippy can check, clippy checks"; "if CI runs them, else report it too" | |
-| M8 | skill | "drop anything [Allowed](#allowed), not even a nit" | |
+| M7 | skill | "What clippy can check, clippy checks"; "if CI runs them, else report it too"; "Review every other rule, and what slips past" | |
+| M8 | skill | "drop anything [Allowed](#allowed), not even a nit"; "Not defects, not even nits" | |
 | M9 | skill | "A lint misfire gets" | |
 | M10 | skill | "`review [target]` → **Review**"; "`audit` → **Review** of the whole codebase"; "`lint [target]` (code or crates"; "Other text, or none → the task" | |
 | M11 | skill | "Lints: paste [assets/lints.toml](assets/lints.toml)"; "Types before functions"; "Done: `cargo check`" | |
@@ -68,7 +68,7 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S32 | skill | "`Decode`/`FromSql` decodes the inner type" | |
 | S33 | skill | "clap: a refinement parses through `FromStr`" | |
 | S34 | skill | "`literal` calls `try_new`, never builds `Self`"; "`literal`'s panic in `const` items" | |
-| S35 | skill | "**Conversion**: one typed value becomes unambiguously" | |
+| S35 | skill | "**Conversion**: one typed value becomes unambiguously"; "what the source is decides" | |
 | S36 | skill | "a name MUST NOT replace the trait"; "An unambiguous conversion or complete text parse without its trait" | |
 | S37 | skill | "A conversion that would surprise a reader" | |
 | S38 | skill | "A primitive whose type doesn't carry its unit is ambiguous" | |
@@ -140,4 +140,28 @@ restates, and the note says why the model needs it before linting. `;` separates
 | S80 | skill | "Time or randomness missing from `clippy.toml`" | |
 | L40 | lint | clippy::iter_over_hash_type | |
 | S81 | skill | "depend on `HashMap`/`HashSet` order"; "hash iterator chains" | |
-| L41 | lint+skill | disallowed-macros ctor::ctor; disallowed-macros dtor::dtor; "No code runs before or after `main`" | startup wiring moves into `main`: a structural change (C5: teardown may be the owner's `Drop`) |
+| L41 | lint+skill | clippy::disallowed_macros; disallowed-macros ctor::ctor; disallowed-macros dtor::dtor; "No code runs before or after `main`" | startup wiring moves into `main`: a structural change (C5: teardown may be the owner's `Drop`) |
+| L42 | lint | clippy::await_holding_lock; clippy::await_holding_refcell_ref | SKILL.md's restatement dropped: scoping the guard is a local fix |
+| L43 | lint | clippy::future_not_send | |
+| S82 | skill | "A trait whose futures are spawned multithreaded" | |
+| S83 | skill | "A non-`Send` future deliberately run only" | |
+| L44 | lint | clippy::let_underscore_future | |
+| S84 | skill | "A future MUST be awaited, returned or spawned" | |
+| S85 | skill | "No blocking on the runtime" | |
+| S86 | skill | "Each `.await` can cancel" | |
+| L45 | lint | clippy::needless_for_each | |
+| S87 | skill | "A name says what the thing does" | |
+| S88 | skill | "Accessors follow std" | |
+| S89 | skill | "A trait exists only for a real abstraction need"; "An extension trait (`…Ext`) with a single implementation" | |
+| S90 | skill | "An operator means its mathematical or logical operation" | |
+| S91 | skill | "Macros last" | |
+| S96 | skill | "Unused dependencies" | `unused_crate_dependencies` flags per target: too noisy |
+| L46 | lint | clippy::assertions_on_result_states | |
+| S92 | skill | "Per constructor: one accepted input"; "a rejection test asserting its error" | |
+| S93 | skill | "No second example of a pinned rule" | |
+| S94 | skill | "A law gets a property test" | |
+| S95 | skill | "Every forbidden transition the types allow is tested" | |
+| L47 | lint | clippy::wrong_self_convention; clippy::should_implement_trait; clippy::len_without_is_empty; clippy::new_without_default; clippy::ptr_arg; clippy::borrowed_box | clippy defaults fundamentals relied on, now listed |
+| L48 | lint | clippy::wildcard_imports | |
+| L49 | lint | clippy::derive_partial_eq_without_eq | a published crate may drop it (comment in lints.toml) |
+| L50 | lint | disallowed-types anyhow::Error; disallowed-types anyhow::Result; disallowed-types eyre::Report; disallowed-types eyre::Result; disallowed-methods chrono::Utc::now; disallowed-methods rand::random; disallowed-methods rand::rng; disallowed-methods rand::thread_rng; disallowed-methods uuid::Uuid::new_v4; disallowed-methods uuid::Uuid::now_v7; disallowed-macros ctor::ctor; disallowed-macros dtor::dtor | allow-invalid entries and per-crate omissions (clippy.toml comments) |

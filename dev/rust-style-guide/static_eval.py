@@ -91,6 +91,10 @@ PROMISES = {
     "`&s[a..b]` on `str`": ["clippy::string_slice"],
     "hash `for` loops": ["clippy::iter_over_hash_type"],
     "debug and print macros": ["clippy::dbg_macro", "clippy::print_stdout", "clippy::print_stderr"],
+    "`&String`/`&Vec`/`&Box` params": ["clippy::ptr_arg", "clippy::borrowed_box"],
+    "std conventions (`as_`/`to_`/`into_` receivers, std-trait look-alikes, `is_empty` beside `len`, `Default` beside `new()`)": [
+        "clippy::wrong_self_convention", "clippy::should_implement_trait", "clippy::len_without_is_empty",
+        "clippy::new_without_default"],
 }
 
 def header(path: Path) -> tuple[str, str | None, set[str]]:

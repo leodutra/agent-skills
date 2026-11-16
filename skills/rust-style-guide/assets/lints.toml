@@ -44,7 +44,8 @@ let_underscore_must_use = "deny"
 partial_pub_fields = "deny"
 # A type deriving PartialEq that could derive Eq. Refinements and Errors: Eq wherever it holds.
 # Eq means reflexive (`a == a` for every value), which the compiler cannot check; this lint fires
-# only when every field is Eq, so the derive it asks for is reflexive by construction.
+# only when every field is Eq, so the derive it asks for is reflexive by construction. A crate
+# published to users you don't rebuild may drop this lint and add Eq only where it means to promise it.
 derive_partial_eq_without_eq = "deny"
 # `.unwrap()` outside tests. Behavior: no unwrap outside tests; functions are total.
 unwrap_used = "deny"
@@ -91,6 +92,10 @@ string_slice = "deny"
 iter_over_hash_type = "deny"
 # A parameter taken by value but never consumed. Behavior: borrow inputs when ownership is not required.
 needless_pass_by_value = "deny"
+# A `&String`, `&Vec` or `&Box` parameter. Behavior: borrow the data (`&str`, `&[T]`, `&T`).
+# Clippy defaults, listed to raise them to deny.
+ptr_arg = "deny"
+borrowed_box = "deny"
 # A `&Option<T>` parameter. Behavior: borrow the data, so take `Option<&T>` (clippy already flags
 # `&String`, `&Vec` and `&Box` by default).
 ref_option = "deny"
@@ -98,6 +103,13 @@ ref_option = "deny"
 option_option = "deny"
 # A clone whose original is never used again. Behavior: borrow rather than clone when ownership stays.
 redundant_clone = "deny"
+# std's naming conventions: `as_`/`to_`/`into_` receivers, a method that looks like a std trait's
+# instead of the trait, `len` without `is_empty`, an argument-free `new` without `Default`. Lints:
+# a name means what std means by it. Clippy defaults, listed to raise them to deny.
+wrong_self_convention = "deny"
+should_implement_trait = "deny"
+len_without_is_empty = "deny"
+new_without_default = "deny"
 # A glob import (`use foo::*`) other than `use super::*` in a test module or a prelude. Lints:
 # every name says where it comes from.
 wildcard_imports = "deny"
