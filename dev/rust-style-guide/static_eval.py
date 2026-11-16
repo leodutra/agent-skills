@@ -47,11 +47,13 @@ PROMISES = {
     "unwrap/expect/panic/todo/unimplemented/unreachable outside tests": [
         "clippy::unwrap_used", "clippy::expect_used", "clippy::panic", "clippy::todo", "clippy::unimplemented",
         "clippy::unreachable"],
-    "unsafe, undocumented unsafe and several unsafe operations per block": [
+    "unsafe, undocumented unsafe, several unsafe operations per block and an `unsafe fn` without `# Safety`": [
         "unsafe_code", "unsafe_op_in_unsafe_fn", "clippy::undocumented_unsafe_blocks",
-        "clippy::multiple_unsafe_ops_per_block"],
+        "clippy::multiple_unsafe_ops_per_block", "clippy::missing_safety_doc"],
     "a hand-written `Default` a derive would produce": ["clippy::derivable_impls"],
     "`Clone` on `Copy`": ["clippy::expl_impl_clone_on_copy"],
+    "`Hash`/`Ord` derived beside a hand-written `PartialEq`/`PartialOrd`": [
+        "clippy::derived_hash_with_manual_eq", "clippy::derive_ord_xor_partial_ord"],
     "`#[ctor]`/`#[dtor]`": [f"{D}macros ctor::ctor", f"{D}macros dtor::dtor"],
     "public types missing `Debug`": ["missing_debug_implementations"],
     "`PartialEq` that could be `Eq`": ["clippy::derive_partial_eq_without_eq"],

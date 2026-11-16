@@ -6,6 +6,29 @@ with examples. If a lint fired on your code, search this page for its name. Sect
 the problem they prevent. Each one gives the reason, then the lints that enforce it, then what
 review has to check by hand.
 
+## How this file, the lints and SKILL.md divide the work
+
+- **This file is the source of truth.** Every rule lives here first, with its reason and examples,
+  tagged with an ID in parentheses: `L` and a number for a rule the lints hold, `S` for one SKILL.md
+  holds, `M` for a rule about applying the guide. Nothing exists in the lints or SKILL.md without a rule here.
+- **The lints hold every rule a lint can hold.** They are deterministic, fast and cost no tokens, and
+  they run on every compile, in CI and while fixing.
+- **SKILL.md holds the rest**, in as few words as decide the behavior, without the reasons. It
+  restates a lint-held rule only when code written without knowing it would need a redesign once
+  the lint fires (totality, error types, API shape); a local fix (a glob import, a missing derive)
+  is left to the lint. A rule a lint holds only in part is split: the lint takes its part, SKILL.md
+  the rest.
+
+**Checklist for any rule change:**
+
+1. Write or update the rule here first: the reason, an example, and a new ID (never reuse one).
+2. If a lint can hold it, add the lint to `lints.toml` or `clippy.toml` with a comment, plus a bad
+   and a good sample that prove it fires.
+3. Otherwise, or for the part a lint misses, state it in SKILL.md.
+4. Restate a lint-held rule in SKILL.md only if skipping it means a redesign later.
+5. Remove or change nothing in SKILL.md or the lints without changing its rule here.
+6. In this repository, `dev/rust-style-guide/trace.py` checks steps 1 to 5 against its ledger.
+
 ## Two ideas underneath everything
 
 The guide started in early 2026 as a prose document. It rested on two ideas, and every rule here
@@ -50,26 +73,32 @@ dropping the rule lets one of these back in, the rule stays.
 Good rules still conflict. A conversion rule says "implement `From`", and an obviousness rule says
 "not if it surprises the caller". Without an order, two careful readers pick differently. So the
 guide ranks them, and the first wins: memory and type safety, then domain invariants, then semantic
-clarity, then std-trait interoperability, then simplicity, then performance, then style. Safety and
+clarity, then std-trait interoperability, then simplicity, then performance, then style (M1). Safety and
 invariants come first because a breach there corrupts data or memory, and no amount of clarity
 repairs that. Clarity comes before conformity, because a trait impl that misleads is worse than a
 named function that doesn't fit a pattern.
 
 Two kinds of reason may override a convention, and both are written down. A documented project
 requirement, such as a hard real-time deadline or a stable public API, can bend a convention, never
-safety or an invariant. It wins only on the point and in the scope it names, and it lives where
+safety or an invariant (M2). It wins only on the point and in the scope it names, and it lives where
 decisions are made and found (`CLAUDE.md`, an ADR, the project's docs). A code comment doesn't
-count: it explains one spot, and nobody looks for a project's rules inside it. Performance can
+count: it explains one spot, and nobody looks for a project's rules inside it. More specific
+guidance for the code at hand, such as a framework's conventions or another loaded skill, wins the
+same way, on its point only: it knows its context better than a general guide does (M3).
+Performance can
 override a convention only with evidence: a measurement or a stated system constraint, recorded
-where the code deviates. "This might be slow" is not evidence, and most of what the guide asks for
+where the code deviates (M4). "This might be slow" is not evidence, and most of what the guide asks for
 (newtypes, borrowing, enums) costs nothing at run time.
+
+`MUST`, `SHOULD` and `MAY` in SKILL.md are literal, as in RFC 2119, so a reader takes them as
+levels of obligation, not emphasis (M5).
 
 **Proportionality** is the other half. Every abstraction here earns its place by doing a job: a
 newtype enforces an invariant or stops two values being swapped, a trait serves a real abstraction
 need, an error variant is a failure a caller can act on. Applied to a value with no
 invariant and no confusable twin, the same tools only add names and indirection. So a newtype,
 trait, error variant, layer or generic parameter exists only when it enforces an invariant,
-prevents a real misuse, names a domain concept or measurably eases maintenance. The rules say how
+prevents a real misuse, names a domain concept or measurably eases maintenance (M6). The rules say how
 such a thing is built once it is needed, never that every value needs one. A guide that makes code
 heavier than the problem has failed as surely as one that lets bugs through.
 
@@ -79,24 +108,42 @@ Five decisions shape the whole setup.
 
 - **The machine checks what a machine can check.** You can't argue a lint out of a verdict, and it
   doesn't get tired. A reviewer, human or model, can be argued with and does get tired. So every
-  rule that clippy or rustc can hold is handed to them, and review covers only the rest.
+  rule that clippy or rustc can hold is handed to them, and review covers only the rest, when CI
+  runs the lints; without CI, review reports lint findings too (M7).
+- **A review checks every rule and reports each finding with its line, the rule, why and the
+  fix**, a whole-codebase audit grouped by rule, most severe first. It drops anything on SKILL.md's
+  Allowed list entirely, not even as a nit: reporting an allowed construct costs the author a
+  decision the guide already made (M8).
 - **Every Clippy lint is `deny`, not `warn`.** The rustc `unsafe_code` lint is `forbid` by default.
   Warnings pile up until nobody reads them. A lint that matters fails the build, and a lint that
-  doesn't matter isn't on the list. Rustc's `missing_debug_implementations` is also `deny`.
+  doesn't matter isn't on the list. Rustc's `missing_debug_implementations` is also `deny` (L1).
 - **Exceptions are written down where they happen.** A lint is never turned off for a whole crate
   because one place needs an exception. That place gets `#[expect(clippy::name, reason = "…")]`,
   and the `reason` tells the next reader why. `expect`, unlike `allow`, fails once the lint stops
   firing, so a stale exception can't linger. `allow_attributes` bans a bare `#[allow]`, and
-  `allow_attributes_without_reason` bans an exception with no `reason`.
+  `allow_attributes_without_reason` bans an exception with no `reason` (L2, M9).
 - **Public signatures are linted like private ones** (`avoid-breaking-exported-api = false`).
   Clippy normally leaves public signatures alone so that it doesn't push a breaking release. In a
   workspace you rebuild, changing a public signature is a refactor, not a release. A crate published
   to outside users drops this line, and for the same reason it may use `#[non_exhaustive]` (see
-  section 9).
-- **Default lints are still listed.** Six entries (`infallible_try_from`, `result_unit_err`,
-  `await_holding_lock`, `await_holding_refcell_ref`, `disallowed_types`, `disallowed_methods`) are
-  already on in clippy by default. They are listed anyway, so that the file states every rule it
-  holds and raises them to `deny`.
+  section 9) (L3).
+- **Default lints are still listed.** Nine entries (`infallible_try_from`, `result_unit_err`,
+  `await_holding_lock`, `await_holding_refcell_ref`, `disallowed_types`, `disallowed_methods`,
+  `missing_safety_doc`, `derived_hash_with_manual_eq`, `derive_ord_xor_partial_ord`) are already on
+  in clippy by default. They are listed anyway, so that the file states every rule it holds and
+  raises them to `deny` (L4).
+
+## Applying SKILL.md
+
+SKILL.md has four entry points: `review` checks a diff or target against every rule, `audit` does
+the same for a whole codebase, `lint` installs the lint set where it's missing and fixes what it
+finds, and anything else is a task to write (M10). Writing starts with the lint set, so every line
+is checked as it's written. Then types come before functions, because signatures are built from
+them: a refinement per value with an invariant, an enum per set of states, an error type per set of
+failures. A task is done when `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D
+warnings` and `cargo test` pass (M11). **Domain code** is library and domain logic. A binary's
+`main` and infrastructure (adapters, wiring) are not, and some rules (the clock, randomness, locks,
+`anyhow`) apply only to domain code (M12).
 
 ## 1. Memory safety stays the compiler's job
 
@@ -112,20 +159,22 @@ Rust's main promise is that safe code can't corrupt memory. An `unsafe` block is
 compiler can't check, and domain or backend code almost never needs one. `forbid` is stricter than
 `deny`: no attribute in the code can lift it, so nobody quietly opts out. A crate that really needs
 `unsafe`, such as an FFI wrapper, lowers this one lint to `deny` and puts an
-`#[expect(unsafe_code, reason = "…")]` on each item. Then the `// SAFETY:` comment states the
-invariant the block relies on, so a reviewer can check the proof the compiler couldn't.
+`#[expect(unsafe_code, reason = "…")]` on each item (L5). Then the `// SAFETY:` comment states the
+invariant the block relies on, so a reviewer can check the proof the compiler couldn't (L6, S4).
 
 Where `unsafe` is needed, it is fenced, so the unchecked proof stays small enough to review:
 
 - **Only where safe code can't do the job**, and the crate says why. When the reason is speed, a
   benchmark shows it: performance overrides a convention only with a measurement (precedence,
-  above), and an unchecked proof is far more than a convention.
+  above), and an unchecked proof is far more than a convention (S1).
 - **Behind a safe API, in a module or crate of its own.** Domain code calls the wrapper and never
-  sees `unsafe`. "Safe" means no argument a caller can pass causes undefined behavior. A condition
+  sees `unsafe` (S2). "Safe" means no argument a caller can pass causes undefined behavior. A condition
   only the caller can guarantee keeps the function an `unsafe fn` whose `# Safety` section states
-  it.
+  it (S3, L9).
 - **One unsafe operation per block**, so each `SAFETY:` comment justifies exactly one thing. A
-  block doing three things under one comment invites the comment to cover only the first.
+  block doing three things under one comment invites the comment to cover only the first (L7).
+  Inside an `unsafe fn` too, each unsafe operation sits in its own `unsafe` block, so the
+  function's contract and each operation's proof stay apart (L8).
 
 ```rust
 /// # Safety
@@ -166,9 +215,10 @@ fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
   domain types before domain logic. Serde, clap and SQLx are examples of adapters; the boundary
   exists wherever external data enters. Functions take `Email`, never the `&str` it came from, and
   code never checks the invariant again. Reloading from storage or the wire is a new boundary and
-  parses again. Outbound serialization starts from valid domain values and must not reveal secrets.
+  parses again (S5). Outbound serialization starts from valid domain values and must not reveal
+  secrets (S13).
 - An `is_valid_x(&str) -> bool` or a `validate(&self)` over public fields becomes a constructor that
-  returns the type.
+  returns the type (S6).
 - A request, row or DTO is built from domain types: each field whose value has a refinement or tag
   uses it, and deserializing runs that type's constructor. The rules stay in the constructors and
   the format only touches shape. A primitive field lets the unparsed value travel past the
@@ -176,14 +226,14 @@ fn send_invite(to: &Email) { /* `to` is a valid email; no check needed. */ }
   types, exists only when the wire's shape differs from the domain's (names, nesting, flattening),
   or as the mirror serde needs to reach a cross-field constructor
   (`#[serde(try_from = "Raw")]`). Its `TryFrom` calls the domain type's constructor, so a rule
-  that spans fields lives in one place and holds however the value is built.
+  that spans fields lives in one place and holds however the value is built (S7).
 
 ## 3. Newtypes: tags and refinements
 
 A newtype wraps a primitive so that the compiler can tell values apart. A value gets one when it
 carries an invariant, or when it could be swapped with another value of the same primitive, and
 not otherwise: a local count or a one-off label with neither gains only a name (proportionality,
-above). A newtype comes in one of two kinds, and its field's visibility says which.
+above) (S8). A newtype comes in one of two kinds, and its field's visibility says which.
 
 ```rust
 pub struct UserId(pub u64);   // a tag: any u64 is a valid id; it only stops mix-ups
@@ -194,7 +244,7 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
   called with a `UserId`. Its field is `pub`, and `#[serde(transparent)]` is fine, since there is
   nothing to check. `From` is fine where the two types make the meaning obvious (`From<u64> for
   UserId`). Where the primitive carries a unit or scale the target doesn't name, as in
-  `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4). That
+  `From<u64> for Timestamp` (seconds? milliseconds?), `.into()` hides a guess (section 4) (S9). That
   `From` is also why a function takes `AccountId` itself, never `impl Into<AccountId>`: the
   generic accepts any bare `u64`, and the mix-up the tag exists to stop compiles again.
 
@@ -207,10 +257,10 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
   ```
 
   A caller converting on purpose still can, in plain sight: `close(AccountId::from(raw))`. The rule
-  is about the parameter accepting the primitive silently, not about conversion.
+  is about the parameter accepting the primitive silently, not about conversion (S10).
 - A **refinement** is any type with an invariant, whether it wraps one value or holds several (a
   `Span` whose `start < end`). Its fields are private to its module, not `pub(crate)`, so the
-  constructor is the only way to make one; same-crate code can't slip past it either.
+  constructor is the only way to make one; same-crate code can't slip past it either (S11).
 
 | Lint | Catches |
 | --- | --- |
@@ -219,10 +269,11 @@ pub struct Email(String);     // a refinement: only Email::try_new can make one
 | `derive_partial_eq_without_eq` | `PartialEq` derived where `Eq` could be |
 
 A struct with both `pub` and private fields is half open, and the `pub` half lets callers break the
-invariant the private half guards. `Debug` is how a value shows up in a failing `assert_eq!`, in a
-log and in a debugger, so a public type without it is a dead end. Secrets still implement `Debug`,
-by hand and redacted, and they have no `Display` or `Serialize` that could leak them. The rustc
-`missing_debug_implementations` lint covers public types only; review checks private domain types.
+invariant the private half guards (L10). `Debug` is how a value shows up in a failing `assert_eq!`, in a
+log and in a debugger, so a public type without it is a dead end (L11). Secrets still implement
+`Debug`, by hand and redacted, and they have no `Display` or `Serialize` that could leak them (S13).
+The rustc `missing_debug_implementations` lint covers public types only; review checks private
+domain types (S12).
 
 ### `Eq` and reflexivity
 
@@ -230,7 +281,7 @@ by hand and redacted, and they have no `Display` or `Serialize` that could leak 
 `NaN != NaN`. Without `Eq`, a type can't be a `HashMap` key, and some generic code won't accept it.
 The compiler can't check reflexivity, because `Eq` has no methods. But
 `derive_partial_eq_without_eq` fires only when every field is already `Eq`, so the derive it asks
-for is reflexive by construction. The danger is a hand-written `impl Eq`:
+for is reflexive by construction (L12). The danger is a hand-written `impl Eq`:
 
 ```rust
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -241,10 +292,12 @@ impl Eq for Weight {}   // wrong: Weight(f64::NAN) != Weight(f64::NAN), so the p
 pub struct Weight { grams: u64 }   // right: integer grams are Eq for real
 ```
 
-A domain value that can't be `Eq` usually points to a modeling bug. Money as `f64` should be integer
-cents or a decimal type. The one honest hand-written `Eq` is on a refinement whose invariant rules
+When domain identity requires equivalence-relation equality, an inability to implement `Eq` may
+reveal a modeling problem. For example, money should use integer minor units or decimal arithmetic
+rather than binary floating-point. However, values intentionally following IEEE 754 semantics
+legitimately implement `PartialEq` without `Eq` (S19). The one honest hand-written `Eq` is on a refinement whose invariant rules
 out `NaN`, such as a finite-float type: its constructor makes reflexivity true, so the promise
-holds. `Hash` and `Ord` follow the same test, wherever the fields allow and the contract holds.
+holds (S14). `Hash` and `Ord` follow the same test, wherever the fields allow and the contract holds.
 
 ### Derive, unless the derived behavior is wrong
 
@@ -256,18 +309,21 @@ holds. `Hash` and `Ord` follow the same test, wherever the fields allow and the 
 
 A derive is correct by construction and changes with the fields. A hand-written impl that does
 what the derive would is code to read, and it goes stale when a field is added and the impl isn't
-updated. So a trait is hand-written only where the derived behavior is *wrong* for the type, and
-then every trait that must agree with it is hand-written too: `a == b` must imply equal hashes, and
-`Ord` must agree with `==`. The cases that come up:
+updated (L13, L14). So a trait is hand-written only where the derived behavior is *wrong* for the
+type, and then every trait that must agree with it is hand-written too: `a == b` must imply equal
+hashes, and `Ord` must agree with `==` (S15, L15). Every type derives `Debug`, `Clone` and
+`PartialEq`, so tests compare values and callers copy them, and `Copy`, `Eq`, `Hash` and `Ord`
+wherever the fields allow and the contract holds: a `Copy` value passes without ceremony, and
+`Eq`, `Hash` and `Ord` let it key a map or sort (S18). The cases that come up:
 
 - **A secret's `Debug`** is redacted by hand: the derived one prints the secret.
   `impl fmt::Debug for ApiKey { fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result { f.write_str("ApiKey(***)") } }`
 - **`Default`** is derived when the fields' defaults are the type's default, hand-written when the
   default is something else, and absent when no valid default exists. A refinement such as `Port`
-  has none: the derive would build `Port(0)`, and the invariant forbids it.
+  has none: the derive would build `Port(0)`, and the invariant forbids it (S16).
 - **`Ord`**: the derive compares fields in declaration order and variants in declaration order.
   Declare them in the domain's order rather than hand-write the comparison. An order only one
-  caller needs (orders by total, today) is a `sort_by_key` at that call, not the type's `Ord`.
+  caller needs (orders by total, today) is a `sort_by_key` at that call, not the type's `Ord` (S17).
 
   ```rust
   #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -304,8 +360,19 @@ then every trait that must agree with it is hand-written too: `a == b` must impl
   }
   ```
 
-  Every other way to make a `Km`, such as an `Add`, goes through `try_new` too: two finite values
-  can sum to infinity.
+  Every other way to make a `Km` goes through `try_new` too, and arithmetic is no exception: two
+  finite values can sum to infinity. An `impl Add for Km` can't say so, because its `Output` is a
+  `Km`, and `Output = Result<Km, InvalidKm>` is too unusual to read as addition. So an operation
+  that can break the invariant is a named method returning `Result`, named `try_*` as std names
+  its `Result`-returning methods (`checked_*` returns `Option`, which means absence here) (S20):
+
+  ```rust
+  impl Km {
+      pub fn try_add(self, rhs: Self) -> Result<Self, InvalidKm> {
+          Self::try_new(self.0 + rhs.0)
+      }
+  }
+  ```
 
 ## 4. One validating constructor, reached through std's traits
 
@@ -405,9 +472,9 @@ The real promise is stronger than "there is a validating constructor": no value 
 exist that breaks its invariant, however it was obtained. One unchecked path undoes every check on
 the others, so each path is closed or routed through the constructor.
 
-- **Every other way to obtain a value keeps the invariant**: operators (an `Add` on a bounded
-  quantity), mutating methods, and APIs behind a feature flag or `#[cfg(test)]` that a build can
-  switch on.
+- **Every other way to obtain a value keeps the invariant**: operators, mutating methods, and APIs
+  behind a feature flag or `#[cfg(test)]` that a build can switch on. An operation that can break it
+  (a sum past a bound) is a `try_*` method returning `Result`, never an operator (S20).
 
 - **No `Deref` to the inner type.** It turns every `String` method into an `Email` method. Offer
   `as_str()`, `get()`, `AsRef` or `into_inner()` instead.

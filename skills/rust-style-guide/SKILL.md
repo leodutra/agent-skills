@@ -48,12 +48,11 @@ needs one.
 **Write**
 1. Lints: paste [assets/lints.toml](assets/lints.toml) into `Cargo.toml` (workspace:
    `[workspace.lints.*]` + `lints.workspace = true` per member), copy
-   [assets/clippy.toml](assets/clippy.toml) to each crate root, follow both files' comments. A
-   binary that prints needs a reasoned local `#[expect]`.
+   [assets/clippy.toml](assets/clippy.toml) to each crate root, follow both files' comments.
 2. Types before functions: a refinement per value with an invariant, an enum per set of states, an
    error type per set of failures.
 3. A lint misfire gets `#[expect(clippy::name, reason = "…")]` where it happens; never edit the lint
-   set to get a build through. A bare `#[allow]` is a defect.
+   set to get a build through.
 4. Done: `cargo check`, `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`,
    `cargo test` pass.
 
@@ -169,7 +168,8 @@ pub const HTTP: Port = Port::literal(80);
   `FromStr` (its output printed back by `Display`), text and primitive `TryFrom`, serde, database
   decoders. A cross-field rule lives there, never only in a DTO's `TryFrom`. Every other
   way to obtain a value (`Default`, mutation, operators, feature-gated or test-only APIs) keeps the
-  invariant.
+  invariant; an operation that can break it is a `try_*` method returning `Result`, never an
+  operator.
 - An inherent fallible constructor MUST be `try_new`, returning `Result`, never `Option`; `new`
   can't fail. Other names follow C-CTOR: an I/O resource's domain verb (`open`, `connect`,
   `bind`), `with_*` for a secondary constructor, `from_*` only for a parse that chooses; a
@@ -198,7 +198,8 @@ pub const HTTP: Port = Port::literal(80);
   can't check: derive it (it compiles only when every field is `Eq`), and hand-write it only where
   the invariant guarantees it (a finite-float refinement rejects `NaN` and turns `-0.0` into `0.0`,
   so `Hash` and `Ord` agree with `==`), never over a `PartialEq` that breaks it (`f32`/`f64` aren't
-  `Eq`: `NaN != NaN`).
+  `Eq`: `NaN != NaN`). Where identity needs `Eq` and a field can't give it, fix the model (money:
+  minor units or a decimal); a value meant to follow IEEE 754 keeps `PartialEq` alone.
 - A secret hand-writes a redacted `Debug`, with no `Display` and no `Serialize`.
 - `literal` calls `try_new`, never builds `Self`, and is `pub(crate)`; `pub` only when another crate
   needs the constants, then with a `# Panics` section.
@@ -219,9 +220,10 @@ pub const HTTP: Port = Port::literal(80);
 ## Behavior
 
 - `unsafe` only where safe code can't do the job, and the crate says why (a measurement when the
-  reason is speed): behind a safe API, in a module or crate of its own, never in domain code. Each
-  block holds one unsafe operation under a `// SAFETY:` comment stating the invariant it relies on;
-  an `unsafe fn` documents its contract under `# Safety`.
+  reason is speed): behind a safe API, in a module or crate of its own, never in domain code. A
+  function is safe only if no argument causes undefined behavior; a condition only the caller can
+  guarantee keeps it an `unsafe fn`, its contract under `# Safety`. A `// SAFETY:` comment states
+  the invariant its block relies on.
 - Functions are total: code MUST NOT panic on valid input or `assert!` on user input. `panic!`,
   `unwrap()`, `expect()` MUST NOT appear outside tests, except `expect()` with a clear message for
   `main.rs` bootstrap (the environment failing at startup: a config file, binding a port) under
@@ -289,9 +291,10 @@ pub const HTTP: Port = Port::literal(80);
 
 What clippy can check, clippy checks. Test allowances cover `#[test]` and `#[cfg(test)]`; a `tests/`
 helper is neither (it returns `Result`, uses `?`). The lints hold: wildcard arms;
-unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe, undocumented unsafe and
-several unsafe operations per block; a hand-written `Default` a derive would produce; `Clone` on
-`Copy`; `#[ctor]`/`#[dtor]`;
+unwrap/expect/panic/todo/unimplemented/unreachable outside tests; unsafe, undocumented unsafe,
+several unsafe operations per block and an `unsafe fn` without `# Safety`; a hand-written
+`Default` a derive would produce; `Clone` on `Copy`; `Hash`/`Ord` derived beside a hand-written
+`PartialEq`/`PartialOrd`; `#[ctor]`/`#[dtor]`;
 public types missing `Debug`; `PartialEq` that could be `Eq`; infallible `TryFrom`; public
 `Result<_, ()>`; never-failing `Result`; mixed `pub` fields; `Option<Option<T>>`; non-`Send`
 futures; locks across `.await`; >3 bools; glob imports; `for_each`; needless pass by value;

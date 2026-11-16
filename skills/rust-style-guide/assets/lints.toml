@@ -18,6 +18,10 @@ missing_debug_implementations = "deny"
 derivable_impls = "deny"
 # A hand-written `Clone` on a `Copy` type. Same rule.
 expl_impl_clone_on_copy = "deny"
+# `Hash` or `Ord` derived beside a hand-written `PartialEq` or `PartialOrd`, which can disagree with
+# it. Same rule: hand-write the traits that must agree. Clippy defaults, listed to raise them to deny.
+derived_hash_with_manual_eq = "deny"
+derive_ord_xor_partial_ord = "deny"
 # A `TryFrom` whose error is `Infallible`. Refinements: every input is valid, so implement `From`.
 infallible_try_from = "deny"
 # A fn returning `Result` or `Option` that only ever returns `Ok` or `Some`. Refinements: an error
@@ -120,6 +124,9 @@ print_stderr = "deny"
 undocumented_unsafe_blocks = "deny"
 # An `unsafe` block with more than one unsafe operation. Lints: each SAFETY comment justifies one.
 multiple_unsafe_ops_per_block = "deny"
+# A public `unsafe fn` without a `# Safety` section. Behavior: an unsafe fn states its contract.
+# A clippy default, listed to raise it to deny.
+missing_safety_doc = "deny"
 # A bare `#[allow]`. Lints: silence with `#[expect]`, which fails once the lint no longer fires.
 allow_attributes = "deny"
 # A silencing attribute with no `reason`. Lints: a tool's verdict is never waved away without saying why.
